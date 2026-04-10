@@ -43,7 +43,7 @@ class DataConfig:
     tickers: List[str] = None
     weekday_col: str = "weekday"
     seq_len: int = 64
-    test_days: int = 1000
+    test_days: int = 3000
     winsorize_lower: float = 0.005
     winsorize_upper: float = 0.995
 
@@ -130,7 +130,7 @@ class ConditionalGenConfig:
     device: str = "cuda"
     batch_size: int = 32
     num_steps: int = 200
-    stoch: float = 0
+    stoch: float = 0.3
     eta: float = 1.0
     use_q_model: bool = True
 
