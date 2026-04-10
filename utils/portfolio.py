@@ -79,7 +79,7 @@ class PortfolioAnalyzer:
         for n in range(samples.shape[0]):
             # Transpose to (seq_len, channels)
             sample = samples[n].T
-            r_seq, _, _, _ = self.data_processor.invert_samples(sample, monthly = True)
+            r_seq, _, _, _ = self.data_processor.invert_samples(sample, monthly = False)
             r_seq = r_seq[self.config.portfolio.portfolio_tickers]
             R = r_seq.values
 
@@ -121,7 +121,7 @@ class PortfolioAnalyzer:
 
         for n in np.array(np.nonzero(mask.cpu().numpy())).ravel():
             sample = X_test[n]  # Shape: (seq_len, channels) = (64, 4)
-            r_seq, _, _, _ = self.data_processor.invert_samples(sample, monthly = True)
+            r_seq, _, _, _ = self.data_processor.invert_samples(sample, monthly = False)
             r_seq = r_seq[self.config.portfolio.portfolio_tickers]
             R = r_seq.values
 
