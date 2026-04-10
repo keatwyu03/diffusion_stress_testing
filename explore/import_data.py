@@ -51,3 +51,6 @@ df.to_csv("explore/macro_data_new.csv", index_label = "Date")
 print(len(df[df['unemp_flag'] == 1]))
 print(len(df[df['baa_flag'] == 1]))
 print(len(df))
+
+
+print(df['unemp'].std())

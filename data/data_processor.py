@@ -74,8 +74,9 @@ class DataProcessor:
 
     def standardize(self) -> pd.DataFrame:
         """Standardize de-weekday returns"""
+        self.mu_seq = self.df.mean()
         self.sigma_seq = self.df.std()
-        z = self.df / self.sigma_seq
+        z = (self.df - self.mu_seq) / self.sigma_seq
         self.df_z = z.dropna(how="any")
         return self.df_z
 
@@ -197,7 +198,7 @@ class DataProcessor:
         )
 
         if monthly:
-            r_seq = z_seq * self.sigma_seq.to_numpy()
+            r_seq = z_seq * self.sigma_seq.to_numpy() + self.mu_seq.to_numpy()
             return pd.DataFrame(r_seq, columns = self.tickers), None, None, None
 
         T, D = z_seq.shape
@@ -211,7 +212,7 @@ class DataProcessor:
         port_seq = np.zeros(T)
 
         for t in range(T):
-            r_dw_t = z_seq[t] * self.sigma_seq.to_numpy()
+            r_dw_t = z_seq[t] * self.sigma_seq.to_numpy() + self.mu_seq.to_numpy()
             w_t = (start_weekday + t) % 5
             r_t = r_dw_t + self.weekday_mean.loc[w_t, self.tickers].to_numpy()
 

@@ -43,7 +43,7 @@ class DataConfig:
     tickers: List[str] = None
     weekday_col: str = "weekday"
     seq_len: int = 64
-    test_days: int = 100
+    test_days: int = 1000
     winsorize_lower: float = 0.005
     winsorize_upper: float = 0.995
 
@@ -114,7 +114,7 @@ class HFunctionConfig:
     event_window: int = 3
 
     # Threshold    
-    event_threshold: float = 0.3
+    event_threshold: float = 2
 
     # Constraint Mode
     constraint_mode: str = "hard"  #Choose between "hard" or "soft" (exponential)
