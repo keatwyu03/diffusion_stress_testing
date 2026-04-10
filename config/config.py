@@ -58,7 +58,7 @@ class DiffusionConfig:
     #In and out channels are used to train the neural network for score function
     #This is the part that controls the denosing method for training s_theta
     #
-    device: str = "mps"
+    device: str = "cuda"
     in_channels: int = 5
     out_channels: int = 5
     sample_size: int = 64
