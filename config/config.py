@@ -153,6 +153,7 @@ class PortfolioConfig:
 
     def __post_init__(self):
         if self.portfolio_tickers is None:
+            self.portfolio_tickers = ["sp500", "baa"]
 
 
 @dataclass
