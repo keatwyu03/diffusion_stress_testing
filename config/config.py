@@ -114,7 +114,7 @@ class HFunctionConfig:
     event_window: int = 3
 
     # Threshold    
-    event_threshold: float = 2
+    event_threshold: float = 1
 
     # Constraint Mode
     constraint_mode: str = "hard"  #Choose between "hard" or "soft" (exponential)
