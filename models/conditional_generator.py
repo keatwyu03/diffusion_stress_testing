@@ -43,6 +43,8 @@ class ConditionalGenerator:
         b_min: float = 0.1,
         b_max: float = 3.25,
         device: str = "cuda",
+        constraint_mode : str = "hard",
+        beta : float = 1.0 
     ):
         self.score_model = score_model
         self.h_model = h_model
@@ -54,6 +56,8 @@ class ConditionalGenerator:
         self.device = device
 
         self.q_model = None
+        self.constraint_mode = constraint_mode
+        self.beta = beta
 
     def train_q_model(
         self,
@@ -225,9 +229,13 @@ class ConditionalGenerator:
                     grad_h = torch.autograd.grad(h_val_autograd.sum(), x)[0]
                 ratio = grad_h / (h_val_autograd.view(-1, 1, 1) + 1e-3)
                 x = x.detach()
-                del h_val_autograd, grad_h
+                del h_val_autograd
 
-            drift = drift + (1 + eta) * (g_expanded**2) * ratio
+            if self.constraint_mode == "hard":
+                drift = drift + (1 + eta) * (g_expanded**2) * ratio
+            elif self.constraint_mode == "soft":
+                drift = drift + (g_expanded**2 / self.beta) * grad_h
+
 
             # Euler-Maruyama update
             adjust = (1 + stoch**2) / 2

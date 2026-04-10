@@ -80,6 +80,8 @@ def main(args):
     )
 
     data_processor.process_all()
+    # print(data_processor.df_z['unemp'].describe())
+    # import sys; sys.exit()  # stops the script here
 
     # ==================== Diffusion Model Training ====================
     if not args.skip_diffusion_training:
@@ -143,6 +145,9 @@ def main(args):
             event_window=config.hfunction.event_window,
             event_threshold=config.hfunction.event_threshold,
             device=config.hfunction.device,
+            event_type=config.hfunction.event_type,
+            constraint_mode=config.hfunction.constraint_mode,
+            reward_sharpness=config.hfunction.reward_sharpness
         )
 
         # Generate training paths
@@ -180,6 +185,8 @@ def main(args):
             event_window=config.hfunction.event_window,
             event_threshold=config.hfunction.event_threshold,
             device=config.hfunction.device,
+            constraint_mode=config.hfunction.constraint_mode,
+            reward_sharpness=config.hfunction.reward_sharpness,
         )
         h_trainer.load("checkpoints/hfunction.pt")
 
@@ -192,9 +199,25 @@ def main(args):
     X_train = data_processor.X_train
     asset_sums_train = X_train.sum(dim=2)
 
-    last_window_train = X_train[:, config.hfunction.event_asset_idx, -config.hfunction.event_window :]
-    sum_last_window_train = last_window_train.sum(dim=1)
-    mask_train = sum_last_window_train <= config.hfunction.event_threshold
+    last_window_train = X_train[:, -config.hfunction.event_window :, config.hfunction.event_asset_idx]
+    if config.hfunction.event_type == "sum":
+        metric_train = last_window_train.sum(dim=1)
+        mask_train = metric_train <= config.hfunction.event_threshold
+    elif config.hfunction.event_type == "change":
+        metric_train = (last_window_train[:, -1] - last_window_train[:, 0]).abs()
+        mask_train = metric_train >= config.hfunction.event_threshold
+    elif config.hfunction.event_type == "absval":
+        metric_train = last_window_train[:, -1].abs()
+        mask_train = metric_train >= config.hfunction.event_threshold
+
+    print("Min Change", metric_train.min().item())
+    print("Max Change", metric_train.max().item())
+    print("Mean Change", metric_train.mean().item())
+    print("Threshold:", config.hfunction.event_threshold)
+
+    print("X_train shape", X_train.shape)
+    print("Sample unemployment values", X_train[0, :, 0])
+    print("Sample unemployment values", X_train[0, 0, :])
 
     event_asset_sums_train = asset_sums_train[mask_train]
     N_event_train = event_asset_sums_train.shape[0]
@@ -206,9 +229,19 @@ def main(args):
     X_test = data_processor.X_test
     asset_sums_test = X_test.sum(dim=2)
 
-    last_window_test = X_test[:, config.hfunction.event_asset_idx, -config.hfunction.event_window :]
-    sum_last_window_test = last_window_test.sum(dim=1)
-    mask_test = sum_last_window_test <= config.hfunction.event_threshold
+    last_window_test = X_test[:,-config.hfunction.event_window :, config.hfunction.event_asset_idx]
+    if config.hfunction.event_type == "sum":
+        metric_test = last_window_test.sum(dim=1)
+        mask_test = metric_test <= config.hfunction.event_threshold
+    elif config.hfunction.event_type == "change":
+        metric_test = (last_window_test[:, -1] - last_window_test[:, 0]).abs()
+        mask_test = metric_test >= config.hfunction.event_threshold
+    elif config.hfunction.event_type == "absval":
+        metric_test = last_window_test[:, -1].abs()
+        mask_test = metric_test >= config.hfunction.event_threshold
+    
+    print("Test dates:", data_processor.y_dates_test[0], "to", data_processor.y_dates_test[-1])
+    print("Test change stats:", metric_test.min().item(), metric_test.max().item())
 
     event_asset_sums_test = asset_sums_test[mask_test]
     N_event_test = event_asset_sums_test.shape[0]
@@ -230,6 +263,8 @@ def main(args):
         b_min=config.diffusion.b_min,
         b_max=config.diffusion.b_max,
         device=config.conditional.device,
+        constraint_mode=config.conditional.constraint_mode,
+        beta = config.conditional.beta
     )
 
     # Optionally train Q-model
@@ -280,6 +315,7 @@ def main(args):
         data_processor=data_processor,
         window_for_cov=config.portfolio.window_for_cov,
         last_days_sum=config.portfolio.last_days_sum,
+        config = config,
     )
 
     # ========== In-Sample (Train) Analysis ==========

@@ -37,7 +37,7 @@ def example_diffusion_training(data_processor):
         in_channels=4,
         out_channels=4,
         sample_size=64,
-        device="cuda",
+        device="mps",
     )
 
     # Get training data

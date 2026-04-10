@@ -49,13 +49,15 @@ class DataProcessor:
         self.y_test = None
         self.y_dates_test = None
 
+        
+
     def load_returns(self) -> pd.DataFrame:
         """Load returns from CSV"""
         df = pd.read_csv(self.csv_path)
         if "Date" in df.columns:
             df["Date"] = pd.to_datetime(df["Date"])
             df = df.sort_values("Date").set_index("Date")
-        df = df[self.tickers + [self.weekday_col]].dropna()
+        df = df[self.tickers].dropna()
         self.df = df
         return df
 
@@ -72,8 +74,8 @@ class DataProcessor:
 
     def standardize(self) -> pd.DataFrame:
         """Standardize de-weekday returns"""
-        self.sigma_seq = self.r_dw.std()
-        z = self.r_dw / self.sigma_seq
+        self.sigma_seq = self.df.std()
+        z = self.df / self.sigma_seq
         self.df_z = z.dropna(how="any")
         return self.df_z
 
@@ -138,8 +140,8 @@ class DataProcessor:
         self.load_returns()
         print(f"Loaded data shape: {self.df.shape}")
 
-        print("Removing weekday effect...")
-        self.remove_weekday_effect()
+        # print("Removing weekday effect...")
+        # self.remove_weekday_effect()
 
         print("Standardizing...")
         self.standardize()
@@ -173,6 +175,7 @@ class DataProcessor:
         self,
         samples: torch.Tensor,
         start_weekday: Optional[int] = None,
+        monthly = False
     ) -> Tuple[pd.DataFrame, pd.DataFrame, np.ndarray, pd.Series]:
         """
         Invert standardized samples back to returns
@@ -192,6 +195,11 @@ class DataProcessor:
             if hasattr(samples, "detach")
             else np.asarray(samples)
         )
+
+        if monthly:
+            r_seq = z_seq * self.sigma_seq.to_numpy()
+            return pd.DataFrame(r_seq, columns = self.tickers), None, None, None
+
         T, D = z_seq.shape
 
         if start_weekday is None:
@@ -217,3 +225,5 @@ class DataProcessor:
             sigma_path,
             pd.Series(port_seq, name="Portfolio"),
         )
+
+

@@ -83,6 +83,10 @@ class HFunctionTrainer:
         event_window: int = 10,
         event_threshold: float = -3.0,
         device: str = "cuda",
+        event_type : str = "sum",
+        constraint_mode : str = "hard",
+        reward_sharpness : float = 10
+        
     ):
         self.asset_dim = asset_dim
         self.time_steps = time_steps
@@ -90,6 +94,9 @@ class HFunctionTrainer:
         self.event_window = event_window
         self.event_threshold = event_threshold
         self.device = device
+        self.event_type = event_type
+        self.constraint_mode = constraint_mode
+        self.reward_sharpness = reward_sharpness
 
         # Create model
         self.model = HFunctionCNN(
@@ -149,9 +156,21 @@ class HFunctionTrainer:
             # Compute event indicator from terminal state
             terminal = Y_T[b_idx]
             last_window = terminal[:, self.event_asset_idx, -self.event_window :]
-            sum_last_window = last_window.sum(dim=1)
-
-            target = (sum_last_window <= self.event_threshold).float().unsqueeze(1)
+            if self.event_type == "sum":
+                sum_last_window = last_window.sum(dim=1)
+                target = (sum_last_window <= self.event_threshold).float().unsqueeze(1)
+            elif self.event_type == "change":
+                diff_over_window = abs(last_window[:, -1] - last_window[:, 0])
+                if self.constraint_mode == "soft":
+                    target = torch.sigmoid(self.reward_sharpness * diff_over_window).unsqueeze(1)
+                elif self.constraint_mode == "hard":
+                    target = (diff_over_window >= self.event_threshold).float().unsqueeze(1)
+            elif self.event_type == "absval":
+                abs_val = last_window[:, -1].abs()
+                if self.constraint_mode == "soft":
+                    target = torch.sigmoid(self.reward_sharpness * abs_val).unsqueeze(1)
+                elif self.constraint_mode == "hard":
+                    target = (abs_val >= self.event_threshold).float().unsqueeze(1)
 
             # Forward pass
             pred = self.model(chosen_x, chosen_t)

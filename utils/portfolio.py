@@ -16,6 +16,7 @@ class PortfolioAnalyzer:
         data_processor,
         window_for_cov: int = 54,
         last_days_sum: int = 5,
+        config = None
     ):
         """
         Initialize Portfolio Analyzer
@@ -28,10 +29,14 @@ class PortfolioAnalyzer:
         self.data_processor = data_processor
         self.window_for_cov = window_for_cov
         self.last_days_sum = last_days_sum
+        self.config = config
 
     @staticmethod
     def minvar_weights(cov: np.ndarray, eps: float = 1e-8) -> np.ndarray:
         """Compute minimum variance portfolio weights"""
+        if cov.ndim == 0:
+            return np.array([1.0])
+
         D = cov.shape[0]
         cov = cov + eps * np.eye(D)
         ones = np.ones(D)
@@ -42,6 +47,8 @@ class PortfolioAnalyzer:
     @staticmethod
     def risk_parity_weights(cov: np.ndarray, eps: float = 1e-12) -> np.ndarray:
         """Compute risk parity portfolio weights"""
+        if cov.ndim == 0:
+            return np.array([1.0])
         std = np.sqrt(np.clip(np.diag(cov), eps, None))
         inv_vol = 1.0 / std
         w = inv_vol / inv_vol.sum()
@@ -72,17 +79,20 @@ class PortfolioAnalyzer:
         for n in range(samples.shape[0]):
             # Transpose to (seq_len, channels)
             sample = samples[n].T
-            r_seq, _, _, _ = self.data_processor.invert_samples(sample)
+            r_seq, _, _, _ = self.data_processor.invert_samples(sample, monthly = True)
+            r_seq = r_seq[self.config.portfolio.portfolio_tickers]
             R = r_seq.values
 
             # Compute covariance from first window_for_cov days
             cov = np.cov(R[: self.window_for_cov, :], rowvar=False, ddof=1)
+            if cov.ndim == 0:
+                cov = cov.reshape(1,1)
 
             # Compute weights
             w_mv = self.minvar_weights(cov)
             w_rp = self.risk_parity_weights(cov)
-            w_avg = (1.0 / len(self.data_processor.tickers)) * np.ones(
-                len(self.data_processor.tickers)
+            w_avg = (1.0 / len(self.config.portfolio.portfolio_tickers)) * np.ones(
+                len(self.config.portfolio.portfolio_tickers)
             )
 
             # Compute sums
@@ -111,15 +121,16 @@ class PortfolioAnalyzer:
 
         for n in np.array(np.nonzero(mask.cpu().numpy())).ravel():
             sample = X_test[n]  # Shape: (seq_len, channels) = (64, 4)
-            r_seq, _, _, _ = self.data_processor.invert_samples(sample)
+            r_seq, _, _, _ = self.data_processor.invert_samples(sample, monthly = True)
+            r_seq = r_seq[self.config.portfolio.portfolio_tickers]
             R = r_seq.values
 
             cov = np.cov(R[: self.window_for_cov, :], rowvar=False, ddof=1)
 
             w_mv = self.minvar_weights(cov)
             w_rp = self.risk_parity_weights(cov)
-            w_avg = (1.0 / len(self.data_processor.tickers)) * np.ones(
-                len(self.data_processor.tickers)
+            w_avg = (1.0 / len(self.config.portfolio.portfolio_tickers)) * np.ones(
+                len(self.config.portfolio.portfolio_tickers)
             )
 
             mv_sums.append(self.last_days_sum_with_weights(R, w_mv))
