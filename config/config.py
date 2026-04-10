@@ -89,7 +89,7 @@ class HFunctionConfig:
     #Doobs H modification for the terminal constraints
     #Using a Neural Network to learn this
 
-    device: str = "mps"
+    device: str = "cuda"
     asset_dim: int = 5
     time_steps: int = 64
     embed_dim: int = 128
@@ -127,7 +127,7 @@ class ConditionalGenConfig:
     #Learning the q function for conditional generation
     #Neural Network to get us grad log h = q / h
 
-    device: str = "mps"
+    device: str = "cuda"
     batch_size: int = 32
     num_steps: int = 200
     stoch: float = 0

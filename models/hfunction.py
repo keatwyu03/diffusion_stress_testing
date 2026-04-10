@@ -214,6 +214,6 @@ class HFunctionTrainer:
 
     def load(self, path: str) -> None:
         """Load model weights"""
-        self.model.load_state_dict(torch.load(path))
+        self.model.load_state_dict(torch.load(path, map_location=self.device))
         self.model.to(self.device)
         print(f"H-function loaded from {path}")

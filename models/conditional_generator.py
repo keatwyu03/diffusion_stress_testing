@@ -257,5 +257,5 @@ class ConditionalGenerator:
         self.q_model = GradientHUNet(
             in_channels=in_channels, out_channels=out_channels, sample_size=sample_size
         ).to(self.device)
-        self.q_model.load_state_dict(torch.load(path))
+        self.q_model.load_state_dict(torch.load(path, map_location=self.device))
         print(f"Q-model loaded from {path}")
