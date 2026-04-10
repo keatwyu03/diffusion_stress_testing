@@ -81,6 +81,8 @@ class ConditionalGenerator:
             n_epochs: Number of epochs
             learning_rate: Learning rate
         """
+        self.in_channels = in_channels
+        self.sample_size = sample_size
         self.q_model = GradientHUNet(
             in_channels=in_channels, out_channels=out_channels, sample_size=sample_size
         ).to(self.device)
@@ -194,7 +196,7 @@ class ConditionalGenerator:
         eps: float,
     ) -> torch.Tensor:
         """Sample a single batch"""
-        init_x = torch.randn(batch_size, 4, 64, device=self.device)
+        init_x = torch.randn(batch_size, self.in_channels, self.sample_size, device=self.device)
         x = init_x
 
         time_steps = self.make_vp_std_grid_fn(

@@ -279,6 +279,8 @@ def main(args):
         cond_generator.train_q_model(
             t_grid=t_grid,
             y_grid=y_grid,
+            in_channels=config.diffusion.in_channels,
+            out_channels=config.diffusion.out_channels,
             n_epochs=config.conditional.q_model_epochs,
             learning_rate=config.conditional.q_model_lr,
         )
