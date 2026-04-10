@@ -256,6 +256,8 @@ class ConditionalGenerator:
         self, path: str, in_channels: int = 4, out_channels: int = 4, sample_size: int = 64
     ) -> None:
         """Load Q-model weights"""
+        self.in_channels = in_channels
+        self.sample_size = sample_size
         self.q_model = GradientHUNet(
             in_channels=in_channels, out_channels=out_channels, sample_size=sample_size
         ).to(self.device)

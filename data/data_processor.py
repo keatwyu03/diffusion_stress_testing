@@ -63,9 +63,13 @@ class DataProcessor:
 
     def remove_weekday_effect(self) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """Remove weekday effect from returns"""
-        weekday_mean = self.df.groupby(self.weekday_col)[self.tickers].mean()
-        aligned = self.df[self.weekday_col].map(weekday_mean.to_dict("index"))
-        aligned_df = pd.DataFrame(list(aligned), index=self.df.index)[self.tickers]
+        # weekday_mean = self.df.groupby(self.weekday_col)[self.tickers].mean()
+        # aligned = self.df[self.weekday_col].map(weekday_mean.to_dict("index"))
+        # aligned_df = pd.DataFrame(list(aligned), index=self.df.index)[self.tickers]
+        weekday_series = pd.Series(self.df.index.dayofweek, index=self.df.index)
+        weekday_mean = self.df.groupby(weekday_series)[self.tickers].mean()
+        aligned_df = weekday_series.map(weekday_mean.to_dict("index"))
+        aligned_df = pd.DataFrame(list(aligned_df), index=self.df.index)[self.tickers]
         r_dw = self.df[self.tickers] - aligned_df
 
         self.r_dw = r_dw
@@ -74,9 +78,10 @@ class DataProcessor:
 
     def standardize(self) -> pd.DataFrame:
         """Standardize de-weekday returns"""
-        self.mu_seq = self.df.mean()
-        self.sigma_seq = self.df.std()
-        z = (self.df - self.mu_seq) / self.sigma_seq
+        data = self.r_dw if self.r_dw is not None else self.df
+        self.mu_seq = data.mean()
+        self.sigma_seq = data.std()
+        z = (data - self.mu_seq) / self.sigma_seq
         self.df_z = z.dropna(how="any")
         return self.df_z
 
@@ -141,8 +146,8 @@ class DataProcessor:
         self.load_returns()
         print(f"Loaded data shape: {self.df.shape}")
 
-        # print("Removing weekday effect...")
-        # self.remove_weekday_effect()
+        print("Removing weekday effect...")
+        self.remove_weekday_effect()
 
         print("Standardizing...")
         self.standardize()
