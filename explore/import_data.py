@@ -21,7 +21,7 @@ data = {
 
 
 unemployment_threshold = 0.3
-baa_threshold = 0.4
+baa_threshold = 0.05
 
 
 sp500_log = np.log(sp500 / sp500.shift(1))
@@ -32,7 +32,7 @@ unemp_monthly = data['unemp']
 unemp_flag = (unemp_monthly.diff(1).abs() >= unemployment_threshold).astype(float).fillna(0.0)
 
 baa_monthly = data['baa']
-baa_flag = (baa_monthly.diff(1).abs() >= baa_threshold).astype(float).fillna(0.0)
+baa_flag = (baa_log.abs() >= baa_threshold).astype(float).fillna(0.0)
 
 df = pd.DataFrame({"sp500" : sp500_log,
 })
@@ -40,7 +40,7 @@ df = pd.DataFrame({"sp500" : sp500_log,
 
 df['unemp'] = unemp_monthly.reindex(df.index, method = 'ffill')
 df['unemp_flag'] = unemp_flag.reindex(df.index, method = 'ffill')
-df['baa'] = baa_monthly.reindex(df.index, method = 'ffill')
+df['baa'] = baa_log.reindex(df.index, method = 'ffill')
 df['baa_flag'] = baa_flag.reindex(df.index, method = 'ffill')
 
 df = df[['unemp', 'unemp_flag', 'sp500', 'baa', 'baa_flag']]
