@@ -264,7 +264,9 @@ def main(args):
         b_max=config.diffusion.b_max,
         device=config.conditional.device,
         constraint_mode=config.conditional.constraint_mode,
-        beta = config.conditional.beta
+        beta=config.conditional.beta,
+        in_channels=config.diffusion.in_channels,
+        sample_size=config.diffusion.sample_size,
     )
 
     # Optionally train Q-model

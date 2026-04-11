@@ -44,7 +44,9 @@ class ConditionalGenerator:
         b_max: float = 3.25,
         device: str = "cuda",
         constraint_mode : str = "hard",
-        beta : float = 1.0 
+        beta : float = 1.0,
+        in_channels: int = 5,
+        sample_size: int = 64,
     ):
         self.score_model = score_model
         self.h_model = h_model
@@ -58,6 +60,8 @@ class ConditionalGenerator:
         self.q_model = None
         self.constraint_mode = constraint_mode
         self.beta = beta
+        self.in_channels = in_channels
+        self.sample_size = sample_size
 
     def train_q_model(
         self,
