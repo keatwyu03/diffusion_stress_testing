@@ -199,7 +199,7 @@ class HFunctionTrainer:
                 })
 
             # Log to console periodically
-            if epoch % 100 == 0:
+            if epoch % 10 == 0:
                 tqdm.write(
                     f"Epoch {epoch:04d} | Loss: {loss.item():.6f} | "
                     f"Acc: {acc:.4f} | PosRatio: {pos_ratio:.3f}"

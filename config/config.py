@@ -96,7 +96,7 @@ class HFunctionConfig:
 
     # Training parameters
     train_batch_size: int = 256      #Nuber of noisy trajectories to pass through at each stage for unconditional diffusion=
-    n_epochs: int = 100              #Numnber of times to go through the data
+    n_epochs: int = 500              #Numnber of times to go through the data
     learning_rate: float = 1e-4      #Step size (adapted) for the SGD
     weight_decay: float = 1e-4       #Add penalties to prevent overfitting
     scheduler_patience: int = 50
