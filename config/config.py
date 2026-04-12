@@ -132,7 +132,7 @@ class ConditionalGenConfig:
     num_steps: int = 200
     stoch: float = 0.3
     eta: float = 1.0
-    use_q_model: bool = True
+    use_q_model: bool = False
 
     # Q-model parameters (if used)
     q_model_epochs: int = 500
