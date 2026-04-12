@@ -139,7 +139,7 @@ class ConditionalGenConfig:
     q_model_lr: float = 1e-4
 
     # Constraint Mode
-    constraint_mode: str = "soft"  #Choose between "hard" and "soft"
+    constraint_mode: str = "hard"  #Choose between "hard" and "soft"
     beta: float = 1.0              #Parameter for trade-off denominator
 
 
