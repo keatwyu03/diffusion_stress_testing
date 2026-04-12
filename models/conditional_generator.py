@@ -238,7 +238,7 @@ class ConditionalGenerator:
                 del h_val_autograd
 
             if self.constraint_mode == "hard":
-                drift = drift + (1 + eta) * (g_expanded**2) * ratio
+                drift = drift + (1 + eta) * (g_expanded**2) * ratio.clamp(-100, 100)
             elif self.constraint_mode == "soft":
                 drift = drift + (g_expanded**2 / self.beta) * grad_h
 
