@@ -73,9 +73,9 @@ class DiffusionConfig:
 
     # Training parameters
     batch_size: int = 256               #Stochastic minibatch gradient descent
-    n_epochs: int = 250                #Number of times to loop through the data
-    learning_rate: float = 5e-5        #Alpha Stepsize
-    scheduler_patience: int = 20       #Check convergence every X number of loops through the data
+    n_epochs: int = 500                #Number of times to loop through the data
+    learning_rate: float = 2e-4        #Alpha Stepsize
+    scheduler_patience: int = 50       #Check convergence every X number of loops through the data
     scheduler_factor: float = 0.5      #Multiplier for the Learning rate when plateau
 
     # Sampling parameters
