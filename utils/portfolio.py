@@ -191,24 +191,22 @@ class PortfolioAnalyzer:
         fig, axes = plt.subplots(1, 3, figsize=(18, 5), sharey=True)
 
         # Equal-Weight
-        axes[0].hist(gen_avg, bins=30, alpha=0.6, label="Generated", color="C0")
-        axes[0].hist(
-            real_avg, bins=30, alpha=0.6, label="Real (Test Set)", color="C1"
-        )
+        axes[0].hist(gen_avg, bins=30, alpha=0.6, label="Generated", color="C0", density=True)
+        axes[0].hist(real_avg, bins=30, alpha=0.6, label="Real (Test Set)", color="C1", density=True)
         axes[0].set_title(f"Equal-Weight Portfolio (last {5}-day sum)")
         axes[0].set_xlabel("Sum of Log Returns")
         axes[0].legend()
 
         # Min-Variance
-        axes[1].hist(gen_mv, bins=30, alpha=0.6, label="Generated", color="C0")
-        axes[1].hist(real_mv, bins=30, alpha=0.6, label="Real (Test Set)", color="C1")
+        axes[1].hist(gen_mv, bins=30, alpha=0.6, label="Generated", color="C0", density=True)
+        axes[1].hist(real_mv, bins=30, alpha=0.6, label="Real (Test Set)", color="C1", density=True)
         axes[1].set_title(f"Min-Variance Portfolio (last {5}-day sum)")
         axes[1].set_xlabel("Sum of Log Returns")
         axes[1].legend()
 
         # Risk-Parity
-        axes[2].hist(gen_rp, bins=30, alpha=0.6, label="Generated", color="C0")
-        axes[2].hist(real_rp, bins=30, alpha=0.6, label="Real (Test Set)", color="C1")
+        axes[2].hist(gen_rp, bins=30, alpha=0.6, label="Generated", color="C0", density=True)
+        axes[2].hist(real_rp, bins=30, alpha=0.6, label="Real (Test Set)", color="C1", density=True)
         axes[2].set_title(f"Risk-Parity Portfolio (last {5}-day sum)")
         axes[2].set_xlabel("Sum of Log Returns")
         axes[2].legend()

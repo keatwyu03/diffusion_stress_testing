@@ -180,6 +180,7 @@ def main(args):
         data_processor=data_processor,
         window_for_cov=config.portfolio.window_for_cov,
         last_days_sum=config.portfolio.last_days_sum,
+        config = config,
     )
 
     # Analyze generated samples

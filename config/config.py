@@ -105,13 +105,13 @@ class HFunctionConfig:
     # Event condition
 
     # Type of event to look 
-    event_type: str = "absval" #Choose between "sum", "change", or "absval"
+    event_type: str = "change" #Choose between "sum", "change", or "absval"
 
     # Column to watch for the shock
     event_asset_idx: int = 0
     
     # Lookback period
-    event_window: int = 3
+    event_window: int = 63
 
     # Threshold    
     event_threshold: float = 1.2
