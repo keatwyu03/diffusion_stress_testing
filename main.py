@@ -298,6 +298,7 @@ def main(args):
         eta=config.conditional.eta,
         use_q_model=config.conditional.use_q_model,
     )
+    torch.save(generated_samples_train, 'generated_samples_train.pt')
 
     # Generate conditional samples for TEST set events
     print(f"Generating {N_event_test} conditional samples for out-of-sample (test) events...")
@@ -309,6 +310,7 @@ def main(args):
         eta=config.conditional.eta,
         use_q_model=config.conditional.use_q_model,
     )
+    torch.save(generated_samples_test, 'generated_samples_test.pt')
 
     # ==================== Portfolio Analysis ====================
     print("\n" + "=" * 60)
