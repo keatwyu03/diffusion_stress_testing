@@ -105,7 +105,7 @@ class HFunctionConfig:
     # Event condition
 
     # Type of event to look 
-    event_type: str = "abs" #Choose between "sum", "change", or "absval"
+    event_type: str = "absval" #Choose between "sum", "change", or "absval"
 
     # Column to watch for the shock
     event_asset_idx: int = 0
