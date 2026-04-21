@@ -73,7 +73,7 @@ class DiffusionConfig:
 
     # Training parameters
     batch_size: int = 256               #Stochastic minibatch gradient descent
-    n_epochs: int = 5                #Number of times to loop through the data
+    n_epochs: int = 500                #Number of times to loop through the data
     learning_rate: float = 2e-4        #Alpha Stepsize
     scheduler_patience: int = 50       #Check convergence every X number of loops through the data
     scheduler_factor: float = 0.5      #Multiplier for the Learning rate when plateau
@@ -96,7 +96,7 @@ class HFunctionConfig:
 
     # Training parameters
     train_batch_size: int = 2048      #Nuber of noisy trajectories to pass through at each stage for unconditional diffusion=
-    n_epochs: int = 5              #Numnber of times to go through the data
+    n_epochs: int = 1000              #Numnber of times to go through the data
     learning_rate: float = 1e-4      #Step size (adapted) for the SGD
     weight_decay: float = 1e-4       #Add penalties to prevent overfitting
     scheduler_patience: int = 50
