@@ -131,7 +131,7 @@ class ConditionalGenConfig:
     batch_size: int = 32
     num_steps: int = 200
     stoch: float = 0.3
-    eta: float = 1.0
+    eta: float = 20.0
     use_q_model: bool = False
 
     # Q-model parameters (if used)
