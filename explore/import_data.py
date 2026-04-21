@@ -51,6 +51,21 @@ df.to_csv("explore/macro_data_new.csv", index_label = "Date")
 print(len(df[df['unemp_flag'] == 1]))
 print(len(df[df['baa_flag'] == 1]))
 print(len(df))
-
-
 print(df['unemp'].std())
+
+
+df_interp = pd.DataFrame({"sp500": sp500_log})
+df_interp['unemp'] = unemp_monthly.reindex(df_interp.index).interpolate(method='spline', order  = 3)
+df_interp['unemp_flag'] = unemp_flag.reindex(df_interp.index).interpolate(method='spline', order = 3)
+df_interp['baa'] = baa_log.reindex(df_interp.index).interpolate(method='spline', order = 3)
+df_interp['baa_flag'] = baa_flag.reindex(df_interp.index).interpolate(method='spline', order = 3)
+df_interp = df_interp[['unemp', 'unemp_flag', 'sp500', 'baa', 'baa_flag']]
+df_interp = df_interp.dropna()
+
+df_interp.to_csv("explore/macro_data_interp.csv", index_label = "Date")
+
+print("\n--- Interpolated version ---")
+print(len(df_interp[df_interp['unemp_flag'] >= 0.5]))
+print(len(df_interp[df_interp['baa_flag'] >= 0.5]))
+print(len(df_interp))
+print(df_interp['unemp'].std())

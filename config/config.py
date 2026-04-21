@@ -39,7 +39,7 @@ class DataConfig:
     """Data configuration"""
     # Where to load the data. Training/Testing split 
     # Outlier handling -> winsorize upper and lower = % bounds to remove
-    csv_path: str = "explore/macro_data_new.csv"
+    csv_path: str = "explore/macro_data_interp.csv"
     tickers: List[str] = None
     weekday_col: str = "weekday"
     seq_len: int = 64
@@ -130,8 +130,8 @@ class ConditionalGenConfig:
     device: str = "cuda"
     batch_size: int = 32
     num_steps: int = 200
-    stoch: float = 0.6
-    eta: float = 3.0
+    stoch: float = 0.3
+    eta: float = 1.0
     use_q_model: bool = False
 
     # Q-model parameters (if used)
