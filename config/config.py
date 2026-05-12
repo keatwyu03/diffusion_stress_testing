@@ -72,12 +72,12 @@ class DiffusionConfig:
     sample_size: int = 64
 
     #number of layers for each CNN and number of parameters in each of those CNN layers
-    layers_per_block: int = 6
-    block_out_channels: Tuple[int, int, int] = (128, 256, 512)
+    layers_per_block: int = 3
+    block_out_channels: Tuple[int, int, int] = (64, 128, 256)
 
     # Variance Preserving diffusion parameters
     b_min: float = 0.1
-    b_max: float = 3.25
+    b_max: float = 8.0
 
     # Training parameters
     batch_size: int = 256               #Stochastic minibatch gradient descent
