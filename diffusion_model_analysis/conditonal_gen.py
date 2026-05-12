@@ -42,8 +42,9 @@ mask_test  = get_mask(X_test,  config)
 
 # Load conditional generated samples
 _dir = os.path.dirname(os.path.abspath(__file__))
-gen_train = torch.load(os.path.join(_dir, 'generated_samples_train.pt'), map_location='cpu')  # (N, 5, 64)
-gen_test  = torch.load(os.path.join(_dir, 'generated_samples_test.pt'),  map_location='cpu')
+_root = os.path.dirname(_dir)
+gen_train = torch.load(os.path.join(_root, 'generated_samples_train.pt'), map_location='cpu')  # (N, 5, 64)
+gen_test  = torch.load(os.path.join(_root, 'generated_samples_test.pt'),  map_location='cpu')
 
 # Real: only event windows, all 64 time steps flattened
 # Generated: all samples, all 64 time steps flattened
