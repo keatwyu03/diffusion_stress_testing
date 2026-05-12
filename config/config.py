@@ -72,8 +72,8 @@ class DiffusionConfig:
     sample_size: int = 64
 
     #number of layers for each CNN and number of parameters in each of those CNN layers
-    layers_per_block: int = 3
-    block_out_channels: Tuple[int, int, int] = (64, 128, 256)
+    layers_per_block: int = 6
+    block_out_channels: Tuple[int, int, int] = (128, 256, 512)
 
     # Variance Preserving diffusion parameters
     b_min: float = 0.1
