@@ -30,8 +30,16 @@ or VP: dXt = (-0.5 * beta Xt + beta(t) * s'(t,xt))dt + sqrt(beta(t))dBt
 """
 Configuration file for the CDG Financial Time Series project
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Tuple
+import torch
+
+def _default_device() -> str:
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
 
 
 @dataclass
@@ -58,7 +66,7 @@ class DiffusionConfig:
     #In and out channels are used to train the neural network for score function
     #This is the part that controls the denosing method for training s_theta
     #
-    device: str = "cuda"
+    device: str = field(default_factory=_default_device)
     in_channels: int = 5
     out_channels: int = 5
     sample_size: int = 64
@@ -73,8 +81,8 @@ class DiffusionConfig:
 
     # Training parameters
     batch_size: int = 256               #Stochastic minibatch gradient descent
-    n_epochs: int = 750                #Number of times to loop through the data
-    learning_rate: float = 2e-4        #Alpha Stepsize
+    n_epochs: int = 1000                #Number of times to loop through the data
+    learning_rate: float = 1e-4        #Alpha Stepsize
     scheduler_patience: int = 50       #Check convergence every X number of loops through the data
     scheduler_factor: float = 0.5      #Multiplier for the Learning rate when plateau
 
@@ -89,7 +97,7 @@ class HFunctionConfig:
     #Doobs H modification for the terminal constraints
     #Using a Neural Network to learn this
 
-    device: str = "cuda"
+    device: str = field(default_factory=_default_device)
     asset_dim: int = 5
     time_steps: int = 64
     embed_dim: int = 128
@@ -127,7 +135,7 @@ class ConditionalGenConfig:
     #Learning the q function for conditional generation
     #Neural Network to get us grad log h = q / h
 
-    device: str = "cuda"
+    device: str = field(default_factory=_default_device)
     batch_size: int = 32
     num_steps: int = 200
     stoch: float = 0.3
