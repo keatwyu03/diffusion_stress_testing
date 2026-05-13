@@ -57,7 +57,7 @@ class DataConfig:
 
     def __post_init__(self):
         if self.tickers is None:
-            self.tickers = ["unemp", "unemp_flag", "sp500", "baa", "baa_flag"]
+            self.tickers = ["unemp", "sp500", "baa"]
 
 
 @dataclass
@@ -67,8 +67,8 @@ class DiffusionConfig:
     #This is the part that controls the denosing method for training s_theta
     #
     device: str = field(default_factory=_default_device)
-    in_channels: int = 5
-    out_channels: int = 5
+    in_channels: int = 3
+    out_channels: int = 3
     sample_size: int = 64
 
     #number of layers for each CNN and number of parameters in each of those CNN layers
@@ -82,9 +82,9 @@ class DiffusionConfig:
     # Training parameters
     batch_size: int = 256               #Stochastic minibatch gradient descent
     n_epochs: int = 1000                #Number of times to loop through the data
-    learning_rate: float = 3e-4        #Alpha Stepsize
-    scheduler_patience: int = 20       #Check convergence every X number of loops through the data
-    scheduler_factor: float = 0.3      #Multiplier for the Learning rate when plateau
+    learning_rate: float = 2e-4        #Alpha Stepsize
+    scheduler_patience: int = 50       #Check convergence every X number of loops through the data
+    scheduler_factor: float = 0.5      #Multiplier for the Learning rate when plateau
 
     # Sampling parameters
     num_steps: int = 200               #Number of noisy elements to add
@@ -98,7 +98,7 @@ class HFunctionConfig:
     #Using a Neural Network to learn this
 
     device: str = field(default_factory=_default_device)
-    asset_dim: int = 5
+    asset_dim: int = 3
     time_steps: int = 64
     embed_dim: int = 128
 
