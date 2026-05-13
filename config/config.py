@@ -80,7 +80,7 @@ class DiffusionConfig:
     b_max: float = 8.0
 
     # Training parameters
-    batch_size: int = 256               #Stochastic minibatch gradient descent
+    batch_size: int = 512               #Stochastic minibatch gradient descent
     n_epochs: int = 1000                #Number of times to loop through the data
     learning_rate: float = 1e-4        #Alpha Stepsize
     scheduler_patience: int = 50       #Check convergence every X number of loops through the data
