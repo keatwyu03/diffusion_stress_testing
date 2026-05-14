@@ -121,7 +121,9 @@ class DiffusionModel:
 
         score = self.model(perturbed_x, random_t).sample
 
-        loss = torch.mean(torch.sum((score * std_expanded + z) ** 2, dim=(1, 2)))
+        # loss = torch.mean(torch.sum((score * std_expanded + z) ** 2, dim=(1, 2)))
+        std_clamped = std_expanded.clamp(min=1e-3)
+        loss = torch.mean(torch.sum((score + z / std_clamped) ** 2, dim=(1, 2)))
 
         return loss
 
