@@ -56,7 +56,7 @@ print(f"Generating {N_samples} unconditional samples...")
 uncond = diffusion_model.sample(
     batch_size=N_samples,
     num_steps=config.diffusion.num_steps,
-    stoch=0.2,
+    stoch=1,
 ).cpu()  # (N_samples, channels, seq_len)
 
 gen = {
