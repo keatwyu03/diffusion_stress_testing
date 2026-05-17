@@ -60,7 +60,8 @@ CDG_Finance/
   - `b_min=0.1`, `b_max=3.25`
   - `marginal_prob_std(t) = sqrt(1 - exp(-∫β))`
 - **Key params:** `in_channels=3, out_channels=3, sample_size=64, layers_per_block=3, block_out_channels=(64, 128, 256)`
-- **Training:** Denoising score matching, `n_epochs=1000`, `batch_size=256`, `lr=2e-4`
+- **Training:** Denoising score matching, `n_epochs=1000`, `batch_size=75`, `lr=1e-5`
+- **LR Schedule:** Linear warmup (`warmup_epochs=600`, ramps `1e-8` → `1e-5`) then cosine decay (`1e-5` → `1e-6`)
 - **Sampling:** Euler-Maruyama with adaptive VP std grid, `num_steps=200`, `stoch=0.2`
   - `drift += (1 + stoch²)/2 * g² * score * dt`
 - **Checkpoint:** `checkpoints/diffusion_model.pt`
@@ -146,7 +147,8 @@ test_days     = 3000
 in_channels   = 3, out_channels = 3, sample_size = 64
 layers_per_block = 3, block_out_channels = (64, 128, 256)
 b_min=0.1, b_max=3.25
-n_epochs=1000, batch_size=256, lr=2e-4, num_steps=200
+n_epochs=1000, batch_size=75, lr=1e-5, num_steps=200
+scheduler_type="cosine", warmup_epochs=600, scheduler_eta_min=1e-6
 
 # H-Function
 asset_dim=3, time_steps=64, embed_dim=128

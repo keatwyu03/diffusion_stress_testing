@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 from scipy.stats import gaussian_kde
 from itertools import combinations
 from matplotlib.patches import Patch
