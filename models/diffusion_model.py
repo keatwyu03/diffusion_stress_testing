@@ -184,6 +184,7 @@ class DiffusionModel:
         for epoch in tqdm(range(n_epochs), desc="Diffusion Training"):
             avg_loss = 0.0
             num_items = 0
+            last_score_mag = 0.0
             for (x,) in data_loader:
                 x = x.to(self.device)
 
@@ -197,6 +198,10 @@ class DiffusionModel:
 
                 avg_loss += loss.item() * x.shape[0]
                 num_items += x.shape[0]
+
+                with torch.no_grad():
+                    t = torch.rand(x.shape[0], device=self.device)
+                    last_score_mag = self.model(x, t).sample.abs().mean().item()
 
             avg_loss /= num_items
             current_lr = optimizer.param_groups[0]['lr']
@@ -219,7 +224,7 @@ class DiffusionModel:
             if (epoch + 1) % 50 == 0:
                 tqdm.write(
                     f"Epoch [{epoch+1}/{n_epochs}]  "
-                    f"Loss: {avg_loss:.6f}, LR: {current_lr:.2e}"
+                    f"Loss: {avg_loss:.6f}, LR: {current_lr:.2e}, Score mag: {last_score_mag:.4f}"
                 )
 
         # Unwrap DataParallel if used
@@ -295,6 +300,7 @@ class DiffusionModel:
                 f_expanded = f[:, None, None]
 
                 score = self.model(x, batch_time_step).sample
+                score = torch.zeros_like(score)  # DEBUG: disable score
                 if i == 0:
                     print(f"[DEBUG] Score magnitude (step 0): {score.abs().mean().item():.6f}", flush=True)
                 adjust = (1 + stoch**2) / 2
