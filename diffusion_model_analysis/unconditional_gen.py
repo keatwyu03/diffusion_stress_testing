@@ -2,6 +2,8 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import gaussian_kde
+from itertools import combinations
+from matplotlib.patches import Patch
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -22,9 +24,9 @@ data_processor = DataProcessor(
 )
 data_processor.process_all()
 
-tickers  = config.data.tickers
-SP500_CH = tickers.index("sp500")
-BAA_CH   = tickers.index("baa")
+# Assets and channel indices driven entirely by config
+plot_tickers = config.portfolio.portfolio_tickers
+ch_idx = {t: config.data.tickers.index(t) for t in plot_tickers}
 
 # Real marginal distributions split by train/test period
 df_z       = data_processor.df_z
@@ -32,8 +34,8 @@ df_z_train = df_z.iloc[:-config.data.test_days]
 df_z_test  = df_z.iloc[-config.data.test_days:]
 
 real = {
-    "SP500": {"train": df_z_train["sp500"].values, "test": df_z_test["sp500"].values},
-    "BAA":   {"train": df_z_train["baa"].values,   "test": df_z_test["baa"].values},
+    t: {"train": df_z_train[t].values, "test": df_z_test[t].values}
+    for t in plot_tickers
 }
 
 # ── Unconditional generation ─────────────────────────────────────────────────
@@ -55,41 +57,97 @@ uncond = diffusion_model.sample(
     batch_size=N_samples,
     num_steps=config.diffusion.num_steps,
     stoch=0.2,
-).cpu()  # (N_samples, 5, 64)
+).cpu()  # (N_samples, channels, seq_len)
 
-# Same generated values for both train and test comparisons
 gen = {
-    "SP500": uncond[:, SP500_CH, :].flatten().numpy(),
-    "BAA":   uncond[:, BAA_CH,   :].flatten().numpy(),
+    t: uncond[:, ch_idx[t], :].flatten().numpy()
+    for t in plot_tickers
 }
 
-# ── Plot ─────────────────────────────────────────────────────────────────────
-fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+# ── Marginal distributions ────────────────────────────────────────────────────
+n_assets = len(plot_tickers)
+fig, axes = plt.subplots(n_assets, 2, figsize=(14, 5 * n_assets))
+if n_assets == 1:
+    axes = axes[np.newaxis, :]
 
-for row, asset in enumerate(["SP500", "BAA"]):
+for row, ticker in enumerate(plot_tickers):
     for col, split in enumerate(["train", "test"]):
         ax = axes[row, col]
-        real_vals = real[asset][split]
-        gen_vals  = gen[asset]
+        real_vals = real[ticker][split]
+        gen_vals  = gen[ticker]
 
         for vals, color, label in [
             (real_vals, "darkorange", f"Real {split} (n={len(real_vals)})"),
             (gen_vals,  "steelblue",  f"Unconditional generated (n={len(gen_vals)})"),
         ]:
-            kde = gaussian_kde(vals, bw_method='silverman')
+            kde = gaussian_kde(vals, bw_method="silverman")
             x   = np.linspace(min(real_vals.min(), gen_vals.min()) - 0.5,
                                max(real_vals.max(), gen_vals.max()) + 0.5, 500)
             ax.plot(x, kde(x), color=color, linewidth=2, label=label)
             ax.hist(vals, bins=40, density=True, alpha=0.2, color=color)
 
         split_label = "In-Sample (Train)" if split == "train" else "Out-of-Sample (Test)"
-        ax.set_title(f"{asset} — {split_label}", fontsize=11)
+        ax.set_title(f"{ticker.upper()} — {split_label}", fontsize=11)
         ax.set_xlabel("Standardized Return")
         ax.set_ylabel("Density")
         ax.legend(fontsize=9)
         ax.grid(True, alpha=0.3)
 
-fig.suptitle("Unconditional Generation: Learned Distribution vs. Real Data", fontsize=13, fontweight='bold')
+fig.suptitle("Unconditional Generation: Learned Distribution vs. Real Data", fontsize=13, fontweight="bold")
 fig.tight_layout()
-plt.savefig("results/score_function_distribution.png", dpi=150, bbox_inches='tight')
+plt.savefig("results/score_function_distribution.png", dpi=150, bbox_inches="tight")
+plt.show()
+
+# ── Joint distributions (all pairwise combinations) ───────────────────────────
+pairs   = list(combinations(plot_tickers, 2))
+n_pairs = len(pairs)
+
+fig2, axes2 = plt.subplots(
+    n_pairs, 2,
+    figsize=(16, 6 * n_pairs),
+    subplot_kw={"projection": "3d"},
+)
+if n_pairs == 1:
+    axes2 = axes2[np.newaxis, :]
+
+for row, (t1, t2) in enumerate(pairs):
+    for col, split in enumerate(["train", "test"]):
+        ax = axes2[row, col]
+
+        real_t1 = real[t1][split]
+        real_t2 = real[t2][split]
+        gen_t1  = gen[t1]
+        gen_t2  = gen[t2]
+
+        x_min = min(real_t1.min(), gen_t1.min()) - 0.5
+        x_max = max(real_t1.max(), gen_t1.max()) + 0.5
+        y_min = min(real_t2.min(), gen_t2.min()) - 0.5
+        y_max = max(real_t2.max(), gen_t2.max()) + 0.5
+
+        xx, yy = np.meshgrid(np.linspace(x_min, x_max, 60),
+                             np.linspace(y_min, y_max, 60))
+        grid = np.vstack([xx.ravel(), yy.ravel()])
+
+        zz_real = gaussian_kde(np.vstack([real_t1, real_t2]),
+                               bw_method="silverman")(grid).reshape(xx.shape)
+        zz_gen  = gaussian_kde(np.vstack([gen_t1,  gen_t2]),
+                               bw_method="silverman")(grid).reshape(xx.shape)
+
+        ax.plot_surface(xx, yy, zz_real, alpha=0.5, color="darkorange")
+        ax.plot_surface(xx, yy, zz_gen,  alpha=0.5, color="steelblue")
+
+        ax.legend(handles=[
+            Patch(color="darkorange", alpha=0.7, label=f"Real {split} (n={len(real_t1)})"),
+            Patch(color="steelblue",  alpha=0.7, label=f"Generated (n={len(gen_t1)})"),
+        ], fontsize=9, loc="upper right")
+
+        split_label = "In-Sample (Train)" if split == "train" else "Out-of-Sample (Test)"
+        ax.set_title(f"Joint {t1.upper()} × {t2.upper()} — {split_label}", fontsize=11)
+        ax.set_xlabel(f"{t1.upper()} Std Return")
+        ax.set_ylabel(f"{t2.upper()} Std Return")
+        ax.set_zlabel("Density")
+
+fig2.suptitle("Unconditional Generation: Joint Pairwise Distributions", fontsize=13, fontweight="bold")
+fig2.tight_layout()
+plt.savefig("results/score_function_joint_distribution.png", dpi=150, bbox_inches="tight")
 plt.show()

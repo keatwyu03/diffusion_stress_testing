@@ -8,7 +8,7 @@ import numpy as np
 from diffusers import UNet1DModel
 from torch.utils.data import DataLoader, TensorDataset
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import ReduceLROnPlateau, CosineAnnealingLR, LinearLR
 from typing import Tuple, Optional, Callable
 from tqdm import tqdm
 
@@ -133,6 +133,9 @@ class DiffusionModel:
         batch_size: int = 256,
         n_epochs: int = 600,
         learning_rate: float = 1e-4,
+        scheduler_type: str = "cosine",
+        scheduler_eta_min: float = 1e-6,
+        warmup_epochs: int = 0,
         scheduler_patience: int = 50,
         scheduler_factor: float = 0.5,
         num_workers: int = 0,
@@ -170,9 +173,12 @@ class DiffusionModel:
         #     self.model = nn.DataParallel(self.model)
 
         optimizer = AdamW(self.model.parameters(), lr=learning_rate)
-        scheduler = ReduceLROnPlateau(
-            optimizer, mode="min", factor=scheduler_factor, patience=scheduler_patience
-        )
+        warmup_sched = LinearLR(optimizer, start_factor=1e-3, end_factor=1.0, total_iters=max(1, warmup_epochs)) if warmup_epochs > 0 else None
+
+        if scheduler_type == "cosine":
+            main_sched = CosineAnnealingLR(optimizer, T_max=max(1, n_epochs - warmup_epochs), eta_min=scheduler_eta_min)
+        else:
+            main_sched = ReduceLROnPlateau(optimizer, mode="min", factor=scheduler_factor, patience=scheduler_patience)
 
         print("Starting diffusion model training...", flush=True)
         for epoch in tqdm(range(n_epochs), desc="Diffusion Training"):
@@ -194,7 +200,12 @@ class DiffusionModel:
 
             avg_loss /= num_items
             current_lr = optimizer.param_groups[0]['lr']
-            scheduler.step(avg_loss)
+            if warmup_sched is not None and epoch < warmup_epochs:
+                warmup_sched.step()
+            elif scheduler_type == "cosine":
+                main_sched.step()
+            else:
+                main_sched.step(avg_loss)
 
             # Log to wandb
             if use_wandb:
