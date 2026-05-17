@@ -252,6 +252,10 @@ def main(args):
     print(f"Test set size: {X_test.shape[0]}")
     print(f"Number of events in test set: {N_event_test}")
 
+    if args.skip_conditional:
+        print("\nSkipping conditional generation and portfolio analysis.")
+        return
+
     # ==================== Conditional Generation ====================
     print("\n" + "=" * 60)
     print("STEP 5: Conditional Generation")
@@ -434,6 +438,11 @@ if __name__ == "__main__":
         "--skip-qmodel-training",
         action="store_true",
         help="Skip Q-model training",
+    )
+    parser.add_argument(
+        "--skip-conditional",
+        action="store_true",
+        help="Skip conditional generation and portfolio analysis",
     )
     parser.add_argument(
         "--no-wandb",
