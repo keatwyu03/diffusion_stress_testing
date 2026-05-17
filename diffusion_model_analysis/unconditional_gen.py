@@ -1,7 +1,6 @@
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 from scipy.stats import gaussian_kde
 from itertools import combinations
 from matplotlib.patches import Patch
@@ -103,11 +102,7 @@ plt.show()
 pairs   = list(combinations(plot_tickers, 2))
 n_pairs = len(pairs)
 
-fig2, axes2 = plt.subplots(
-    n_pairs, 2,
-    figsize=(16, 6 * n_pairs),
-    subplot_kw={"projection": "3d"},
-)
+fig2, axes2 = plt.subplots(n_pairs, 2, figsize=(14, 6 * n_pairs))
 if n_pairs == 1:
     axes2 = axes2[np.newaxis, :]
 
@@ -125,8 +120,8 @@ for row, (t1, t2) in enumerate(pairs):
         y_min = min(real_t2.min(), gen_t2.min()) - 0.5
         y_max = max(real_t2.max(), gen_t2.max()) + 0.5
 
-        xx, yy = np.meshgrid(np.linspace(x_min, x_max, 60),
-                             np.linspace(y_min, y_max, 60))
+        xx, yy = np.meshgrid(np.linspace(x_min, x_max, 80),
+                             np.linspace(y_min, y_max, 80))
         grid = np.vstack([xx.ravel(), yy.ravel()])
 
         zz_real = gaussian_kde(np.vstack([real_t1, real_t2]),
@@ -134,8 +129,10 @@ for row, (t1, t2) in enumerate(pairs):
         zz_gen  = gaussian_kde(np.vstack([gen_t1,  gen_t2]),
                                bw_method="silverman")(grid).reshape(xx.shape)
 
-        ax.plot_surface(xx, yy, zz_real, alpha=0.5, color="darkorange")
-        ax.plot_surface(xx, yy, zz_gen,  alpha=0.5, color="steelblue")
+        ax.contourf(xx, yy, zz_real, levels=10, cmap="Oranges", alpha=0.5)
+        ax.contour(xx, yy, zz_real,  levels=10, colors="darkorange", linewidths=0.8, alpha=0.8)
+        ax.contourf(xx, yy, zz_gen,  levels=10, cmap="Blues",   alpha=0.5)
+        ax.contour(xx, yy, zz_gen,   levels=10, colors="steelblue",  linewidths=0.8, alpha=0.8)
 
         ax.legend(handles=[
             Patch(color="darkorange", alpha=0.7, label=f"Real {split} (n={len(real_t1)})"),
@@ -146,7 +143,7 @@ for row, (t1, t2) in enumerate(pairs):
         ax.set_title(f"Joint {t1.upper()} × {t2.upper()} — {split_label}", fontsize=11)
         ax.set_xlabel(f"{t1.upper()} Std Return")
         ax.set_ylabel(f"{t2.upper()} Std Return")
-        ax.set_zlabel("Density")
+        ax.grid(True, alpha=0.3)
 
 fig2.suptitle("Unconditional Generation: Joint Pairwise Distributions", fontsize=13, fontweight="bold")
 fig2.tight_layout()
