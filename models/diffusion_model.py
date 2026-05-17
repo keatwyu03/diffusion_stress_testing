@@ -300,7 +300,6 @@ class DiffusionModel:
                 f_expanded = f[:, None, None]
 
                 score = self.model(x, batch_time_step).sample
-                score = torch.zeros_like(score)  # DEBUG: disable score
                 if i == 0:
                     print(f"[DEBUG] Score magnitude (step 0): {score.abs().mean().item():.6f}", flush=True)
                 adjust = (1 + stoch**2) / 2
