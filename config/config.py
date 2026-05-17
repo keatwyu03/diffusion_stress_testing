@@ -51,7 +51,7 @@ class DataConfig:
     tickers: List[str] = None
     weekday_col: str = "weekday"
     seq_len: int = 64
-    test_days: int = 500
+    test_days: int = 3000
     winsorize_lower: float = 0.005
     winsorize_upper: float = 0.995
 

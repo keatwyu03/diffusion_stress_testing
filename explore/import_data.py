@@ -45,7 +45,6 @@ df['baa_flag'] = baa_flag.reindex(df.index, method = 'ffill')
 
 df = df[['unemp', 'unemp_flag', 'sp500', 'baa', 'baa_flag']]
 df = df.dropna()
-df = df[df.index >= '2015-01-01']
 
 df.to_csv("explore/macro_data_new.csv", index_label = "Date")
 
@@ -62,7 +61,6 @@ df_interp['baa'] = baa_log.reindex(df_interp.index).interpolate(method='spline',
 df_interp['baa_flag'] = baa_flag.reindex(df_interp.index).interpolate(method='spline', order = 3)
 df_interp = df_interp[['unemp', 'unemp_flag', 'sp500', 'baa', 'baa_flag']]
 df_interp = df_interp.dropna()
-df_interp = df_interp[df_interp.index >= '2015-01-01']
 
 df_interp.to_csv("explore/macro_data_interp.csv", index_label = "Date")
 
