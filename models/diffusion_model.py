@@ -295,6 +295,8 @@ class DiffusionModel:
                 f_expanded = f[:, None, None]
 
                 score = self.model(x, batch_time_step).sample
+                if i == 0:
+                    print(f"[DEBUG] Score magnitude (step 0): {score.abs().mean().item():.6f}", flush=True)
                 adjust = (1 + stoch**2) / 2
                 mean_x = (
                     x + (-f_expanded * x + adjust * (g_expanded**2) * score) * step_size
