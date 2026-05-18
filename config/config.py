@@ -81,11 +81,11 @@ class DiffusionConfig:
 
     # Training parameters
     batch_size: int = 75               #Stochastic minibatch gradient descent
-    n_epochs: int = 100                #Number of times to loop through the data
+    n_epochs: int = 300                #Number of times to loop through the data
     learning_rate: float = 1e-4        #Alpha Stepsize
     scheduler_type: str = "cosine"     #"cosine" or "plateau"
     scheduler_eta_min: float = 1e-6    #Minimum LR for cosine annealing
-    warmup_epochs: int = 25           #Linear warmup before cosine decay
+    warmup_epochs: int = 75           #Linear warmup before cosine decay
     scheduler_patience: int = 50       #Check convergence every X number of loops through the data
     scheduler_factor: float = 0.5      #Multiplier for the Learning rate when plateau
 
