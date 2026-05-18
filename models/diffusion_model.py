@@ -302,6 +302,22 @@ class DiffusionModel:
                 score = self.model(x, batch_time_step).sample
                 if i == 0:
                     print(f"[DEBUG] Score magnitude (step 0): {score.abs().mean().item():.6f}", flush=True)
+
+                diag_steps = [0, len(time_steps)//4, len(time_steps)//2, 3*len(time_steps)//4, len(time_steps)-2]
+                if i in diag_steps:
+                    drift_part      = (-f_expanded * x)
+                    score_part      = (g_expanded**2) * score
+                    noise_part_scale = torch.sqrt(step_size) * g_expanded
+                    print(f"\n[UNCOND DIAG step {i}]")
+                    print("t:", time_step.item())
+                    print("step_size:", step_size.item())
+                    print("x abs mean:", x.abs().mean().item())
+                    print("score abs mean:", score.abs().mean().item())
+                    print("drift abs mean:", drift_part.abs().mean().item())
+                    print("score_part abs mean:", score_part.abs().mean().item())
+                    print("score/drift ratio:", (score_part.abs().mean() / (drift_part.abs().mean() + 1e-12)).item())
+                    print("noise scale mean:", noise_part_scale.mean().item())
+
                 adjust = (1 + stoch**2) / 2
                 mean_x = (
                     x + (-f_expanded * x + adjust * (g_expanded**2) * score) * step_size
