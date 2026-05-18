@@ -28,13 +28,15 @@ data_processor.process_all()
 plot_tickers = config.portfolio.portfolio_tickers
 ch_idx = {t: config.data.tickers.index(t) for t in plot_tickers}
 
-# Real marginal distributions split by train/test period
-df_z       = data_processor.df_z
-df_z_train = df_z.iloc[:-config.data.test_days]
-df_z_test  = df_z.iloc[-config.data.test_days:]
+# Real marginal distributions — last day of each 64-day window
+X_train = data_processor.X_train  # (N_train, seq_len, channels)
+X_test  = data_processor.X_test   # (N_test,  seq_len, channels)
 
 real = {
-    t: {"train": df_z_train[t].values, "test": df_z_test[t].values}
+    t: {
+        "train": X_train[:, -1, config.data.tickers.index(t)].numpy(),
+        "test":  X_test[:,  -1, config.data.tickers.index(t)].numpy(),
+    }
     for t in plot_tickers
 }
 
@@ -60,7 +62,7 @@ uncond = diffusion_model.sample(
 ).cpu()  # (N_samples, channels, seq_len)
 
 gen = {
-    t: uncond[:, ch_idx[t], :].flatten().numpy()
+    t: uncond[:, ch_idx[t], -1].numpy()
     for t in plot_tickers
 }
 
