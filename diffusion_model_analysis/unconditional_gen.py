@@ -28,14 +28,16 @@ data_processor.process_all()
 plot_tickers = config.portfolio.portfolio_tickers
 ch_idx = {t: config.data.tickers.index(t) for t in plot_tickers}
 
-# Real marginal distributions — last day of each 64-day window
+# Real marginal distributions — last day of each 64-day window, unstandardized
 X_train = data_processor.X_train  # (N_train, seq_len, channels)
 X_test  = data_processor.X_test   # (N_test,  seq_len, channels)
+mu    = data_processor.mu_seq
+sigma = data_processor.sigma_seq
 
 real = {
     t: {
-        "train": X_train[:, -1, config.data.tickers.index(t)].numpy(),
-        "test":  X_test[:,  -1, config.data.tickers.index(t)].numpy(),
+        "train": (X_train[:, -1, config.data.tickers.index(t)].numpy() * sigma[t] + mu[t]),
+        "test":  (X_test[:,  -1, config.data.tickers.index(t)].numpy() * sigma[t] + mu[t]),
     }
     for t in plot_tickers
 }
@@ -62,7 +64,7 @@ uncond = diffusion_model.sample(
 ).cpu()  # (N_samples, channels, seq_len)
 
 gen = {
-    t: uncond[:, ch_idx[t], -1].numpy()
+    t: uncond[:, ch_idx[t], -1].numpy() * sigma[t] + mu[t]
     for t in plot_tickers
 }
 
@@ -90,7 +92,7 @@ for row, ticker in enumerate(plot_tickers):
 
         split_label = "In-Sample (Train)" if split == "train" else "Out-of-Sample (Test)"
         ax.set_title(f"{ticker.upper()} — {split_label}", fontsize=11)
-        ax.set_xlabel("Standardized Return")
+        ax.set_xlabel("Return")
         ax.set_ylabel("Density")
         ax.legend(fontsize=9)
         ax.grid(True, alpha=0.3)
