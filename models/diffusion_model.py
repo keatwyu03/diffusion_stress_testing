@@ -323,7 +323,7 @@ class DiffusionModel:
                     print("corr(score,  x):", torch.corrcoef(torch.stack([flat_x,  flat_score]))[0, 1].item())
                     print("corr(score, -x):", torch.corrcoef(torch.stack([-flat_x, flat_score]))[0, 1].item())
 
-                adjust = (1 + stoch**2) / 2
+                adjust = 1.0 #(1 + stoch**2) / 2
                 mean_x = (
                     x + (-f_expanded * x + adjust * (g_expanded**2) * score) * step_size
                 )
