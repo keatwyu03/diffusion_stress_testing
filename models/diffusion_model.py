@@ -110,7 +110,9 @@ class DiffusionModel:
         batch_size = x.shape[0]
         device = x.device
 
-        random_t = torch.rand(batch_size, device=device) * (1.0 - eps) + eps
+        # random_t = torch.rand(batch_size, device=device) * (1.0 - eps) + eps  # uniform
+        u = torch.rand(batch_size, device=device)
+        random_t = eps + (1.0 - eps) * u**2  # concentrate near t=0
         z = torch.randn_like(x)
         std = marginal_prob_std(random_t)
         std_expanded = std[:, None, None]
