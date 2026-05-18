@@ -55,13 +55,29 @@ diffusion_model = DiffusionModel(
 )
 diffusion_model.load("checkpoints/diffusion_model.pt")
 
-N_samples = 500
+N_samples = 5000
 print(f"Generating {N_samples} unconditional samples...")
 uncond = diffusion_model.sample(
     batch_size=N_samples,
     num_steps=config.diffusion.num_steps,
-    stoch=1,
+    stoch=0,
 ).cpu()  # (N_samples, channels, seq_len)
+
+# ── Diagnostics ───────────────────────────────────────────────────────────────
+for t in plot_tickers:
+    idx  = config.data.tickers.index(t)
+    cidx = ch_idx[t]
+
+    real_last = X_train[:, -1, idx].numpy()
+    gen_last  = uncond[:, cidx, -1].numpy()
+    real_all  = X_train[:, :, idx].numpy().reshape(-1)
+    gen_all   = uncond[:, cidx, :].numpy().reshape(-1)
+
+    print(f"\n{t}")
+    print("LAST real std / gen std:", real_last.std(), gen_last.std())
+    print("ALL  real std / gen std:", real_all.std(),  gen_all.std())
+    print("LAST real q:", np.quantile(real_last, [0.01, 0.05, 0.5, 0.95, 0.99]))
+    print("LAST gen  q:", np.quantile(gen_last,  [0.01, 0.05, 0.5, 0.95, 0.99]))
 
 gen = {
     t: uncond[:, ch_idx[t], -1].numpy() * sigma[t] + mu[t]
