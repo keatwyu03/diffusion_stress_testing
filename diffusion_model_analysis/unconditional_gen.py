@@ -63,6 +63,45 @@ uncond = diffusion_model.sample(
     stoch=0,
 ).cpu()  # (N_samples, channels, seq_len)
 
+
+def diagnose_score_target(diffusion_model, x, t_values=[1.0, 0.6, 0.35, 0.15, 0.01]):
+    diffusion_model.model.eval()
+
+    # x should be shaped (batch, channels, seq_len)
+    x = x.to(diffusion_model.device)
+
+    with torch.no_grad():
+        for t_val in t_values:
+            batch_size = x.shape[0]
+            t = torch.ones(batch_size, device=diffusion_model.device) * t_val
+
+            z = torch.randn_like(x)
+
+            std = diffusion_model.marginal_prob_std_fn(t)[:, None, None]
+            mean = diffusion_model.marginal_prob_mean_fn(t)[:, None, None]
+
+            perturbed_x = mean * x + std * z
+
+            pred_score = diffusion_model.model(perturbed_x, t).sample
+
+            target_score = -z / std
+
+            flat_pred = pred_score.flatten()
+            flat_target = target_score.flatten()
+
+            corr = torch.corrcoef(torch.stack([flat_pred, flat_target]))[0, 1].item()
+            mse = torch.mean((pred_score - target_score) ** 2).item()
+
+            print(f"\n[TARGET DIAG t={t_val}]")
+            print("pred score abs mean:", pred_score.abs().mean().item())
+            print("target score abs mean:", target_score.abs().mean().item())
+            print("corr(pred_score, target_score):", corr)
+            print("MSE:", mse)
+
+# ── Score target diagnostics ─────────────────────────────────────────────────
+x_batch = data_processor.X_train[:512].permute(0, 2, 1)  # (batch, channels, seq_len)
+diagnose_score_target(diffusion_model, x_batch)
+
 # ── Diagnostics ───────────────────────────────────────────────────────────────
 for t in plot_tickers:
     idx  = config.data.tickers.index(t)
