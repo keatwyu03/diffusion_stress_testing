@@ -92,7 +92,7 @@ class DiffusionModel:
         x: torch.Tensor,
         marginal_prob_mean: Callable,
         marginal_prob_std: Callable,
-        eps: float = 1e-5,
+        eps: float = 1e-3,
     ) -> torch.Tensor:
         """
         Loss function for training the score-based model
@@ -110,9 +110,19 @@ class DiffusionModel:
         batch_size = x.shape[0]
         device = x.device
 
-        # random_t = torch.rand(batch_size, device=device) * (1.0 - eps) + eps  # uniform
-        u = torch.rand(batch_size, device=device)
-        random_t = eps + (1.0 - eps) * u**2  # concentrate near t=0
+        #random_t = torch.rand(batch_size, device=device) * (1.0 - eps) + eps  # uniform
+
+        #Beta(2,2) to emphasize the middle block time stamps for more learning
+        dist = torch.distributions.Beta(2.0, 2.0)
+        u = dist.sample((batch_size,)).to(device)
+        random_t = eps + (1.0 - eps) * u
+        
+
+        #Low time stamp tests
+        # u = torch.rand(batch_size, device=device)
+        # random_t = eps + (1.0 - eps) * u**2  # concentrate near t=0
+
+
         z = torch.randn_like(x)
         std = marginal_prob_std(random_t)
         std_expanded = std[:, None, None]
@@ -323,9 +333,9 @@ class DiffusionModel:
                     print("corr(score,  x):", torch.corrcoef(torch.stack([flat_x,  flat_score]))[0, 1].item())
                     print("corr(score, -x):", torch.corrcoef(torch.stack([-flat_x, flat_score]))[0, 1].item())
 
-                adjust = 1.0 #(1 + stoch**2) / 2
+                adjust = (1 + stoch**2) / 2
                 mean_x = (
-                    x + (-f_expanded * x + adjust * (g_expanded**2) * score) * step_size
+                    x + (-f_expanded * x + adjust * (g_expanded**2) * 5.0 * score) * step_size
                 )
                 x = mean_x + stoch * torch.sqrt(step_size) * g_expanded * torch.randn_like(x)
 
