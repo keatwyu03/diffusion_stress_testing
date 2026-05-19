@@ -192,6 +192,16 @@ portfolio_tickers=["sp500", "baa"]
 
 ---
 
+## Experiments
+
+### 2026-05-19
+**Issue:** Generated std ≈ 2× real std. `corr(score, x)` collapses to ~0 by t=0.59.  
+**Cause:** `(score * σ + z)²` loss has σ²(t) weighting → no gradient signal at small t. Also `adjust` hardcoded to 1.0 instead of `(1+stoch²)/2`.  
+**Fix:** Switched to noise parameterization — predict `z`, loss = `(eps_pred - z)²`. Score recovered as `-eps_pred / σ(t)` at sampling. Fixed `adjust`.  
+**Config:** `n_epochs=600`, `warmup_epochs=150`, `lr=1e-4`, `batch_size=75`, cosine schedule.
+
+---
+
 ## Key Tensor Shapes
 
 | Tensor | Shape | Notes |
