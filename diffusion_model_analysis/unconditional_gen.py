@@ -36,8 +36,8 @@ sigma = data_processor.sigma_seq
 
 real = {
     t: {
-        "train": (X_train[:, -1, config.data.tickers.index(t)].numpy() * sigma[t] + mu[t]),
-        "test":  (X_test[:,  -1, config.data.tickers.index(t)].numpy() * sigma[t] + mu[t]),
+        "train": X_train[:, -1, config.data.tickers.index(t)].numpy(),
+        "test":  X_test[:,  -1, config.data.tickers.index(t)].numpy(),
     }
     for t in plot_tickers
 }
