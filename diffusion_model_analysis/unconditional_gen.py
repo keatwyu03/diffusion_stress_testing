@@ -31,8 +31,6 @@ ch_idx = {t: config.data.tickers.index(t) for t in plot_tickers}
 # Real marginal distributions — last day of each 64-day window, unstandardized
 X_train = data_processor.X_train  # (N_train, seq_len, channels)
 X_test  = data_processor.X_test   # (N_test,  seq_len, channels)
-mu    = data_processor.mu_seq
-sigma = data_processor.sigma_seq
 
 real = {
     t: {
@@ -98,10 +96,6 @@ def diagnose_score_target(diffusion_model, x, t_values=[1.0, 0.6, 0.35, 0.15, 0.
             print("corr(pred_score, target_score):", corr)
             print("MSE:", mse)
 
-# ── Score target diagnostics ─────────────────────────────────────────────────
-x_batch = data_processor.X_train[:512].permute(0, 2, 1)  # (batch, channels, seq_len)
-diagnose_score_target(diffusion_model, x_batch)
-
 # ── Diagnostics ───────────────────────────────────────────────────────────────
 for t in plot_tickers:
     idx  = config.data.tickers.index(t)
@@ -119,7 +113,7 @@ for t in plot_tickers:
     print("LAST gen  q:", np.quantile(gen_last,  [0.01, 0.05, 0.5, 0.95, 0.99]))
 
 gen = {
-    t: uncond[:, ch_idx[t], -1].numpy() * sigma[t] + mu[t]
+    t: uncond[:, ch_idx[t], -1].numpy()
     for t in plot_tickers
 }
 
