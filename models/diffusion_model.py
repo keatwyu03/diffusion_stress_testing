@@ -110,12 +110,12 @@ class DiffusionModel:
         batch_size = x.shape[0]
         device = x.device
 
-        #random_t = torch.rand(batch_size, device=device) * (1.0 - eps) + eps  # uniform
+        random_t = torch.rand(batch_size, device=device) * (1.0 - eps) + eps  # uniform
 
         #Beta(2,2) to emphasize the middle block time stamps for more learning
-        dist = torch.distributions.Beta(2.0, 2.0)
-        u = dist.sample((batch_size,)).to(device)
-        random_t = eps + (1.0 - eps) * u
+        # dist = torch.distributions.Beta(2.0, 2.0)
+        # u = dist.sample((batch_size,)).to(device)
+        # random_t = eps + (1.0 - eps) * u
         
 
         #Low time stamp tests
@@ -131,9 +131,12 @@ class DiffusionModel:
 
         perturbed_x = x * mean_expanded + z * std_expanded
 
-        score = self.model(perturbed_x, random_t).sample
+        # score = self.model(perturbed_x, random_t).sample
+        # loss = torch.mean(torch.sum((score * std_expanded + z) ** 2, dim=(1, 2)))
 
-        loss = torch.mean(torch.sum((score * std_expanded + z) ** 2, dim=(1, 2)))
+        # Noise parameterization: predict z directly, uniform loss weight across all t
+        eps_pred = self.model(perturbed_x, random_t).sample
+        loss = torch.mean(torch.sum((eps_pred - z) ** 2, dim=(1, 2)))
 
         return loss
 
@@ -309,7 +312,12 @@ class DiffusionModel:
                 f = self.drift_coeff_fn(batch_time_step)
                 f_expanded = f[:, None, None]
 
-                score = self.model(x, batch_time_step).sample
+                # score = self.model(x, batch_time_step).sample
+
+                # Noise parameterization: convert predicted noise to score
+                eps_pred = self.model(x, batch_time_step).sample
+                std_t = self.marginal_prob_std_fn(batch_time_step)[:, None, None].clamp(min=1e-3)
+                score = -eps_pred / std_t
                 if i == 0:
                     print(f"[DEBUG] Score magnitude (step 0): {score.abs().mean().item():.6f}", flush=True)
 
@@ -335,7 +343,7 @@ class DiffusionModel:
 
                 adjust = (1 + stoch**2) / 2
                 mean_x = (
-                    x + (-f_expanded * x + adjust * (g_expanded**2) * 5.0 * score) * step_size
+                    x + (-f_expanded * x + adjust * (g_expanded**2) * score) * step_size
                 )
                 x = mean_x + stoch * torch.sqrt(step_size) * g_expanded * torch.randn_like(x)
 
