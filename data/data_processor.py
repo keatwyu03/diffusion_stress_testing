@@ -148,8 +148,8 @@ class DataProcessor:
         self.load_returns()
         print(f"Loaded data shape: {self.df.shape}")
 
-        print("Removing weekday effect...")
-        self.remove_weekday_effect()
+        # print("Removing weekday effect...")
+        # self.remove_weekday_effect()
 
         print("Standardizing...")
         self.standardize()
