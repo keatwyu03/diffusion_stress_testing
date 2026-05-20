@@ -81,6 +81,8 @@ class DataProcessor:
         data = self.r_dw if self.r_dw is not None else self.df
         self.mu_seq = data.mean()
         self.sigma_seq = data.std()
+        # Clamp near-zero sigma (e.g. constant columns in test data) to avoid NaN
+        self.sigma_seq = self.sigma_seq.clip(lower=1e-8)
         z = (data - self.mu_seq) / self.sigma_seq
         self.df_z = z.dropna(how="any")
         return self.df_z
