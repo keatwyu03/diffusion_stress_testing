@@ -50,8 +50,8 @@ class DataConfig:
     csv_path: str = "explore/macro_data_new.csv"
     tickers: List[str] = None
     weekday_col: str = "weekday"
-    seq_len: int = 2
-    test_days: int = 0
+    seq_len: int = 64
+    test_days: int = 2000
     winsorize_lower: float = 0.0
     winsorize_upper: float = 0.0
 
