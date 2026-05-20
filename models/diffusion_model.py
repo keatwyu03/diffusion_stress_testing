@@ -343,7 +343,7 @@ class DiffusionModel:
 
                 adjust = (1 + stoch**2) / 2
                 mean_x = (
-                    x + (-f_expanded * x + adjust * (g_expanded**2) * score) * step_size
+                    x + (-f_expanded * x + adjust * (g_expanded**2) * 5.0 * score) * step_size
                 )
                 x = mean_x + stoch * torch.sqrt(step_size) * g_expanded * torch.randn_like(x)
 
