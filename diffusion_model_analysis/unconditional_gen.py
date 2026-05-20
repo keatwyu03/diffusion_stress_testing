@@ -133,11 +133,11 @@ for row, ticker in enumerate(plot_tickers):
             (real_vals, "darkorange", f"Real {split} (n={len(real_vals)})"),
             (gen_vals,  "steelblue",  f"Unconditional generated (n={len(gen_vals)})"),
         ]:
-            kde = gaussian_kde(vals, bw_method="silverman")
-            x   = np.linspace(min(real_vals.min(), gen_vals.min()) - 0.5,
-                               max(real_vals.max(), gen_vals.max()) + 0.5, 500)
-            ax.plot(x, kde(x), color=color, linewidth=2, label=label)
-            ax.hist(vals, bins=40, density=True, alpha=0.2, color=color)
+            # kde = gaussian_kde(vals, bw_method="silverman")
+            # x   = np.linspace(min(real_vals.min(), gen_vals.min()) - 0.5,
+            #                    max(real_vals.max(), gen_vals.max()) + 0.5, 500)
+            # ax.plot(x, kde(x), color=color, linewidth=2, label=label)
+            ax.hist(vals, bins=40, density=True, alpha=0.2, color=color, label=label)
 
         split_label = "In-Sample (Train)" if split == "train" else "Out-of-Sample (Test)"
         ax.set_title(f"{ticker.upper()} — {split_label}", fontsize=11)
