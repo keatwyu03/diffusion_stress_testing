@@ -50,10 +50,10 @@ class DataConfig:
     csv_path: str = "explore/macro_data_new.csv"
     tickers: List[str] = None
     weekday_col: str = "weekday"
-    seq_len: int = 64
-    test_days: int = 3000
-    winsorize_lower: float = 0.005
-    winsorize_upper: float = 0.995
+    seq_len: int = 2
+    test_days: int = 0
+    winsorize_lower: float = 0.0
+    winsorize_upper: float = 0.0
 
     def __post_init__(self):
         if self.tickers is None:
