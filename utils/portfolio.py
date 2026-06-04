@@ -164,43 +164,32 @@ class PortfolioAnalyzer:
         real_rp: List[float],
         real_avg: List[float],
         save_path: str = None,
+        n_bins: int = 80,
     ) -> None:
-        """
-        Plot portfolio comparison
+        """Plot portfolio comparison with shared bin edges and density normalisation."""
+        strategies = [
+            ("Equal-Weight",  gen_avg, real_avg),
+            ("Min-Variance",  gen_mv,  real_mv),
+            ("Risk-Parity",   gen_rp,  real_rp),
+        ]
 
-        Args:
-            gen_mv: Generated min-variance sums
-            gen_rp: Generated risk-parity sums
-            gen_avg: Generated equal-weight sums
-            real_mv: Real min-variance sums
-            real_rp: Real risk-parity sums
-            real_avg: Real equal-weight sums
-            save_path: Path to save the plot
-        """
-        fig, axes = plt.subplots(1, 3, figsize=(18, 5), sharey=True)
+        fig, axes = plt.subplots(1, 3, figsize=(18, 5), sharey=False)
 
-        # Equal-Weight
-        axes[0].hist(gen_avg, bins=100, alpha=0.6, label="Generated", color="C0")
-        axes[0].hist(
-            real_avg, bins=100, alpha=0.6, label="Real (Test Set)", color="C1"
-        )
-        axes[0].set_title(f"Equal-Weight Portfolio (last {5}-day sum)")
-        axes[0].set_xlabel("Sum of Log Returns")
-        axes[0].legend()
+        for ax, (name, gen, real) in zip(axes, strategies):
+            gen_arr  = np.array(gen)
+            real_arr = np.array(real)
+            lo = min(gen_arr.min(), real_arr.min())
+            hi = max(gen_arr.max(), real_arr.max())
+            bins = np.linspace(lo, hi, n_bins + 1)
 
-        # Min-Variance
-        axes[1].hist(gen_mv, bins=100, alpha=0.6, label="Generated", color="C0")
-        axes[1].hist(real_mv, bins=100, alpha=0.6, label="Real (Test Set)", color="C1")
-        axes[1].set_title(f"Min-Variance Portfolio (last {5}-day sum)")
-        axes[1].set_xlabel("Sum of Log Returns")
-        axes[1].legend()
-
-        # Risk-Parity
-        axes[2].hist(gen_rp, bins=100, alpha=0.6, label="Generated", color="C0")
-        axes[2].hist(real_rp, bins=100, alpha=0.6, label="Real (Test Set)", color="C1")
-        axes[2].set_title(f"Risk-Parity Portfolio (last {5}-day sum)")
-        axes[2].set_xlabel("Sum of Log Returns")
-        axes[2].legend()
+            ax.hist(real_arr, bins=bins, alpha=0.55, density=True,
+                    color="C1", label="Real")
+            ax.hist(gen_arr,  bins=bins, alpha=0.55, density=True,
+                    color="C0", label="Generated")
+            ax.set_title(f"{name} (last 5-day sum)", fontsize=12)
+            ax.set_xlabel("Sum of Log Returns")
+            ax.set_ylabel("Density")
+            ax.legend()
 
         plt.tight_layout()
         if save_path:
