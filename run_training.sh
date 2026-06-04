@@ -8,7 +8,7 @@ echo "CDG Finance - Model Training"
 echo "=========================================="
 
 # Create necessary directories
-mkdir -p checkpoints
+mkdir -p ckpt_new
 mkdir -p logs
 mkdir -p results
 
@@ -21,7 +21,7 @@ python -u main.py \
     2>&1 | tee logs/train_diffusion_hfunction.log
 
 # Check if diffusion and h-function training succeeded
-if [ ! -f "checkpoints/diffusion_model.pt" ] || [ ! -f "checkpoints/hfunction.pt" ]; then
+if [ ! -f "ckpt_new/diffusion_model.pt" ] || [ ! -f "ckpt_new/hfunction.pt" ]; then
     echo "ERROR: Diffusion or H-function training failed!"
     exit 1
 fi
@@ -38,7 +38,7 @@ python -u main.py \
     2>&1 | tee logs/train_qmodel.log
 
 # Check if Q-model training succeeded
-if [ ! -f "checkpoints/q_model.pt" ]; then
+if [ ! -f "ckpt_new/q_model.pt" ]; then
     echo "ERROR: Q-model training failed!"
     exit 1
 fi
@@ -49,7 +49,7 @@ echo ""
 echo "=========================================="
 echo "Training Complete!"
 echo "=========================================="
-echo "Trained models saved in checkpoints/:"
+echo "Trained models saved in ckpt_new/:"
 echo "  - diffusion_model.pt"
 echo "  - hfunction.pt"
 echo "  - q_model.pt"

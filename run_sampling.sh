@@ -18,8 +18,8 @@ mkdir -p logs
 mkdir -p results
 
 # Check if models exist
-if [ ! -f "checkpoints/diffusion_model.pt" ] || [ ! -f "checkpoints/hfunction.pt" ]; then
-    echo "ERROR: Required models not found in checkpoints/"
+if [ ! -f "ckpt_new/diffusion_model.pt" ] || [ ! -f "ckpt_new/hfunction.pt" ]; then
+    echo "ERROR: Required models not found in ckpt_new/"
     echo "Please run ./run_training.sh first"
     exit 1
 fi
@@ -56,7 +56,7 @@ echo "=========================================="
 echo "[2/4] In-Sample Analysis (with Q-model)"
 echo "=========================================="
 
-if [ -f "checkpoints/q_model.pt" ]; then
+if [ -f "ckpt_new/q_model.pt" ]; then
     python -u sample_insample.py \
         --use-q-model \
         --num-steps $NUM_STEPS \
@@ -101,7 +101,7 @@ echo "=========================================="
 echo "[4/4] Out-of-Sample Analysis (with Q-model)"
 echo "=========================================="
 
-if [ -f "checkpoints/q_model.pt" ]; then
+if [ -f "ckpt_new/q_model.pt" ]; then
     python -u sample_outsample.py \
         --use-q-model \
         --num-steps $NUM_STEPS \
