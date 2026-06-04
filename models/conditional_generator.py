@@ -6,28 +6,37 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import gc
-from diffusers import UNet1DModel
 from tqdm import tqdm
 from typing import Optional, Callable
 
+from .transformer_score import FinancialTransformerScore
+
 
 class GradientHUNet(nn.Module):
-    """Q-model: Gradient of H-function using UNet"""
+    """Q-model: approximates ∇H using a Transformer score network."""
 
-    def __init__(self, in_channels: int = 4, out_channels: int = 4, sample_size: int = 64):
+    def __init__(
+        self,
+        in_channels: int = 4,
+        out_channels: int = 4,
+        sample_size: int = 64,
+        embed_dim: int = 64,
+        n_heads: int = 4,
+        n_layers: int = 4,
+        cond_dim: int = 64,
+    ):
         super().__init__()
-        self.unet = UNet1DModel(
-            sample_size=sample_size,
-            in_channels=in_channels,
-            out_channels=out_channels,
-            block_out_channels=(64, 128, 512),
-            layers_per_block=1,
-            down_block_types=("DownBlock1D", "DownBlock1D", "DownBlock1D"),
-            up_block_types=("UpBlock1D", "UpBlock1D", "UpBlock1D"),
+        self.transformer = FinancialTransformerScore(
+            n_assets=in_channels,
+            seq_len=sample_size,
+            embed_dim=embed_dim,
+            n_heads=n_heads,
+            n_layers=n_layers,
+            cond_dim=cond_dim,
         )
 
     def forward(self, x, t):
-        return self.unet(x, t).sample
+        return self.transformer(x, t).sample
 
 
 class ConditionalGenerator:
@@ -64,21 +73,20 @@ class ConditionalGenerator:
         sample_size: int = 64,
         n_epochs: int = 500,
         learning_rate: float = 1e-4,
+        embed_dim: int = 64,
+        n_heads: int = 4,
+        n_layers: int = 4,
+        cond_dim: int = 64,
     ) -> None:
-        """
-        Train Q-model (gradient of H)
-
-        Args:
-            t_grid: Time grid
-            y_grid: Trajectory grid
-            in_channels: Input channels
-            out_channels: Output channels
-            sample_size: Sample size
-            n_epochs: Number of epochs
-            learning_rate: Learning rate
-        """
+        """Train Q-model (gradient of H)"""
         self.q_model = GradientHUNet(
-            in_channels=in_channels, out_channels=out_channels, sample_size=sample_size
+            in_channels=in_channels,
+            out_channels=out_channels,
+            sample_size=sample_size,
+            embed_dim=embed_dim,
+            n_heads=n_heads,
+            n_layers=n_layers,
+            cond_dim=cond_dim,
         ).to(self.device)
 
         optimizer = optim.Adam(self.q_model.parameters(), lr=learning_rate)
@@ -243,11 +251,25 @@ class ConditionalGenerator:
             print(f"Q-model saved to {path}")
 
     def load_q_model(
-        self, path: str, in_channels: int = 4, out_channels: int = 4, sample_size: int = 64
+        self,
+        path: str,
+        in_channels: int = 4,
+        out_channels: int = 4,
+        sample_size: int = 64,
+        embed_dim: int = 64,
+        n_heads: int = 4,
+        n_layers: int = 4,
+        cond_dim: int = 64,
     ) -> None:
         """Load Q-model weights"""
         self.q_model = GradientHUNet(
-            in_channels=in_channels, out_channels=out_channels, sample_size=sample_size
+            in_channels=in_channels,
+            out_channels=out_channels,
+            sample_size=sample_size,
+            embed_dim=embed_dim,
+            n_heads=n_heads,
+            n_layers=n_layers,
+            cond_dim=cond_dim,
         ).to(self.device)
         self.q_model.load_state_dict(torch.load(path))
         print(f"Q-model loaded from {path}")
