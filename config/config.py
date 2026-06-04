@@ -47,7 +47,7 @@ class DiffusionConfig:
     eps: float = 1e-4
 
     # Architecture: "unet" or "transformer"
-    arch: str = "unet"
+    arch: str = "transformer"
 
     # Transformer-specific parameters (used when arch="transformer")
     embed_dim: int = 128

@@ -104,8 +104,13 @@ def main(args):
         b_min=config.diffusion.b_min,
         b_max=config.diffusion.b_max,
         device=config.diffusion.device,
+        arch=config.diffusion.arch,
+        embed_dim=config.diffusion.embed_dim,
+        n_heads=config.diffusion.n_heads,
+        n_layers=config.diffusion.n_layers,
+        cond_dim=config.diffusion.cond_dim,
     )
-    diffusion_model.load("checkpoints/diffusion_model.pt")
+    diffusion_model.load("ckpt_new/diffusion_model.pt")
     print("Loaded diffusion model")
 
     # Load H-function
@@ -118,7 +123,7 @@ def main(args):
         event_threshold=config.hfunction.event_threshold,
         device=config.hfunction.device,
     )
-    h_trainer.load("checkpoints/hfunction.pt")
+    h_trainer.load("ckpt_new/hfunction.pt")
     print("Loaded H-function")
 
     # ==================== Extract Test Set Events ====================
@@ -153,7 +158,7 @@ def main(args):
 
     # Load Q-model if needed
     if config.conditional.use_q_model:
-        q_model_path = "checkpoints/q_model.pt"
+        q_model_path = "ckpt_new/q_model.pt"
         if os.path.exists(q_model_path):
             cond_generator.load_q_model(q_model_path)
             print("Loaded Q-model")

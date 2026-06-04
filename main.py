@@ -96,6 +96,11 @@ def main(args):
             b_min=config.diffusion.b_min,
             b_max=config.diffusion.b_max,
             device=config.diffusion.device,
+            arch=config.diffusion.arch,
+            embed_dim=config.diffusion.embed_dim,
+            n_heads=config.diffusion.n_heads,
+            n_layers=config.diffusion.n_layers,
+            cond_dim=config.diffusion.cond_dim,
         )
 
         # Get training data
@@ -113,8 +118,8 @@ def main(args):
         )
 
         # Save model
-        os.makedirs("checkpoints", exist_ok=True)
-        diffusion_model.save("checkpoints/diffusion_model.pt")
+        os.makedirs("ckpt_new", exist_ok=True)
+        diffusion_model.save("ckpt_new/diffusion_model.pt")
     else:
         print("\nSkipping diffusion training, loading from checkpoint...")
         diffusion_model = DiffusionModel(
@@ -126,8 +131,13 @@ def main(args):
             b_min=config.diffusion.b_min,
             b_max=config.diffusion.b_max,
             device=config.diffusion.device,
+            arch=config.diffusion.arch,
+            embed_dim=config.diffusion.embed_dim,
+            n_heads=config.diffusion.n_heads,
+            n_layers=config.diffusion.n_layers,
+            cond_dim=config.diffusion.cond_dim,
         )
-        diffusion_model.load("checkpoints/diffusion_model.pt")
+        diffusion_model.load("ckpt_new/diffusion_model.pt")
 
     # ==================== H-Function Training ====================
     if not args.skip_hfunction_training:
@@ -169,7 +179,7 @@ def main(args):
         )
 
         # Save model
-        h_trainer.save("checkpoints/hfunction.pt")
+        h_trainer.save("ckpt_new/hfunction.pt")
     else:
         print("\nSkipping H-function training, loading from checkpoint...")
         h_trainer = HFunctionTrainer(
@@ -181,7 +191,7 @@ def main(args):
             event_threshold=config.hfunction.event_threshold,
             device=config.hfunction.device,
         )
-        h_trainer.load("checkpoints/hfunction.pt")
+        h_trainer.load("ckpt_new/hfunction.pt")
 
     # ==================== Extract Events ====================
     print("\n" + "=" * 60)
@@ -247,7 +257,7 @@ def main(args):
             n_epochs=config.conditional.q_model_epochs,
             learning_rate=config.conditional.q_model_lr,
         )
-        cond_generator.save_q_model("checkpoints/q_model.pt")
+        cond_generator.save_q_model("ckpt_new/q_model.pt")
 
     # Generate conditional samples for TRAIN set events
     print(f"Generating {N_event_train} conditional samples for in-sample (train) events...")

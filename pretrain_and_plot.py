@@ -290,7 +290,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--skip-training", action="store_true",
-        help="Skip training and load diffusion model from checkpoints/",
+        help="Skip training and load diffusion model from ckpt_new/",
     )
     parser.add_argument(
         "--n-epochs", type=int, default=None,
