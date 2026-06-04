@@ -186,6 +186,11 @@ def main(args):
         b_min=config.diffusion.b_min,
         b_max=config.diffusion.b_max,
         device=device,
+        arch="transformer",
+        embed_dim=config.diffusion.embed_dim,
+        n_heads=config.diffusion.n_heads,
+        n_layers=config.diffusion.n_layers,
+        cond_dim=config.diffusion.cond_dim,
     )
 
     ckpt_path = "ckpt_new/diffusion_model.pt"
@@ -225,11 +230,15 @@ def main(args):
     # ------------------------------------------------------------------ #
     os.makedirs("results", exist_ok=True)
 
+    # Test set: X_test shape (N, 64, 4); permute to (N, 4, 64) for stock histograms
+    X_test = dp.X_test
+    X_test_transposed = X_test.permute(0, 2, 1)   # (N, 4, 64)
+
     # --- Plot A: per-stock return histograms ---
     print("\nPlotting per-stock return histograms...")
     plot_stock_histograms(
         generated=generated,
-        real_data=X_diffusion_train,
+        real_data=X_test_transposed,
         tickers=config.data.tickers,
         save_path="results/stock_return_histograms.png",
     )
@@ -246,13 +255,11 @@ def main(args):
     # Generated samples (N, 4, 64)
     gen_mv, gen_rp, gen_avg = portfolio_analyzer.analyze_samples(generated)
 
-    # Real training windows – X_train has shape (N, 64, 4) (seq_len, assets)
-    # Use a random subset if too large to keep things fast
-    X_train = dp.X_train
-    n_real  = min(args.n_samples, X_train.shape[0])
-    idx     = torch.randperm(X_train.shape[0])[:n_real]
-    X_real_subset = X_train[idx]
-    mask_all = torch.ones(n_real, dtype=torch.bool)
+    # Real test windows – X_test shape (N, 64, 4); use random subset if large
+    n_real        = min(args.n_samples, X_test.shape[0])
+    idx           = torch.randperm(X_test.shape[0])[:n_real]
+    X_real_subset = X_test[idx]
+    mask_all      = torch.ones(n_real, dtype=torch.bool)
 
     real_mv, real_rp, real_avg = portfolio_analyzer.analyze_test_set(
         X_real_subset, mask_all
@@ -262,7 +269,7 @@ def main(args):
         "GENERATED", gen_mv, gen_rp, gen_avg
     )
     portfolio_analyzer.summarize_statistics(
-        "REAL TRAIN", real_mv, real_rp, real_avg
+        "REAL TEST", real_mv, real_rp, real_avg
     )
 
     plot_portfolio_histograms(

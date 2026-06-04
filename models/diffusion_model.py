@@ -12,6 +12,8 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from typing import Tuple, Optional, Callable
 from tqdm import tqdm
 
+from .transformer_score import FinancialTransformerScore
+
 
 class DiffusionModel:
     """Variance Preserving (VP) Diffusion Model"""
@@ -26,6 +28,11 @@ class DiffusionModel:
         b_min: float = 0.1,
         b_max: float = 3.25,
         device: str = "cuda",
+        arch: str = "unet",
+        embed_dim: int = 128,
+        n_heads: int = 4,
+        n_layers: int = 6,
+        cond_dim: int = 128,
     ):
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -33,19 +40,30 @@ class DiffusionModel:
         self.b_min = b_min
         self.b_max = b_max
         self.device = device
+        self.arch = arch
 
-        # Create UNet model
-        self.model = UNet1DModel(
-            sample_size=sample_size,
-            in_channels=in_channels,
-            out_channels=out_channels,
-            layers_per_block=layers_per_block,
-            block_out_channels=block_out_channels,
-            down_block_types=("DownBlock1D", "DownBlock1D", "DownBlock1D"),
-            up_block_types=("UpBlock1D", "UpBlock1D", "UpBlock1D"),
-            time_embedding_type="fourier",
-            freq_shift=6,
-        ).to(device)
+        if arch == "transformer":
+            self.model = FinancialTransformerScore(
+                n_assets=in_channels,
+                seq_len=sample_size,
+                embed_dim=embed_dim,
+                n_heads=n_heads,
+                n_layers=n_layers,
+                cond_dim=cond_dim,
+            ).to(device)
+        else:
+            # Create UNet model
+            self.model = UNet1DModel(
+                sample_size=sample_size,
+                in_channels=in_channels,
+                out_channels=out_channels,
+                layers_per_block=layers_per_block,
+                block_out_channels=block_out_channels,
+                down_block_types=("DownBlock1D", "DownBlock1D", "DownBlock1D"),
+                up_block_types=("UpBlock1D", "UpBlock1D", "UpBlock1D"),
+                time_embedding_type="fourier",
+                freq_shift=6,
+            ).to(device)
 
         # Create VP diffusion functions
         self.marginal_prob_mean_fn = functools.partial(

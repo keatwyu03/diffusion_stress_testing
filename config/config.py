@@ -46,6 +46,15 @@ class DiffusionConfig:
     num_steps: int = 200
     eps: float = 1e-4
 
+    # Architecture: "unet" or "transformer"
+    arch: str = "unet"
+
+    # Transformer-specific parameters (used when arch="transformer")
+    embed_dim: int = 128
+    n_heads: int = 4
+    n_layers: int = 6
+    cond_dim: int = 128
+
 
 @dataclass
 class HFunctionConfig:
