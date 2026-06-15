@@ -165,8 +165,11 @@ def main(args):
         weekday_col=config.data.weekday_col,
         seq_len=config.data.seq_len,
         test_days=config.data.test_days,
-        winsorize_lower=0.0,
-        winsorize_upper=1.0,
+        start_date=config.data.start_date,
+        end_date=config.data.end_date,
+        train_end_date=config.data.train_end_date,
+        winsorize_lower=config.data.winsorize_lower,
+        winsorize_upper=config.data.winsorize_upper,
     )
     dp.process_all()
 
@@ -186,7 +189,7 @@ def main(args):
         b_min=config.diffusion.b_min,
         b_max=config.diffusion.b_max,
         device=device,
-        arch="transformer",
+        arch=config.diffusion.arch,
         embed_dim=config.diffusion.embed_dim,
         n_heads=config.diffusion.n_heads,
         n_layers=config.diffusion.n_layers,
@@ -216,9 +219,13 @@ def main(args):
     # ------------------------------------------------------------------ #
     # 3. Unconditional generation
     # ------------------------------------------------------------------ #
-    print(f"\n[3/3] Generating {args.n_samples} unconditional samples ...")
+    # n_samples: default to test set size so generated vs real counts always match
+    X_test = dp.X_test
+    n_samples = args.n_samples if args.n_samples is not None else X_test.shape[0]
+
+    print(f"\n[3/3] Generating {n_samples} unconditional samples ...")
     generated = diffusion.sample(
-        batch_size=args.n_samples,
+        batch_size=n_samples,
         num_steps=config.diffusion.num_steps,
         stoch=0.5,
         eps=config.diffusion.eps,
@@ -230,15 +237,17 @@ def main(args):
     # ------------------------------------------------------------------ #
     os.makedirs("results", exist_ok=True)
 
-    # Test set: X_test shape (N, 64, 4); permute to (N, 4, 64) for stock histograms
-    X_test = dp.X_test
-    X_test_transposed = X_test.permute(0, 2, 1)   # (N, 4, 64)
+    # Draw a fixed random subset of test windows used consistently in both plots
+    n_real = min(n_samples, X_test.shape[0])
+    idx_real = torch.randperm(X_test.shape[0])[:n_real]
+    X_real_subset = X_test[idx_real]              # (n_real, 64, 4)
 
     # --- Plot A: per-stock return histograms ---
     print("\nPlotting per-stock return histograms...")
+    # X_test: (N, 64, 4) → permute to (N, 4, 64) for stock axis
     plot_stock_histograms(
         generated=generated,
-        real_data=X_test_transposed,
+        real_data=X_real_subset.permute(0, 2, 1),  # (n_real, 4, 64)
         tickers=config.data.tickers,
         save_path="results/stock_return_histograms.png",
     )
@@ -255,11 +264,8 @@ def main(args):
     # Generated samples (N, 4, 64)
     gen_mv, gen_rp, gen_avg = portfolio_analyzer.analyze_samples(generated)
 
-    # Real test windows – X_test shape (N, 64, 4); use random subset if large
-    n_real        = min(args.n_samples, X_test.shape[0])
-    idx           = torch.randperm(X_test.shape[0])[:n_real]
-    X_real_subset = X_test[idx]
-    mask_all      = torch.ones(n_real, dtype=torch.bool)
+    # Real test windows — same subset as stock histograms
+    mask_all = torch.ones(n_real, dtype=torch.bool)
 
     real_mv, real_rp, real_avg = portfolio_analyzer.analyze_test_set(
         X_real_subset, mask_all
@@ -297,8 +303,8 @@ if __name__ == "__main__":
         help="Override number of training epochs (default: use config)",
     )
     parser.add_argument(
-        "--n-samples", type=int, default=500,
-        help="Number of unconditional samples to generate (default: 500)",
+        "--n-samples", type=int, default=None,
+        help="Number of unconditional samples to generate (default: match test set size)",
     )
     parser.add_argument(
         "--device", type=str, default=None,

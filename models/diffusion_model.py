@@ -28,7 +28,7 @@ class DiffusionModel:
         b_min: float = 0.1,
         b_max: float = 3.25,
         device: str = "cuda",
-        arch: str = "unet",
+        arch: str = "transformer",
         embed_dim: int = 128,
         n_heads: int = 4,
         n_layers: int = 6,
@@ -307,7 +307,8 @@ class DiffusionModel:
                 x = mean_x + stoch * torch.sqrt(step_size) * g_expanded * torch.randn_like(x)
 
                 if return_path:
-                    path_t.append(batch_time_step.clone())
+                    next_batch_t = torch.ones(batch_size, device=self.device) * next_t
+                    path_t.append(next_batch_t)
                     path_x.append(x.clone())
 
         if return_path:

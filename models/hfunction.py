@@ -9,6 +9,8 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from typing import Tuple, Callable
 from tqdm import tqdm
 
+from .transformer_score import GaussianFourierFeatures, DualAxisBlock
+
 
 class GaussianFourierProjection(nn.Module):
     """Gaussian random features for encoding time steps"""
@@ -71,6 +73,61 @@ class HFunctionCNN(nn.Module):
         return out
 
 
+class HFunctionTransformer(nn.Module):
+    """H-function network using dual-axis Transformer architecture."""
+
+    def __init__(
+        self,
+        n_assets: int = 4,
+        seq_len: int = 64,
+        embed_dim: int = 128,
+        n_heads: int = 4,
+        n_layers: int = 4,
+        cond_dim: int = 128,
+    ):
+        super().__init__()
+        self.input_proj = nn.Linear(1, embed_dim)
+        self.temporal_pos = nn.Parameter(torch.randn(1, 1, seq_len, embed_dim) * 0.02)
+        self.asset_emb    = nn.Parameter(torch.randn(1, n_assets, 1, embed_dim) * 0.02)
+
+        self.time_embed = nn.Sequential(
+            GaussianFourierFeatures(cond_dim),
+            nn.Linear(cond_dim, cond_dim),
+            nn.SiLU(),
+            nn.Linear(cond_dim, cond_dim),
+        )
+
+        self.blocks = nn.ModuleList([
+            DualAxisBlock(embed_dim, n_heads, cond_dim)
+            for _ in range(n_layers)
+        ])
+
+        self.norm = nn.LayerNorm(embed_dim)
+        self.head = nn.Sequential(
+            nn.Linear(embed_dim, embed_dim // 2),
+            nn.SiLU(),
+            nn.Linear(embed_dim // 2, 1),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        # x: (B, A, T),  t: (B,) or scalar
+        if t.ndim == 0:
+            t = t.unsqueeze(0).expand(x.shape[0])
+        elif t.ndim == 2:
+            t = t.squeeze(-1)
+
+        t_emb = self.time_embed(t)                    # (B, cond_dim)
+        h = self.input_proj(x.unsqueeze(-1))          # (B, A, T, embed_dim)
+        h = h + self.temporal_pos + self.asset_emb
+
+        for block in self.blocks:
+            h = block(h, t_emb)
+
+        h = self.norm(h).mean(dim=(1, 2))             # (B, embed_dim) global avg pool
+        return self.head(h)                           # (B, 1)
+
+
 class HFunctionTrainer:
     """Trainer for H-function"""
 
@@ -83,6 +140,10 @@ class HFunctionTrainer:
         event_window: int = 10,
         event_threshold: float = -3.0,
         device: str = "cuda",
+        arch: str = "transformer",
+        n_heads: int = 4,
+        n_layers: int = 4,
+        cond_dim: int = 128,
     ):
         self.asset_dim = asset_dim
         self.time_steps = time_steps
@@ -91,10 +152,19 @@ class HFunctionTrainer:
         self.event_threshold = event_threshold
         self.device = device
 
-        # Create model
-        self.model = HFunctionCNN(
-            asset_dim=asset_dim, time_steps=time_steps, embed_dim=embed_dim
-        ).to(device)
+        if arch == "transformer":
+            self.model = HFunctionTransformer(
+                n_assets=asset_dim,
+                seq_len=time_steps,
+                embed_dim=embed_dim,
+                n_heads=n_heads,
+                n_layers=n_layers,
+                cond_dim=cond_dim,
+            ).to(device)
+        else:
+            self.model = HFunctionCNN(
+                asset_dim=asset_dim, time_steps=time_steps, embed_dim=embed_dim
+            ).to(device)
 
     def train(
         self,

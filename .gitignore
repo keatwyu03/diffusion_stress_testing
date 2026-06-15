@@ -50,6 +50,7 @@ env/
 
 # Model checkpoints
 checkpoints/
+ckpt_new/
 *.pt
 *.pth
 *.ckpt

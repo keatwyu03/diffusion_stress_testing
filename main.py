@@ -75,11 +75,21 @@ def main(args):
         weekday_col=config.data.weekday_col,
         seq_len=config.data.seq_len,
         test_days=config.data.test_days,
+        start_date=config.data.start_date,
+        end_date=config.data.end_date,
+        train_end_date=config.data.train_end_date,
         winsorize_lower=config.data.winsorize_lower,
         winsorize_upper=config.data.winsorize_upper,
     )
 
     data_processor.process_all()
+
+    # Compute standardized event threshold from raw log return threshold
+    tsla_ticker = config.data.tickers[config.hfunction.event_asset_idx]
+    sigma_tsla = float(data_processor.sigma_seq[tsla_ticker])
+    config.hfunction.event_threshold = config.hfunction.event_threshold_raw / sigma_tsla
+    print(f"Event threshold: {config.hfunction.event_threshold_raw:.1%} raw "
+          f"→ {config.hfunction.event_threshold:.4f} std  (σ_{tsla_ticker}={sigma_tsla:.4f})")
 
     # ==================== Diffusion Model Training ====================
     if not args.skip_diffusion_training:
@@ -153,6 +163,10 @@ def main(args):
             event_window=config.hfunction.event_window,
             event_threshold=config.hfunction.event_threshold,
             device=config.hfunction.device,
+            arch=config.hfunction.arch,
+            n_heads=config.hfunction.n_heads,
+            n_layers=config.hfunction.n_layers,
+            cond_dim=config.hfunction.cond_dim,
         )
 
         # Generate training paths
@@ -160,7 +174,7 @@ def main(args):
         t_grid, y_grid, Y_T = diffusion_model.sample(
             batch_size=config.hfunction.train_batch_size,
             num_steps=config.diffusion.num_steps,
-            stoch=0.2,
+            stoch=config.hfunction.train_stoch,
             return_path=True,
         )
 
@@ -170,7 +184,7 @@ def main(args):
             y_grid=y_grid,
             Y_T=Y_T,
             n_epochs=config.hfunction.n_epochs,
-            batch_size=config.hfunction.train_batch_size,
+            batch_size=config.hfunction.h_mini_batch_size,
             learning_rate=config.hfunction.learning_rate,
             weight_decay=config.hfunction.weight_decay,
             scheduler_patience=config.hfunction.scheduler_patience,
@@ -190,6 +204,10 @@ def main(args):
             event_window=config.hfunction.event_window,
             event_threshold=config.hfunction.event_threshold,
             device=config.hfunction.device,
+            arch=config.hfunction.arch,
+            n_heads=config.hfunction.n_heads,
+            n_layers=config.hfunction.n_layers,
+            cond_dim=config.hfunction.cond_dim,
         )
         h_trainer.load("ckpt_new/hfunction.pt")
 
@@ -202,7 +220,7 @@ def main(args):
     X_train = data_processor.X_train
     asset_sums_train = X_train.sum(dim=2)
 
-    last_window_train = X_train[:, config.hfunction.event_asset_idx, -config.hfunction.event_window :]
+    last_window_train = X_train[:, -config.hfunction.event_window:, config.hfunction.event_asset_idx]
     sum_last_window_train = last_window_train.sum(dim=1)
     mask_train = sum_last_window_train <= config.hfunction.event_threshold
 
@@ -216,7 +234,7 @@ def main(args):
     X_test = data_processor.X_test
     asset_sums_test = X_test.sum(dim=2)
 
-    last_window_test = X_test[:, config.hfunction.event_asset_idx, -config.hfunction.event_window :]
+    last_window_test = X_test[:, -config.hfunction.event_window:, config.hfunction.event_asset_idx]
     sum_last_window_test = last_window_test.sum(dim=1)
     mask_test = sum_last_window_test <= config.hfunction.event_threshold
 
@@ -243,12 +261,12 @@ def main(args):
     )
 
     # Optionally train Q-model
-    if config.conditional.use_q_model and not args.skip_qmodel_training:
+    if (config.conditional.use_q_model or args.train_q_model) and not args.skip_qmodel_training:
         print("Training Q-model...")
         t_grid, y_grid, _ = diffusion_model.sample(
-            batch_size=config.hfunction.train_batch_size,
+            batch_size=config.conditional.q_model_train_batch_size,
             num_steps=config.diffusion.num_steps,
-            stoch=0.2,
+            stoch=config.conditional.q_model_train_stoch,
             return_path=True,
         )
         cond_generator.train_q_model(
@@ -256,8 +274,16 @@ def main(args):
             y_grid=y_grid,
             n_epochs=config.conditional.q_model_epochs,
             learning_rate=config.conditional.q_model_lr,
+            mini_batch_size=config.conditional.q_model_mini_batch_size,
+            embed_dim=config.conditional.q_embed_dim,
+            n_heads=config.conditional.q_n_heads,
+            n_layers=config.conditional.q_n_layers,
+            cond_dim=config.conditional.q_cond_dim,
         )
         cond_generator.save_q_model("ckpt_new/q_model.pt")
+
+    # Use Q-model if it was trained this run or already loaded via config
+    use_q_model = config.conditional.use_q_model or args.train_q_model
 
     # Generate conditional samples for TRAIN set events
     print(f"Generating {N_event_train} conditional samples for in-sample (train) events...")
@@ -267,7 +293,7 @@ def main(args):
         num_steps=config.conditional.num_steps,
         stoch=config.conditional.stoch,
         eta=config.conditional.eta,
-        use_q_model=config.conditional.use_q_model,
+        use_q_model=use_q_model,
     )
 
     # Generate conditional samples for TEST set events
@@ -278,7 +304,7 @@ def main(args):
         num_steps=config.conditional.num_steps,
         stoch=config.conditional.stoch,
         eta=config.conditional.eta,
-        use_q_model=config.conditional.use_q_model,
+        use_q_model=use_q_model,
     )
 
     # ==================== Portfolio Analysis ====================
@@ -301,7 +327,7 @@ def main(args):
 
     # Analyze train set
     print("Analyzing train set...")
-    real_mv_train, real_rp_train, real_avg_train = portfolio_analyzer.analyze_test_set(X_train, mask_train)
+    real_mv_train, real_rp_train, real_avg_train = portfolio_analyzer.analyze_test_set(X_train, mask_train, start_weekdays=data_processor.start_weekdays_train)
 
     # Print statistics
     print("\n=== In-Sample Portfolio Comparison Statistics ===")
@@ -326,7 +352,7 @@ def main(args):
 
     # Analyze test set
     print("Analyzing test set...")
-    real_mv_test, real_rp_test, real_avg_test = portfolio_analyzer.analyze_test_set(X_test, mask_test)
+    real_mv_test, real_rp_test, real_avg_test = portfolio_analyzer.analyze_test_set(X_test, mask_test, start_weekdays=data_processor.start_weekdays_test)
 
     # Print statistics
     print("\n=== Out-of-Sample Portfolio Comparison Statistics ===")
@@ -399,6 +425,11 @@ if __name__ == "__main__":
         "--skip-qmodel-training",
         action="store_true",
         help="Skip Q-model training",
+    )
+    parser.add_argument(
+        "--train-q-model",
+        action="store_true",
+        help="Force Q-model training (overrides config.conditional.use_q_model)",
     )
     parser.add_argument(
         "--no-wandb",

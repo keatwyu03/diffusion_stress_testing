@@ -17,6 +17,9 @@ class DataProcessor:
         weekday_col: str = "weekday",
         seq_len: int = 64,
         test_days: int = 700,
+        start_date: str = None,
+        end_date: str = None,
+        train_end_date: str = None,
         winsorize_lower: float = 0.005,
         winsorize_upper: float = 0.995,
     ):
@@ -25,6 +28,9 @@ class DataProcessor:
         self.weekday_col = weekday_col
         self.seq_len = seq_len
         self.test_days = test_days
+        self.start_date = start_date
+        self.end_date = end_date
+        self.train_end_date = train_end_date
         self.winsorize_lower = winsorize_lower
         self.winsorize_upper = winsorize_upper
 
@@ -50,12 +56,16 @@ class DataProcessor:
         self.y_dates_test = None
 
     def load_returns(self) -> pd.DataFrame:
-        """Load returns from CSV"""
+        """Load returns from CSV, optionally filtered to [start_date, end of data]"""
         df = pd.read_csv(self.csv_path)
         if "Date" in df.columns:
             df["Date"] = pd.to_datetime(df["Date"])
             df = df.sort_values("Date").set_index("Date")
         df = df[self.tickers + [self.weekday_col]].dropna()
+        if self.start_date is not None:
+            df = df[df.index >= pd.to_datetime(self.start_date)]
+        if self.end_date is not None:
+            df = df[df.index <= pd.to_datetime(self.end_date)]
         self.df = df
         return df
 
@@ -91,13 +101,15 @@ class DataProcessor:
         """Create sequences from standardized returns"""
         z_values = self.df_z.values
         dates = self.df_z.index.to_numpy()
+        weekday_arr = self.df[self.weekday_col].values  # aligned with df_z
         T, D = z_values.shape
-        X_list, y_list, idx_list = [], [], []
+        X_list, y_list, idx_list, sw_list = [], [], [], []
 
         for t in range(self.seq_len, T):
             X_list.append(z_values[t - self.seq_len : t, :])
             y_list.append(z_values[t, :])
             idx_list.append(dates[t])
+            sw_list.append(int(weekday_arr[t - self.seq_len]))  # weekday of window start
 
         X = np.stack(X_list, axis=0)
         y = np.stack(y_list, axis=0)
@@ -106,6 +118,7 @@ class DataProcessor:
         self.X = X
         self.y = y
         self.y_dates = idx
+        self.start_weekdays = np.array(sw_list, dtype=np.int8)
         return X, y, idx
 
     def train_test_split(self) -> None:
@@ -113,14 +126,26 @@ class DataProcessor:
         if self.X is None:
             raise ValueError("Must call make_sequences() first")
 
-        # NumPy splits
-        X_train_np = self.X[: -self.test_days]
-        y_train_np = self.y[: -self.test_days]
-        y_dates_train = self.y_dates[: -self.test_days]
+        if self.train_end_date is not None:
+            # Split at the specified date boundary
+            cutoff = pd.to_datetime(self.train_end_date)
+            # y_dates[i] is the date at position t (one day after the window ends)
+            # so sequences where y_dates <= cutoff belong to train
+            train_mask = self.y_dates <= cutoff
+            split_idx = int(train_mask.sum())
+        else:
+            split_idx = len(self.X) - self.test_days
 
-        X_test_np = self.X[-self.test_days :]
-        y_test_np = self.y[-self.test_days :]
-        y_dates_test = self.y_dates[-self.test_days :]
+        X_train_np = self.X[:split_idx]
+        y_train_np = self.y[:split_idx]
+        y_dates_train = self.y_dates[:split_idx]
+
+        X_test_np = self.X[split_idx:]
+        y_test_np = self.y[split_idx:]
+        y_dates_test = self.y_dates[split_idx:]
+
+        self.start_weekdays_train = self.start_weekdays[:split_idx]
+        self.start_weekdays_test  = self.start_weekdays[split_idx:]
 
         # Convert to torch tensors
         self.X = torch.tensor(self.X, dtype=torch.float32)
@@ -152,7 +177,8 @@ class DataProcessor:
         self.make_sequences()
         print(f"X shape: {self.X.shape}, y shape: {self.y.shape}")
 
-        print(f"Splitting into train/test (test_days={self.test_days})...")
+        split_info = f"train_end_date={self.train_end_date}" if self.train_end_date else f"test_days={self.test_days}"
+        print(f"Splitting into train/test ({split_info})...")
         self.train_test_split()
         print(f"Train: {self.X_train.shape}, Test: {self.X_test.shape}")
 
@@ -165,8 +191,16 @@ class DataProcessor:
             X_all.append(data[i : i + window_size].T)
         X_all = torch.stack(X_all)
 
-        # Return only training portion
-        X_diffusion_train = X_all[: -self.test_days]
+        # Return only training portion, consistent with train_test_split boundary
+        if self.train_end_date is not None:
+            cutoff = pd.to_datetime(self.train_end_date)
+            dates_all = self.df_z_wins.index
+            # Each window i ends at dates_all[i + window_size - 1]
+            end_dates = dates_all[window_size - 1:]
+            n_train = int((end_dates <= cutoff).sum())
+            X_diffusion_train = X_all[:n_train]
+        else:
+            X_diffusion_train = X_all[: -self.test_days]
         return X_diffusion_train
 
     def invert_samples(

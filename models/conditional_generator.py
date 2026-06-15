@@ -73,6 +73,7 @@ class ConditionalGenerator:
         sample_size: int = 64,
         n_epochs: int = 500,
         learning_rate: float = 1e-4,
+        mini_batch_size: int = 512,
         embed_dim: int = 64,
         n_heads: int = 4,
         n_layers: int = 4,
@@ -93,7 +94,7 @@ class ConditionalGenerator:
 
         print("Training Q-model...")
         for epoch in range(n_epochs):
-            loss = self._covariation_loss(t_grid, y_grid)
+            loss = self._covariation_loss(t_grid, y_grid, mini_batch_size)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -104,17 +105,19 @@ class ConditionalGenerator:
         print("Q-model training complete!")
 
     def _covariation_loss(
-        self, t_grid: torch.Tensor, y_grid: torch.Tensor
+        self, t_grid: torch.Tensor, y_grid: torch.Tensor, mini_batch_size: int = 512
     ) -> torch.Tensor:
         """Compute covariation loss for Q-model"""
-        num_steps, batch_size, x_dim, seq_len = y_grid.shape
+        num_steps, n_paths, x_dim, seq_len = y_grid.shape
 
-        idx = torch.randint(0, num_steps - 1, (batch_size,), device=y_grid.device)
+        # Sample mini_batch_size (step, path) pairs randomly from all paths
+        step_idx = torch.randint(0, num_steps - 1, (mini_batch_size,), device=y_grid.device)
+        path_idx = torch.randint(0, n_paths, (mini_batch_size,), device=y_grid.device)
 
-        t = t_grid[idx, torch.arange(batch_size)]
-        t_next = t_grid[idx + 1, torch.arange(batch_size)]
-        y = y_grid[idx, torch.arange(batch_size)]
-        y_next = y_grid[idx + 1, torch.arange(batch_size)]
+        t = t_grid[step_idx, path_idx]
+        t_next = t_grid[step_idx + 1, path_idx]
+        y = y_grid[step_idx, path_idx]
+        y_next = y_grid[step_idx + 1, path_idx]
 
         h_t = self.h_model(y, t)
         h_next = self.h_model(y_next, t_next)
