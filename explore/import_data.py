@@ -29,29 +29,20 @@ data = {
 }
 
 
-baa_threshold = 0.05
 baa_log = np.log(data['baa'] / data['baa'].shift(1))
 
-cond_series = data[cond_event]
-cond_diff = cond_series.diff(1)
-cond_flag = (cond_diff.abs() >= h_threshold).astype(float).fillna(0.0)
+cond_series = data[cond_event]  # unemployment level
 
 tickers = ["AAPL", "ORCL", "MSFT", "IBM"]
-df = yf.download(tickers, start = "1950-01-01", auto_adjust=True)["Close"]
+df = yf.download(tickers, start = "2010-01-01", auto_adjust=True)["Close"]
 log_ret = np.log(df / df.shift(1)).dropna()
 
-baa_flag = (baa_log.abs() >= baa_threshold).astype(float).fillna(0.0)
-
-df[cond_event]            = cond_diff.reindex(df.index, method='ffill')
-df[f"{cond_event}_flag"]  = cond_flag.reindex(df.index, method='ffill')
-df['baa']                 = baa_log.reindex(df.index, method='ffill')
-df['baa_flag']            = baa_flag.reindex(df.index, method='ffill')
+df[cond_event] = cond_series.reindex(df.index).interpolate(method='time')
+df['baa']      = baa_log.reindex(df.index).interpolate(method='time')
 
 df_out = pd.DataFrame({
     cond_event:            df[cond_event],
-    f"{cond_event}_flag":  df[f"{cond_event}_flag"],
     "baa":                 df["baa"],
-    "baa_flag":            df["baa_flag"],
     "AAPL":                log_ret["AAPL"],
     "ORCL":                log_ret["ORCL"],
     "MSFT":                log_ret["MSFT"],
@@ -61,5 +52,35 @@ df_out = pd.DataFrame({
 df_out = df_out.dropna()
 df_out.to_csv("explore/macro_data_new.csv", index_label="Date")
 
-print(f"{cond_event} flag count (|change| > {h_threshold}): {int(df[f'{cond_event}_flag'].sum())}")
-print(f"total rows: {len(df)}")
+print(f"total rows: {len(df_out)}")
+
+seq_len    = _cfg.data.seq_len
+event_win  = _cfg.hfunction.event_window
+test_days  = _cfg.data.test_days
+
+vals = df_out[cond_event].values
+n_total  = len(vals)
+n_train  = n_total - test_days
+
+# standardize using train set mean/std only
+train_mean = vals[:n_train].mean()
+train_std  = vals[:n_train].std()
+vals_std   = (vals - train_mean) / train_std
+
+split_date = df_out.index[n_train]
+print(f"Split date: {split_date.date()}  (train={n_train}, test={test_days})")
+print(f"Train unemp level: mean={train_mean:.4f}  std={train_std:.4f}")
+
+# count events: abs(std_level[end] - std_level[start]) >= threshold over event_window
+def count_events(vs):
+    count = 0
+    for t in range(event_win, len(vs)):
+        if abs(vs[t] - vs[t - event_win]) >= h_threshold:
+            count += 1
+    return count
+
+train_events = count_events(vals_std[:n_train])
+test_events  = count_events(vals_std[n_train:])
+
+print(f"TRAIN events: {train_events} / {n_train - event_win}  ({100*train_events/(n_train - event_win):.1f}%)")
+print(f"TEST  events: {test_events} / {max(test_days - event_win, 1)}  ({100*test_events/max(test_days - event_win, 1):.1f}%)")

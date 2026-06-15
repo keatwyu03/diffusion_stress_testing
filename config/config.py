@@ -50,7 +50,7 @@ class DataConfig:
     tickers: List[str] = None
     weekday_col: str = "weekday"
     seq_len: int = 64
-    test_days: int = 2000             # used only when train_end_date is None
+    test_days: int = 1000             # used only when train_end_date is None
     start_date: str = None            # data window start (None = use all)
     end_date: str = None              # data window end (None = use all)
     train_end_date: str = None        # last day of train set (None = use test_days)
@@ -110,8 +110,8 @@ class HFunctionConfig:
 
     device: str = field(default_factory=_default_device)
     asset_dim: int = 3
-    time_steps: int = 128
-    embed_dim: int = 256
+    time_steps: int = 64
+    embed_dim: int = 128
 
     # Training parameters
     train_batch_size: int = 256        # number of noisy trajectories for unconditional diffusion
@@ -126,8 +126,8 @@ class HFunctionConfig:
     # Event condition
     event_type: str = "change"         # "sum", "change", or "absval"
     event_asset_idx: int = 0           # which asset to watch for the shock
-    event_window: int = 3              # lookback period
-    event_threshold: float = 1.2       # threshold in standardized units
+    event_window: int = 64              # lookback period
+    event_threshold: float = 0.1       # threshold in standardized units
 
     # Constraint mode
     constraint_mode: str = "hard"      # "hard" or "soft" (exponential)
