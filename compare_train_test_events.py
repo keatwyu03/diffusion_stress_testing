@@ -54,10 +54,17 @@ def main(args):
     X_test  = data_processor.X_test    # (N_test,  64, 4)
 
     last_train = X_train[:, -config.hfunction.event_window:, config.hfunction.event_asset_idx]
-    mask_train = last_train.sum(dim=1) <= config.hfunction.event_threshold
+    last_test  = X_test[:,  -config.hfunction.event_window:, config.hfunction.event_asset_idx]
 
-    last_test  = X_test[:, -config.hfunction.event_window:, config.hfunction.event_asset_idx]
-    mask_test  = last_test.sum(dim=1)  <= config.hfunction.event_threshold
+    if config.hfunction.event_type == "sum":
+        mask_train = last_train.sum(dim=1) <= config.hfunction.event_threshold
+        mask_test  = last_test.sum(dim=1)  <= config.hfunction.event_threshold
+    elif config.hfunction.event_type == "change":
+        mask_train = (last_train[:, -1] - last_train[:, 0]).abs() >= config.hfunction.event_threshold
+        mask_test  = (last_test[:, -1]  - last_test[:, 0]).abs()  >= config.hfunction.event_threshold
+    elif config.hfunction.event_type == "absval":
+        mask_train = last_train[:, -1].abs() >= config.hfunction.event_threshold
+        mask_test  = last_test[:, -1].abs()  >= config.hfunction.event_threshold
 
     n_train_ev = int(mask_train.sum())
     n_test_ev  = int(mask_test.sum())

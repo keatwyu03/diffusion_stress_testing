@@ -182,7 +182,12 @@ def main(args):
                 eps=config.diffusion.eps,
             )
             pt_last = pretrain_all[:, config.hfunction.event_asset_idx, -config.hfunction.event_window:]
-            pt_mask = pt_last.sum(dim=1) <= config.hfunction.event_threshold
+            if config.hfunction.event_type == "sum":
+                pt_mask = pt_last.sum(dim=1) <= config.hfunction.event_threshold
+            elif config.hfunction.event_type == "change":
+                pt_mask = (pt_last[:, -1] - pt_last[:, 0]).abs() >= config.hfunction.event_threshold
+            elif config.hfunction.event_type == "absval":
+                pt_mask = pt_last[:, -1].abs() >= config.hfunction.event_threshold
             pretrain_events = pretrain_all[pt_mask]
             if cache_path:
                 torch.save(pretrain_events, cache_path)
