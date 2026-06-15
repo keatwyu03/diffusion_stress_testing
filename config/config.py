@@ -114,7 +114,7 @@ class HFunctionConfig:
     embed_dim: int = 128
 
     # Training parameters
-    train_batch_size: int = 2048       # number of noisy trajectories for unconditional diffusion
+    train_batch_size: int = 256        # number of noisy trajectories for unconditional diffusion
     train_stoch: float = 0.5           # stochasticity for generating training paths (0=ODE, 1=full SDE)
     h_mini_batch_size: int = 512       # mini-batch size per gradient step
     n_epochs: int = 1000               # number of times to go through the data
