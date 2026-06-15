@@ -86,6 +86,12 @@ def main(args):
 
     print(f"Event threshold: {config.hfunction.event_threshold:.4f} std ({config.hfunction.event_type})")
 
+    # Derive asset count from tickers so model dims always match data
+    n_assets = len(config.data.tickers)
+    config.diffusion.in_channels  = n_assets
+    config.diffusion.out_channels = n_assets
+    config.hfunction.asset_dim    = n_assets
+
     # ==================== Diffusion Model Training ====================
     if not args.skip_diffusion_training:
         print("\n" + "=" * 60)
