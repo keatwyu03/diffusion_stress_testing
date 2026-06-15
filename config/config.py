@@ -110,7 +110,7 @@ class HFunctionConfig:
 
     device: str = field(default_factory=_default_device)
     asset_dim: int = 3
-    time_steps: int = 64
+    time_steps: int = 128
     embed_dim: int = 128
 
     # Training parameters
