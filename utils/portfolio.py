@@ -16,16 +16,8 @@ class PortfolioAnalyzer:
         data_processor,
         window_for_cov: int = 54,
         last_days_sum: int = 5,
-        config = None
+        config=None,
     ):
-        """
-        Initialize Portfolio Analyzer
-
-        Args:
-            data_processor: DataProcessor instance
-            window_for_cov: Number of days to compute covariance
-            last_days_sum: Number of last days to sum for portfolio
-        """
         self.data_processor = data_processor
         self.window_for_cov = window_for_cov
         self.last_days_sum = last_days_sum
@@ -76,26 +68,23 @@ class PortfolioAnalyzer:
         """
         mv_sums, rp_sums, avg_sums = [], [], []
 
+        portfolio_tickers = self.config.portfolio.portfolio_tickers
+        n_tickers = len(portfolio_tickers)
+
         for n in range(samples.shape[0]):
-            # Transpose to (seq_len, channels)
             sample = samples[n].T
-            r_seq, _, _, _ = self.data_processor.invert_samples(sample, monthly = False)
-            r_seq = r_seq[self.config.portfolio.portfolio_tickers]
+            r_seq, _, _, _ = self.data_processor.invert_samples(sample, monthly=False)
+            r_seq = r_seq[portfolio_tickers]
             R = r_seq.values
 
-            # Compute covariance from first window_for_cov days
             cov = np.cov(R[: self.window_for_cov, :], rowvar=False, ddof=1)
             if cov.ndim == 0:
-                cov = cov.reshape(1,1)
+                cov = cov.reshape(1, 1)
 
-            # Compute weights
             w_mv = self.minvar_weights(cov)
             w_rp = self.risk_parity_weights(cov)
-            w_avg = (1.0 / len(self.config.portfolio.portfolio_tickers)) * np.ones(
-                len(self.config.portfolio.portfolio_tickers)
-            )
+            w_avg = (1.0 / n_tickers) * np.ones(n_tickers)
 
-            # Compute sums
             mv_sums.append(self.last_days_sum_with_weights(R, w_mv))
             rp_sums.append(self.last_days_sum_with_weights(R, w_rp))
             avg_sums.append(self.last_days_sum_with_weights(R, w_avg))
@@ -103,35 +92,36 @@ class PortfolioAnalyzer:
         return mv_sums, rp_sums, avg_sums
 
     def analyze_test_set(
-        self, X_test: torch.Tensor, mask: torch.Tensor
+        self, X_test: torch.Tensor, mask: torch.Tensor, start_weekdays=None
     ) -> Tuple[List[float], List[float], List[float]]:
         """
-        Analyze portfolio returns for test set
+        Analyze portfolio returns for test set.
 
-        Args:
-            X_test: Test set samples
-            mask: Boolean mask for events
-
-        Returns:
-            mv_sums: Min-variance portfolio sums
-            rp_sums: Risk-parity portfolio sums
-            avg_sums: Equal-weight portfolio sums
+        start_weekdays: int array (same length as X_test) with the weekday of
+                        the first day of each sequence.
         """
         mv_sums, rp_sums, avg_sums = [], [], []
 
+        portfolio_tickers = self.config.portfolio.portfolio_tickers
+        n_tickers = len(portfolio_tickers)
+
         for n in np.array(np.nonzero(mask.cpu().numpy())).ravel():
-            sample = X_test[n]  # Shape: (seq_len, channels) = (64, 4)
-            r_seq, _, _, _ = self.data_processor.invert_samples(sample, monthly = False)
-            r_seq = r_seq[self.config.portfolio.portfolio_tickers]
+            sample = X_test[n]
+
+            start_weekday = int(start_weekdays[n]) if start_weekdays is not None else None
+            r_seq, _, _, _ = self.data_processor.invert_samples(
+                sample, monthly=False, start_weekday=start_weekday
+            )
+            r_seq = r_seq[portfolio_tickers]
             R = r_seq.values
 
             cov = np.cov(R[: self.window_for_cov, :], rowvar=False, ddof=1)
+            if cov.ndim == 0:
+                cov = cov.reshape(1, 1)
 
             w_mv = self.minvar_weights(cov)
             w_rp = self.risk_parity_weights(cov)
-            w_avg = (1.0 / len(self.config.portfolio.portfolio_tickers)) * np.ones(
-                len(self.config.portfolio.portfolio_tickers)
-            )
+            w_avg = (1.0 / n_tickers) * np.ones(n_tickers)
 
             mv_sums.append(self.last_days_sum_with_weights(R, w_mv))
             rp_sums.append(self.last_days_sum_with_weights(R, w_rp))
@@ -167,6 +157,37 @@ class PortfolioAnalyzer:
         )
 
     @staticmethod
+    def build_stats_df(
+        gen_mv: List[float], gen_rp: List[float], gen_avg: List[float],
+        real_mv: List[float], real_rp: List[float], real_avg: List[float],
+    ) -> "pd.DataFrame":
+        """Build a DataFrame of summary statistics for generated and real portfolios."""
+        rows = []
+        for source, mv, rp, avg in [
+            ("Generated", gen_mv, gen_rp, gen_avg),
+            ("Real",      real_mv, real_rp, real_avg),
+        ]:
+            for strategy, vals in [
+                ("Equal-Weight", avg),
+                ("Min-Variance", mv),
+                ("Risk-Parity",  rp),
+            ]:
+                arr = np.array(vals)
+                rows.append({
+                    "source":   source,
+                    "strategy": strategy,
+                    "N":        len(arr),
+                    "mean":     arr.mean(),
+                    "median":   np.median(arr),
+                    "std":      arr.std(),
+                    "p5":       np.percentile(arr, 5),
+                    "p10":      np.percentile(arr, 10),
+                    "p90":      np.percentile(arr, 90),
+                    "p95":      np.percentile(arr, 95),
+                })
+        return pd.DataFrame(rows)
+
+    @staticmethod
     def plot_comparison(
         gen_mv: List[float],
         gen_rp: List[float],
@@ -175,41 +196,34 @@ class PortfolioAnalyzer:
         real_rp: List[float],
         real_avg: List[float],
         save_path: str = None,
+        n_bins: int = 80,
+        gen_label: str = "Conditional Generated",
+        real_label: str = "Real",
     ) -> None:
-        """
-        Plot portfolio comparison
+        """Plot portfolio comparison with shared bin edges and density normalisation."""
+        strategies = [
+            ("Equal-Weight", gen_avg, real_avg),
+            ("Min-Variance", gen_mv,  real_mv),
+            ("Risk-Parity",  gen_rp,  real_rp),
+        ]
 
-        Args:
-            gen_mv: Generated min-variance sums
-            gen_rp: Generated risk-parity sums
-            gen_avg: Generated equal-weight sums
-            real_mv: Real min-variance sums
-            real_rp: Real risk-parity sums
-            real_avg: Real equal-weight sums
-            save_path: Path to save the plot
-        """
-        fig, axes = plt.subplots(1, 3, figsize=(18, 5), sharey=True)
+        fig, axes = plt.subplots(1, 3, figsize=(18, 5), sharey=False)
 
-        # Equal-Weight
-        axes[0].hist(gen_avg, bins=30, alpha=0.6, label="Generated", color="C0", density=True)
-        axes[0].hist(real_avg, bins=30, alpha=0.6, label="Real (Test Set)", color="C1", density=True)
-        axes[0].set_title(f"Equal-Weight Portfolio (last {5}-day sum)")
-        axes[0].set_xlabel("Sum of Log Returns")
-        axes[0].legend()
+        for ax, (name, gen, real) in zip(axes, strategies):
+            gen_arr  = np.array(gen)
+            real_arr = np.array(real)
+            bins_actual = min(n_bins, max(15, min(len(gen_arr), len(real_arr)) // 2))
+            real_bins = np.linspace(real_arr.min(), real_arr.max(), bins_actual + 1)
+            gen_bins  = np.linspace(gen_arr.min(),  gen_arr.max(),  bins_actual + 1)
 
-        # Min-Variance
-        axes[1].hist(gen_mv, bins=30, alpha=0.6, label="Generated", color="C0", density=True)
-        axes[1].hist(real_mv, bins=30, alpha=0.6, label="Real (Test Set)", color="C1", density=True)
-        axes[1].set_title(f"Min-Variance Portfolio (last {5}-day sum)")
-        axes[1].set_xlabel("Sum of Log Returns")
-        axes[1].legend()
-
-        # Risk-Parity
-        axes[2].hist(gen_rp, bins=30, alpha=0.6, label="Generated", color="C0", density=True)
-        axes[2].hist(real_rp, bins=30, alpha=0.6, label="Real (Test Set)", color="C1", density=True)
-        axes[2].set_title(f"Risk-Parity Portfolio (last {5}-day sum)")
-        axes[2].set_xlabel("Sum of Log Returns")
-        axes[2].legend()
+            ax.hist(real_arr, bins=real_bins, alpha=0.55, density=True,
+                    color="C1", label=real_label)
+            ax.hist(gen_arr,  bins=gen_bins,  alpha=0.55, density=True,
+                    color="C0", label=gen_label)
+            ax.set_title(f"{name} (last 5-day sum)", fontsize=12)
+            ax.set_xlabel("Sum of Log Returns")
+            ax.set_ylabel("Density")
+            ax.legend()
 
         plt.tight_layout()
         if save_path:

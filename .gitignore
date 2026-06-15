@@ -43,13 +43,14 @@ env/
 *.ipynb
 
 # Data files
-# *.csv
+*.csv
 *.pkl
 *.h5
 *.hdf5
 
 # Model checkpoints
 checkpoints/
+ckpt_new/
 *.pt
 *.pth
 *.ckpt

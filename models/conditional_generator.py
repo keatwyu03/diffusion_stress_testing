@@ -6,28 +6,37 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import gc
-from diffusers import UNet1DModel
 from tqdm import tqdm
 from typing import Optional, Callable
 
+from .transformer_score import FinancialTransformerScore
+
 
 class GradientHUNet(nn.Module):
-    """Q-model: Gradient of H-function using UNet"""
+    """Q-model: approximates ∇H using a Transformer score network."""
 
-    def __init__(self, in_channels: int = 4, out_channels: int = 4, sample_size: int = 64):
+    def __init__(
+        self,
+        in_channels: int = 4,
+        out_channels: int = 4,
+        sample_size: int = 64,
+        embed_dim: int = 64,
+        n_heads: int = 4,
+        n_layers: int = 4,
+        cond_dim: int = 64,
+    ):
         super().__init__()
-        self.unet = UNet1DModel(
-            sample_size=sample_size,
-            in_channels=in_channels,
-            out_channels=out_channels,
-            block_out_channels=(64, 128, 512),
-            layers_per_block=1,
-            down_block_types=("DownBlock1D", "DownBlock1D", "DownBlock1D"),
-            up_block_types=("UpBlock1D", "UpBlock1D", "UpBlock1D"),
+        self.transformer = FinancialTransformerScore(
+            n_assets=in_channels,
+            seq_len=sample_size,
+            embed_dim=embed_dim,
+            n_heads=n_heads,
+            n_layers=n_layers,
+            cond_dim=cond_dim,
         )
 
     def forward(self, x, t):
-        return self.unet(x, t).sample
+        return self.transformer(x, t).sample
 
 
 class ConditionalGenerator:
@@ -43,10 +52,6 @@ class ConditionalGenerator:
         b_min: float = 0.1,
         b_max: float = 3.25,
         device: str = "cuda",
-        constraint_mode : str = "hard",
-        beta : float = 1.0,
-        in_channels: int = 5,
-        sample_size: int = 64,
     ):
         self.score_model = score_model
         self.h_model = h_model
@@ -58,10 +63,6 @@ class ConditionalGenerator:
         self.device = device
 
         self.q_model = None
-        self.constraint_mode = constraint_mode
-        self.beta = beta
-        self.in_channels = in_channels
-        self.sample_size = sample_size
 
     def train_q_model(
         self,
@@ -72,30 +73,28 @@ class ConditionalGenerator:
         sample_size: int = 64,
         n_epochs: int = 500,
         learning_rate: float = 1e-4,
+        mini_batch_size: int = 512,
+        embed_dim: int = 64,
+        n_heads: int = 4,
+        n_layers: int = 4,
+        cond_dim: int = 64,
     ) -> None:
-        """
-        Train Q-model (gradient of H)
-
-        Args:
-            t_grid: Time grid
-            y_grid: Trajectory grid
-            in_channels: Input channels
-            out_channels: Output channels
-            sample_size: Sample size
-            n_epochs: Number of epochs
-            learning_rate: Learning rate
-        """
-        self.in_channels = in_channels
-        self.sample_size = sample_size
+        """Train Q-model (gradient of H)"""
         self.q_model = GradientHUNet(
-            in_channels=in_channels, out_channels=out_channels, sample_size=sample_size
+            in_channels=in_channels,
+            out_channels=out_channels,
+            sample_size=sample_size,
+            embed_dim=embed_dim,
+            n_heads=n_heads,
+            n_layers=n_layers,
+            cond_dim=cond_dim,
         ).to(self.device)
 
         optimizer = optim.Adam(self.q_model.parameters(), lr=learning_rate)
 
         print("Training Q-model...")
         for epoch in range(n_epochs):
-            loss = self._covariation_loss(t_grid, y_grid)
+            loss = self._covariation_loss(t_grid, y_grid, mini_batch_size)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -106,17 +105,19 @@ class ConditionalGenerator:
         print("Q-model training complete!")
 
     def _covariation_loss(
-        self, t_grid: torch.Tensor, y_grid: torch.Tensor
+        self, t_grid: torch.Tensor, y_grid: torch.Tensor, mini_batch_size: int = 512
     ) -> torch.Tensor:
         """Compute covariation loss for Q-model"""
-        num_steps, batch_size, x_dim, seq_len = y_grid.shape
+        num_steps, n_paths, x_dim, seq_len = y_grid.shape
 
-        idx = torch.randint(0, num_steps - 1, (batch_size,), device=y_grid.device)
+        # Sample mini_batch_size (step, path) pairs randomly from all paths
+        step_idx = torch.randint(0, num_steps - 1, (mini_batch_size,), device=y_grid.device)
+        path_idx = torch.randint(0, n_paths, (mini_batch_size,), device=y_grid.device)
 
-        t = t_grid[idx, torch.arange(batch_size)]
-        t_next = t_grid[idx + 1, torch.arange(batch_size)]
-        y = y_grid[idx, torch.arange(batch_size)]
-        y_next = y_grid[idx + 1, torch.arange(batch_size)]
+        t = t_grid[step_idx, path_idx]
+        t_next = t_grid[step_idx + 1, path_idx]
+        y = y_grid[step_idx, path_idx]
+        y_next = y_grid[step_idx + 1, path_idx]
 
         h_t = self.h_model(y, t)
         h_next = self.h_model(y_next, t_next)
@@ -200,7 +201,7 @@ class ConditionalGenerator:
         eps: float,
     ) -> torch.Tensor:
         """Sample a single batch"""
-        init_x = torch.randn(batch_size, self.in_channels, self.sample_size, device=self.device)
+        init_x = torch.randn(batch_size, 4, 64, device=self.device)
         x = init_x
 
         time_steps = self.make_vp_std_grid_fn(
@@ -227,21 +228,17 @@ class ConditionalGenerator:
 
             if use_q_model and self.q_model is not None:
                 grad_h = self.q_model(x, batch_time_step)
-                ratio = grad_h / h_val.view(-1, 1, 1).clamp(min=0.01)
+                ratio = grad_h / (h_val.view(-1, 1, 1) + 1e-3)
             else:
                 with torch.enable_grad():
                     x.requires_grad_(True)
                     h_val_autograd = self.h_model(x, batch_time_step)
-                    log_h = torch.log(h_val_autograd.clamp(min=1e-6))
-                    ratio = torch.autograd.grad(log_h.sum(), x)[0]
+                    grad_h = torch.autograd.grad(h_val_autograd.sum(), x)[0]
+                ratio = grad_h / (h_val_autograd.view(-1, 1, 1) + 1e-3)
                 x = x.detach()
-                del h_val_autograd
+                del h_val_autograd, grad_h
 
-            if self.constraint_mode == "hard":
-                drift = drift + (1 + eta) * (g_expanded**2) * ratio.clamp(-100, 100)
-            elif self.constraint_mode == "soft":
-                drift = drift + (g_expanded**2 / self.beta) * grad_h
-
+            drift = drift + (1 + eta) * (g_expanded**2) * ratio
 
             # Euler-Maruyama update
             adjust = (1 + stoch**2) / 2
@@ -257,13 +254,25 @@ class ConditionalGenerator:
             print(f"Q-model saved to {path}")
 
     def load_q_model(
-        self, path: str, in_channels: int = 4, out_channels: int = 4, sample_size: int = 64
+        self,
+        path: str,
+        in_channels: int = 4,
+        out_channels: int = 4,
+        sample_size: int = 64,
+        embed_dim: int = 64,
+        n_heads: int = 4,
+        n_layers: int = 4,
+        cond_dim: int = 64,
     ) -> None:
         """Load Q-model weights"""
-        self.in_channels = in_channels
-        self.sample_size = sample_size
         self.q_model = GradientHUNet(
-            in_channels=in_channels, out_channels=out_channels, sample_size=sample_size
+            in_channels=in_channels,
+            out_channels=out_channels,
+            sample_size=sample_size,
+            embed_dim=embed_dim,
+            n_heads=n_heads,
+            n_layers=n_layers,
+            cond_dim=cond_dim,
         ).to(self.device)
-        self.q_model.load_state_dict(torch.load(path, map_location=self.device))
+        self.q_model.load_state_dict(torch.load(path))
         print(f"Q-model loaded from {path}")

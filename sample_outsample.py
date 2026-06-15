@@ -86,10 +86,15 @@ def main(args):
         weekday_col=config.data.weekday_col,
         seq_len=config.data.seq_len,
         test_days=config.data.test_days,
+        start_date=config.data.start_date,
+        end_date=config.data.end_date,
+        train_end_date=config.data.train_end_date,
         winsorize_lower=config.data.winsorize_lower,
         winsorize_upper=config.data.winsorize_upper,
     )
     data_processor.process_all()
+
+    print(f"Event threshold: {config.hfunction.event_threshold:.4f} std ({config.hfunction.event_type})")
 
     # ==================== Load Models ====================
     print("\n[2/5] Loading models from checkpoints...")
@@ -104,8 +109,13 @@ def main(args):
         b_min=config.diffusion.b_min,
         b_max=config.diffusion.b_max,
         device=config.diffusion.device,
+        arch=config.diffusion.arch,
+        embed_dim=config.diffusion.embed_dim,
+        n_heads=config.diffusion.n_heads,
+        n_layers=config.diffusion.n_layers,
+        cond_dim=config.diffusion.cond_dim,
     )
-    diffusion_model.load("checkpoints/diffusion_model.pt")
+    diffusion_model.load("ckpt_new/diffusion_model.pt")
     print("Loaded diffusion model")
 
     # Load H-function
@@ -117,8 +127,15 @@ def main(args):
         event_window=config.hfunction.event_window,
         event_threshold=config.hfunction.event_threshold,
         device=config.hfunction.device,
+        event_type=config.hfunction.event_type,
+        constraint_mode=config.hfunction.constraint_mode,
+        reward_sharpness=config.hfunction.reward_sharpness,
+        arch=config.hfunction.arch,
+        n_heads=config.hfunction.n_heads,
+        n_layers=config.hfunction.n_layers,
+        cond_dim=config.hfunction.cond_dim,
     )
-    h_trainer.load("checkpoints/hfunction.pt")
+    h_trainer.load("ckpt_new/hfunction.pt")
     print("Loaded H-function")
 
     # ==================== Extract Test Set Events ====================
@@ -127,9 +144,16 @@ def main(args):
     X_test = data_processor.X_test
     asset_sums_test = X_test.sum(dim=2)
 
-    last_window_test = X_test[:, config.hfunction.event_asset_idx, -config.hfunction.event_window :]
-    sum_last_window_test = last_window_test.sum(dim=1)
-    mask_test = sum_last_window_test <= config.hfunction.event_threshold
+    last_window_test = X_test[:, -config.hfunction.event_window:, config.hfunction.event_asset_idx]
+    if config.hfunction.event_type == "sum":
+        metric_test = last_window_test.sum(dim=1)
+        mask_test = metric_test <= config.hfunction.event_threshold
+    elif config.hfunction.event_type == "change":
+        metric_test = (last_window_test[:, -1] - last_window_test[:, 0]).abs()
+        mask_test = metric_test >= config.hfunction.event_threshold
+    elif config.hfunction.event_type == "absval":
+        metric_test = last_window_test[:, -1].abs()
+        mask_test = metric_test >= config.hfunction.event_threshold
 
     event_asset_sums_test = asset_sums_test[mask_test]
     N_event_test = event_asset_sums_test.shape[0]
@@ -153,9 +177,15 @@ def main(args):
 
     # Load Q-model if needed
     if config.conditional.use_q_model:
-        q_model_path = "checkpoints/q_model.pt"
+        q_model_path = "ckpt_new/q_model.pt"
         if os.path.exists(q_model_path):
-            cond_generator.load_q_model(q_model_path)
+            cond_generator.load_q_model(
+                q_model_path,
+                embed_dim=config.conditional.q_embed_dim,
+                n_heads=config.conditional.q_n_heads,
+                n_layers=config.conditional.q_n_layers,
+                cond_dim=config.conditional.q_cond_dim,
+            )
             print("Loaded Q-model")
         else:
             print(f"Warning: Q-model not found at {q_model_path}")
@@ -180,38 +210,73 @@ def main(args):
         data_processor=data_processor,
         window_for_cov=config.portfolio.window_for_cov,
         last_days_sum=config.portfolio.last_days_sum,
-        config = config,
+        config=config,
     )
 
     # Analyze generated samples
     print("Analyzing generated samples (out-of-sample)...")
     gen_mv_test, gen_rp_test, gen_avg_test = portfolio_analyzer.analyze_samples(generated_samples_test)
 
-    # Analyze test set
-    print("Analyzing test set...")
-    real_mv_test, real_rp_test, real_avg_test = portfolio_analyzer.analyze_test_set(X_test, mask_test)
+    # Analyze baseline: real test set or pretrain-filtered samples
+    if args.compare_pretrain:
+        n_oversample = N_event_test * args.pretrain_oversample
+        print(f"Generating {n_oversample} pretrain samples for baseline filtering...")
+        pretrain_all = diffusion_model.sample(
+            batch_size=n_oversample,
+            num_steps=config.conditional.num_steps,
+            stoch=config.conditional.stoch,
+            eps=config.diffusion.eps,
+        )
+        pt_last = pretrain_all[:, config.hfunction.event_asset_idx, -config.hfunction.event_window:]
+        pt_mask = pt_last.sum(dim=1) <= config.hfunction.event_threshold
+        pretrain_events = pretrain_all[pt_mask]
+        print(f"Pretrain events: {pretrain_events.shape[0]} / {n_oversample}")
+        real_mv_test, real_rp_test, real_avg_test = portfolio_analyzer.analyze_samples(pretrain_events)
+        baseline_label = "PRETRAIN (filtered)"
+        baseline_tag   = "pretrain_filtered"
+    else:
+        print("Analyzing test set...")
+        real_mv_test, real_rp_test, real_avg_test = portfolio_analyzer.analyze_test_set(X_test, mask_test, start_weekdays=data_processor.start_weekdays_test)
+        baseline_label = "REAL DATA"
+        baseline_tag   = "real_data"
 
     # Print statistics
     print("\n" + "=" * 60)
     print("OUT-OF-SAMPLE PORTFOLIO COMPARISON STATISTICS")
     print("=" * 60)
     portfolio_analyzer.summarize_statistics("GENERATED (out-of-sample)", gen_mv_test, gen_rp_test, gen_avg_test)
-    portfolio_analyzer.summarize_statistics("REAL TEST", real_mv_test, real_rp_test, real_avg_test)
+    portfolio_analyzer.summarize_statistics(baseline_label, real_mv_test, real_rp_test, real_avg_test)
 
     # Plot comparison
-    os.makedirs("results", exist_ok=True)
+    results_dir = args.results_dir or "results"
+    os.makedirs(results_dir, exist_ok=True)
     q_suffix = "with_q" if args.use_q_model else "no_q"
     plot_filename = f"portfolio_outsample_{q_suffix}_steps{config.conditional.num_steps}_stoch{config.conditional.stoch}"
     if args.run_suffix:
         plot_filename += f"_{args.run_suffix}"
     plot_filename += ".png"
 
-    plot_path_test = os.path.join("results", plot_filename)
+    plot_path_test = os.path.join(results_dir, plot_filename)
     portfolio_analyzer.plot_comparison(
         gen_mv_test, gen_rp_test, gen_avg_test,
         real_mv_test, real_rp_test, real_avg_test,
-        save_path=plot_path_test
+        save_path=plot_path_test,
+        real_label=baseline_label,
     )
+
+    # Append stats row to master out-of-sample CSV
+    stats_df = portfolio_analyzer.build_stats_df(
+        gen_mv_test, gen_rp_test, gen_avg_test,
+        real_mv_test, real_rp_test, real_avg_test,
+    )
+    stats_df.insert(0, "baseline",    baseline_tag)
+    stats_df.insert(0, "use_q_model", args.use_q_model)
+    stats_df.insert(0, "eta",         config.conditional.eta)
+    stats_df.insert(0, "stoch",       config.conditional.stoch)
+    csv_path = os.path.join(results_dir, "outsample_stats.csv")
+    write_header = not os.path.exists(csv_path)
+    stats_df.to_csv(csv_path, mode="a", header=write_header, index=False, float_format="%.6f")
+    print(f"Stats appended to {csv_path}")
 
     # Log results to wandb
     if use_wandb:
@@ -287,12 +352,33 @@ if __name__ == "__main__":
         help="Disable wandb logging",
     )
 
+    # Results directory
+    parser.add_argument(
+        "--results-dir",
+        type=str,
+        default=None,
+        help="Directory to save result plots (default: results/)",
+    )
+
     # Run suffix for organizing multiple runs
     parser.add_argument(
         "--run-suffix",
         type=str,
         default="",
         help="Suffix to add to run name and output files",
+    )
+
+    # Pretrain comparison flag
+    parser.add_argument(
+        "--compare-pretrain",
+        action="store_true",
+        help="Compare against pretrain-filtered samples instead of real data",
+    )
+    parser.add_argument(
+        "--pretrain-oversample",
+        type=int,
+        default=10,
+        help="Oversample factor for pretrain filtering (default: 10x event count)",
     )
 
     args = parser.parse_args()

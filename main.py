@@ -75,13 +75,16 @@ def main(args):
         weekday_col=config.data.weekday_col,
         seq_len=config.data.seq_len,
         test_days=config.data.test_days,
+        start_date=config.data.start_date,
+        end_date=config.data.end_date,
+        train_end_date=config.data.train_end_date,
         winsorize_lower=config.data.winsorize_lower,
         winsorize_upper=config.data.winsorize_upper,
     )
 
     data_processor.process_all()
-    # print(data_processor.df_z['unemp'].describe())
-    # import sys; sys.exit()  # stops the script here
+
+    print(f"Event threshold: {config.hfunction.event_threshold:.4f} std ({config.hfunction.event_type})")
 
     # ==================== Diffusion Model Training ====================
     if not args.skip_diffusion_training:
@@ -98,6 +101,11 @@ def main(args):
             b_min=config.diffusion.b_min,
             b_max=config.diffusion.b_max,
             device=config.diffusion.device,
+            arch=config.diffusion.arch,
+            embed_dim=config.diffusion.embed_dim,
+            n_heads=config.diffusion.n_heads,
+            n_layers=config.diffusion.n_layers,
+            cond_dim=config.diffusion.cond_dim,
         )
 
         # Get training data
@@ -109,17 +117,14 @@ def main(args):
             batch_size=config.diffusion.batch_size,
             n_epochs=config.diffusion.n_epochs,
             learning_rate=config.diffusion.learning_rate,
-            scheduler_type=config.diffusion.scheduler_type,
-            scheduler_eta_min=config.diffusion.scheduler_eta_min,
-            warmup_epochs=config.diffusion.warmup_epochs,
             scheduler_patience=config.diffusion.scheduler_patience,
             scheduler_factor=config.diffusion.scheduler_factor,
             use_wandb=use_wandb,
         )
 
         # Save model
-        os.makedirs("checkpoints", exist_ok=True)
-        diffusion_model.save("checkpoints/diffusion_model.pt")
+        os.makedirs("ckpt_new", exist_ok=True)
+        diffusion_model.save("ckpt_new/diffusion_model.pt")
     else:
         print("\nSkipping diffusion training, loading from checkpoint...")
         diffusion_model = DiffusionModel(
@@ -131,8 +136,13 @@ def main(args):
             b_min=config.diffusion.b_min,
             b_max=config.diffusion.b_max,
             device=config.diffusion.device,
+            arch=config.diffusion.arch,
+            embed_dim=config.diffusion.embed_dim,
+            n_heads=config.diffusion.n_heads,
+            n_layers=config.diffusion.n_layers,
+            cond_dim=config.diffusion.cond_dim,
         )
-        diffusion_model.load("checkpoints/diffusion_model.pt")
+        diffusion_model.load("ckpt_new/diffusion_model.pt")
 
     # ==================== H-Function Training ====================
     if not args.skip_hfunction_training:
@@ -150,7 +160,11 @@ def main(args):
             device=config.hfunction.device,
             event_type=config.hfunction.event_type,
             constraint_mode=config.hfunction.constraint_mode,
-            reward_sharpness=config.hfunction.reward_sharpness
+            reward_sharpness=config.hfunction.reward_sharpness,
+            arch=config.hfunction.arch,
+            n_heads=config.hfunction.n_heads,
+            n_layers=config.hfunction.n_layers,
+            cond_dim=config.hfunction.cond_dim,
         )
 
         # Generate training paths
@@ -158,7 +172,7 @@ def main(args):
         t_grid, y_grid, Y_T = diffusion_model.sample(
             batch_size=config.hfunction.train_batch_size,
             num_steps=config.diffusion.num_steps,
-            stoch=0.2,
+            stoch=config.hfunction.train_stoch,
             return_path=True,
         )
 
@@ -168,7 +182,7 @@ def main(args):
             y_grid=y_grid,
             Y_T=Y_T,
             n_epochs=config.hfunction.n_epochs,
-            batch_size=config.hfunction.train_batch_size,
+            batch_size=config.hfunction.h_mini_batch_size,
             learning_rate=config.hfunction.learning_rate,
             weight_decay=config.hfunction.weight_decay,
             scheduler_patience=config.hfunction.scheduler_patience,
@@ -177,7 +191,7 @@ def main(args):
         )
 
         # Save model
-        h_trainer.save("checkpoints/hfunction.pt")
+        h_trainer.save("ckpt_new/hfunction.pt")
     else:
         print("\nSkipping H-function training, loading from checkpoint...")
         h_trainer = HFunctionTrainer(
@@ -188,10 +202,15 @@ def main(args):
             event_window=config.hfunction.event_window,
             event_threshold=config.hfunction.event_threshold,
             device=config.hfunction.device,
+            event_type=config.hfunction.event_type,
             constraint_mode=config.hfunction.constraint_mode,
             reward_sharpness=config.hfunction.reward_sharpness,
+            arch=config.hfunction.arch,
+            n_heads=config.hfunction.n_heads,
+            n_layers=config.hfunction.n_layers,
+            cond_dim=config.hfunction.cond_dim,
         )
-        h_trainer.load("checkpoints/hfunction.pt")
+        h_trainer.load("ckpt_new/hfunction.pt")
 
     # ==================== Extract Events ====================
     print("\n" + "=" * 60)
@@ -202,7 +221,7 @@ def main(args):
     X_train = data_processor.X_train
     asset_sums_train = X_train.sum(dim=2)
 
-    last_window_train = X_train[:, -config.hfunction.event_window :, config.hfunction.event_asset_idx]
+    last_window_train = X_train[:, -config.hfunction.event_window:, config.hfunction.event_asset_idx]
     if config.hfunction.event_type == "sum":
         metric_train = last_window_train.sum(dim=1)
         mask_train = metric_train <= config.hfunction.event_threshold
@@ -219,8 +238,6 @@ def main(args):
     print("Threshold:", config.hfunction.event_threshold)
 
     print("X_train shape", X_train.shape)
-    print("Sample unemployment values", X_train[0, :, 0])
-    print("Sample unemployment values", X_train[0, 0, :])
 
     event_asset_sums_train = asset_sums_train[mask_train]
     N_event_train = event_asset_sums_train.shape[0]
@@ -232,7 +249,7 @@ def main(args):
     X_test = data_processor.X_test
     asset_sums_test = X_test.sum(dim=2)
 
-    last_window_test = X_test[:,-config.hfunction.event_window :, config.hfunction.event_asset_idx]
+    last_window_test = X_test[:, -config.hfunction.event_window:, config.hfunction.event_asset_idx]
     if config.hfunction.event_type == "sum":
         metric_test = last_window_test.sum(dim=1)
         mask_test = metric_test <= config.hfunction.event_threshold
@@ -242,7 +259,7 @@ def main(args):
     elif config.hfunction.event_type == "absval":
         metric_test = last_window_test[:, -1].abs()
         mask_test = metric_test >= config.hfunction.event_threshold
-    
+
     print("Test dates:", data_processor.y_dates_test[0], "to", data_processor.y_dates_test[-1])
     print("Test change stats:", metric_test.min().item(), metric_test.max().item())
 
@@ -270,30 +287,32 @@ def main(args):
         b_min=config.diffusion.b_min,
         b_max=config.diffusion.b_max,
         device=config.conditional.device,
-        constraint_mode=config.conditional.constraint_mode,
-        beta=config.conditional.beta,
-        in_channels=config.diffusion.in_channels,
-        sample_size=config.diffusion.sample_size,
     )
 
     # Optionally train Q-model
-    if config.conditional.use_q_model and not args.skip_qmodel_training:
+    if (config.conditional.use_q_model or args.train_q_model) and not args.skip_qmodel_training:
         print("Training Q-model...")
         t_grid, y_grid, _ = diffusion_model.sample(
-            batch_size=config.hfunction.train_batch_size,
+            batch_size=config.conditional.q_model_train_batch_size,
             num_steps=config.diffusion.num_steps,
-            stoch=0.2,
+            stoch=config.conditional.q_model_train_stoch,
             return_path=True,
         )
         cond_generator.train_q_model(
             t_grid=t_grid,
             y_grid=y_grid,
-            in_channels=config.diffusion.in_channels,
-            out_channels=config.diffusion.out_channels,
             n_epochs=config.conditional.q_model_epochs,
             learning_rate=config.conditional.q_model_lr,
+            mini_batch_size=config.conditional.q_model_mini_batch_size,
+            embed_dim=config.conditional.q_embed_dim,
+            n_heads=config.conditional.q_n_heads,
+            n_layers=config.conditional.q_n_layers,
+            cond_dim=config.conditional.q_cond_dim,
         )
-        cond_generator.save_q_model("checkpoints/q_model.pt")
+        cond_generator.save_q_model("ckpt_new/q_model.pt")
+
+    # Use Q-model if it was trained this run or already loaded via config
+    use_q_model = config.conditional.use_q_model or args.train_q_model
 
     # Generate conditional samples for TRAIN set events
     print(f"Generating {N_event_train} conditional samples for in-sample (train) events...")
@@ -303,7 +322,7 @@ def main(args):
         num_steps=config.conditional.num_steps,
         stoch=config.conditional.stoch,
         eta=config.conditional.eta,
-        use_q_model=config.conditional.use_q_model,
+        use_q_model=use_q_model,
     )
     torch.save(generated_samples_train, 'generated_samples_train.pt')
 
@@ -315,7 +334,7 @@ def main(args):
         num_steps=config.conditional.num_steps,
         stoch=config.conditional.stoch,
         eta=config.conditional.eta,
-        use_q_model=config.conditional.use_q_model,
+        use_q_model=use_q_model,
     )
     torch.save(generated_samples_test, 'generated_samples_test.pt')
 
@@ -328,7 +347,7 @@ def main(args):
         data_processor=data_processor,
         window_for_cov=config.portfolio.window_for_cov,
         last_days_sum=config.portfolio.last_days_sum,
-        config = config,
+        config=config,
     )
 
     # ========== In-Sample (Train) Analysis ==========
@@ -340,7 +359,7 @@ def main(args):
 
     # Analyze train set
     print("Analyzing train set...")
-    real_mv_train, real_rp_train, real_avg_train = portfolio_analyzer.analyze_test_set(X_train, mask_train)
+    real_mv_train, real_rp_train, real_avg_train = portfolio_analyzer.analyze_test_set(X_train, mask_train, start_weekdays=data_processor.start_weekdays_train)
 
     # Print statistics
     print("\n=== In-Sample Portfolio Comparison Statistics ===")
@@ -365,7 +384,7 @@ def main(args):
 
     # Analyze test set
     print("Analyzing test set...")
-    real_mv_test, real_rp_test, real_avg_test = portfolio_analyzer.analyze_test_set(X_test, mask_test)
+    real_mv_test, real_rp_test, real_avg_test = portfolio_analyzer.analyze_test_set(X_test, mask_test, start_weekdays=data_processor.start_weekdays_test)
 
     # Print statistics
     print("\n=== Out-of-Sample Portfolio Comparison Statistics ===")
@@ -443,6 +462,11 @@ if __name__ == "__main__":
         "--skip-conditional",
         action="store_true",
         help="Skip conditional generation and portfolio analysis",
+    )
+    parser.add_argument(
+        "--train-q-model",
+        action="store_true",
+        help="Force Q-model training (overrides config.conditional.use_q_model)",
     )
     parser.add_argument(
         "--no-wandb",

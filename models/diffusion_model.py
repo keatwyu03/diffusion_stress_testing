@@ -8,9 +8,11 @@ import numpy as np
 from diffusers import UNet1DModel
 from torch.utils.data import DataLoader, TensorDataset
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import ReduceLROnPlateau, CosineAnnealingLR, LinearLR
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from typing import Tuple, Optional, Callable
 from tqdm import tqdm
+
+from .transformer_score import FinancialTransformerScore
 
 
 class DiffusionModel:
@@ -26,6 +28,11 @@ class DiffusionModel:
         b_min: float = 0.1,
         b_max: float = 3.25,
         device: str = "cuda",
+        arch: str = "transformer",
+        embed_dim: int = 128,
+        n_heads: int = 4,
+        n_layers: int = 6,
+        cond_dim: int = 128,
     ):
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -33,19 +40,30 @@ class DiffusionModel:
         self.b_min = b_min
         self.b_max = b_max
         self.device = device
+        self.arch = arch
 
-        # Create UNet model
-        self.model = UNet1DModel(
-            sample_size=sample_size,
-            in_channels=in_channels,
-            out_channels=out_channels,
-            layers_per_block=layers_per_block,
-            block_out_channels=block_out_channels,
-            down_block_types=("DownBlock1D", "DownBlock1D", "DownBlock1D"),
-            up_block_types=("UpBlock1D", "UpBlock1D", "UpBlock1D"),
-            time_embedding_type="fourier",
-            freq_shift=6,
-        ).to(device)
+        if arch == "transformer":
+            self.model = FinancialTransformerScore(
+                n_assets=in_channels,
+                seq_len=sample_size,
+                embed_dim=embed_dim,
+                n_heads=n_heads,
+                n_layers=n_layers,
+                cond_dim=cond_dim,
+            ).to(device)
+        else:
+            # Create UNet model
+            self.model = UNet1DModel(
+                sample_size=sample_size,
+                in_channels=in_channels,
+                out_channels=out_channels,
+                layers_per_block=layers_per_block,
+                block_out_channels=block_out_channels,
+                down_block_types=("DownBlock1D", "DownBlock1D", "DownBlock1D"),
+                up_block_types=("UpBlock1D", "UpBlock1D", "UpBlock1D"),
+                time_embedding_type="fourier",
+                freq_shift=6,
+            ).to(device)
 
         # Create VP diffusion functions
         self.marginal_prob_mean_fn = functools.partial(
@@ -92,7 +110,7 @@ class DiffusionModel:
         x: torch.Tensor,
         marginal_prob_mean: Callable,
         marginal_prob_std: Callable,
-        eps: float = 1e-3,
+        eps: float = 1e-5,
     ) -> torch.Tensor:
         """
         Loss function for training the score-based model
@@ -110,19 +128,7 @@ class DiffusionModel:
         batch_size = x.shape[0]
         device = x.device
 
-        random_t = torch.rand(batch_size, device=device) * (1.0 - eps) + eps  # uniform
-
-        #Beta(2,2) to emphasize the middle block time stamps for more learning
-        # dist = torch.distributions.Beta(2.0, 2.0)
-        # u = dist.sample((batch_size,)).to(device)
-        # random_t = eps + (1.0 - eps) * u
-        
-
-        #Low time stamp tests
-        # u = torch.rand(batch_size, device=device)
-        # random_t = eps + (1.0 - eps) * u**2  # concentrate near t=0
-
-
+        random_t = torch.rand(batch_size, device=device) * (1.0 - eps) + eps
         z = torch.randn_like(x)
         std = marginal_prob_std(random_t)
         std_expanded = std[:, None, None]
@@ -131,12 +137,9 @@ class DiffusionModel:
 
         perturbed_x = x * mean_expanded + z * std_expanded
 
-        # score = self.model(perturbed_x, random_t).sample
-        # loss = torch.mean(torch.sum((score * std_expanded + z) ** 2, dim=(1, 2)))
+        score = self.model(perturbed_x, random_t).sample
 
-        # Noise parameterization: predict z directly, uniform loss weight across all t
-        eps_pred = self.model(perturbed_x, random_t).sample
-        loss = torch.mean(torch.sum((eps_pred - z) ** 2, dim=(1, 2)))
+        loss = torch.mean(torch.sum((score * std_expanded + z) ** 2, dim=(1, 2)))
 
         return loss
 
@@ -146,9 +149,6 @@ class DiffusionModel:
         batch_size: int = 256,
         n_epochs: int = 600,
         learning_rate: float = 1e-4,
-        scheduler_type: str = "cosine",
-        scheduler_eta_min: float = 1e-6,
-        warmup_epochs: int = 0,
         scheduler_patience: int = 50,
         scheduler_factor: float = 0.5,
         num_workers: int = 0,
@@ -186,18 +186,14 @@ class DiffusionModel:
         #     self.model = nn.DataParallel(self.model)
 
         optimizer = AdamW(self.model.parameters(), lr=learning_rate)
-        warmup_sched = LinearLR(optimizer, start_factor=1e-3, end_factor=1.0, total_iters=max(1, warmup_epochs)) if warmup_epochs > 0 else None
-
-        if scheduler_type == "cosine":
-            main_sched = CosineAnnealingLR(optimizer, T_max=max(1, n_epochs - warmup_epochs), eta_min=scheduler_eta_min)
-        else:
-            main_sched = ReduceLROnPlateau(optimizer, mode="min", factor=scheduler_factor, patience=scheduler_patience)
+        scheduler = ReduceLROnPlateau(
+            optimizer, mode="min", factor=scheduler_factor, patience=scheduler_patience
+        )
 
         print("Starting diffusion model training...", flush=True)
         for epoch in tqdm(range(n_epochs), desc="Diffusion Training"):
             avg_loss = 0.0
             num_items = 0
-            last_score_mag = 0.0
             for (x,) in data_loader:
                 x = x.to(self.device)
 
@@ -212,18 +208,9 @@ class DiffusionModel:
                 avg_loss += loss.item() * x.shape[0]
                 num_items += x.shape[0]
 
-                with torch.no_grad():
-                    t = torch.rand(x.shape[0], device=self.device)
-                    last_score_mag = self.model(x, t).sample.abs().mean().item()
-
             avg_loss /= num_items
             current_lr = optimizer.param_groups[0]['lr']
-            if warmup_sched is not None and epoch < warmup_epochs:
-                warmup_sched.step()
-            elif scheduler_type == "cosine":
-                main_sched.step()
-            else:
-                main_sched.step(avg_loss)
+            scheduler.step(avg_loss)
 
             # Log to wandb
             if use_wandb:
@@ -237,7 +224,7 @@ class DiffusionModel:
             if (epoch + 1) % 50 == 0:
                 tqdm.write(
                     f"Epoch [{epoch+1}/{n_epochs}]  "
-                    f"Loss: {avg_loss:.6f}, LR: {current_lr:.2e}, Score mag: {last_score_mag:.4f}"
+                    f"Loss: {avg_loss:.6f}, LR: {current_lr:.2e}"
                 )
 
         # Unwrap DataParallel if used
@@ -312,43 +299,16 @@ class DiffusionModel:
                 f = self.drift_coeff_fn(batch_time_step)
                 f_expanded = f[:, None, None]
 
-                # score = self.model(x, batch_time_step).sample
-
-                # Noise parameterization: convert predicted noise to score
-                eps_pred = self.model(x, batch_time_step).sample
-                std_t = self.marginal_prob_std_fn(batch_time_step)[:, None, None].clamp(min=1e-3)
-                score = -eps_pred / std_t
-                if i == 0:
-                    print(f"[DEBUG] Score magnitude (step 0): {score.abs().mean().item():.6f}", flush=True)
-
-                diag_steps = [0, len(time_steps)//4, len(time_steps)//2, 3*len(time_steps)//4, len(time_steps)-2]
-                if i in diag_steps:
-                    drift_part       = (-f_expanded * x)
-                    score_part       = (g_expanded**2) * score
-                    noise_part_scale = torch.sqrt(step_size) * g_expanded
-                    flat_x           = x.flatten()
-                    flat_score       = score.flatten()
-                    print(f"\n[UNCOND DIAG step {i}]")
-                    print("t:", time_step.item())
-                    print("step_size:", step_size.item())
-                    print("x abs mean:", x.abs().mean().item())
-                    print("score abs mean:", score.abs().mean().item())
-                    print("drift abs mean:", drift_part.abs().mean().item())
-                    print("score_part abs mean:", score_part.abs().mean().item())
-                    print("score/drift ratio:", (score_part.abs().mean() / (drift_part.abs().mean() + 1e-12)).item())
-                    print("noise scale mean:", noise_part_scale.mean().item())
-                    print("mean x * score:", torch.mean(flat_x * flat_score).item())
-                    print("corr(score,  x):", torch.corrcoef(torch.stack([flat_x,  flat_score]))[0, 1].item())
-                    print("corr(score, -x):", torch.corrcoef(torch.stack([-flat_x, flat_score]))[0, 1].item())
-
+                score = self.model(x, batch_time_step).sample
                 adjust = (1 + stoch**2) / 2
                 mean_x = (
-                    x + (-f_expanded * x + adjust * (g_expanded**2) * 5.0 * score) * step_size
+                    x + (-f_expanded * x + adjust * (g_expanded**2) * score) * step_size
                 )
                 x = mean_x + stoch * torch.sqrt(step_size) * g_expanded * torch.randn_like(x)
 
                 if return_path:
-                    path_t.append(batch_time_step.clone())
+                    next_batch_t = torch.ones(batch_size, device=self.device) * next_t
+                    path_t.append(next_batch_t)
                     path_x.append(x.clone())
 
         if return_path:
