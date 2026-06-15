@@ -124,7 +124,7 @@ class HFunctionConfig:
     scheduler_factor: float = 0.5
 
     # Event condition
-    event_type: str = "absval"         # "sum", "change", or "absval"
+    event_type: str = "change"         # "sum", "change", or "absval"
     event_asset_idx: int = 0           # which asset to watch for the shock
     event_window: int = 3              # lookback period
     event_threshold: float = 1.2       # threshold in standardized units
