@@ -2,7 +2,7 @@
 
 ## What It Does
 
-Conditional Diffusion Generation (CDG) for financial time series. Trains a VP-SDE score model on macro returns, then conditions the reverse diffusion on a user-defined market event using Doob's h-transform. Portfolio strategies (min-variance, risk-parity, equal-weight) are evaluated on generated vs. real event windows.
+Conditional Diffusion Generation (CDG) for financial time series. Trains a VP-SDE score model using a **dual-axis Transformer** architecture on financial returns, then conditions the reverse diffusion on a user-defined market event using Doob's h-transform. Portfolio strategies (min-variance, risk-parity, equal-weight) are evaluated on generated vs. real event windows.
 
 ---
 
@@ -11,81 +11,139 @@ Conditional Diffusion Generation (CDG) for financial time series. Trains a VP-SD
 ```
 CDG_Finance/
 ├── config/config.py                         # All hyperparameters as dataclasses
-├── data/data_processor.py                   # Full preprocessing pipeline
+├── data/data_processor.py                   # Full preprocessing pipeline (note: file contains two DataProcessor class defs — second one is the current version)
 ├── models/
-│   ├── diffusion_model.py                   # VP-SDE score model (UNet1D)
-│   ├── hfunction.py                         # H-function CNN (Doob's h-transform)
-│   └── conditional_generator.py             # Guided reverse SDE + optional Q-model
+│   ├── transformer_score.py                 # Dual-axis Transformer score network (primary score model)
+│   ├── diffusion_model.py                   # VP-SDE wrapper: train / sample (UNet1D or Transformer)
+│   ├── hfunction.py                         # HFunctionCNN + HFunctionTransformer + HFunctionTrainer
+│   └── conditional_generator.py             # Doob h-transform guided sampler + Q-model (Transformer-based)
 ├── utils/
 │   ├── helpers.py                           # set_seed
 │   └── portfolio.py                         # Portfolio strategies + stats/plots
 ├── main.py                                  # Full end-to-end pipeline
+├── pretrain_and_plot.py                     # Train diffusion only and plot distributions
 ├── sample_insample.py                       # Load checkpoints, generate for train events
 ├── sample_outsample.py                      # Load checkpoints, generate for test events
+├── compare_train_test_events.py             # Real train events vs real test events (no generation)
+├── analyze_regime.py                        # Sliding-window search for best train/test data window
 ├── diffusion_model_analysis/
-│   ├── unconditional_gen.py                 # Plot unconditional marginals + pairwise joint 3D surfaces vs. real data
-│   ├── conditonal_gen.py                    # Plot conditional marginals vs. real event windows
-│   └── h_function_loss.py                   # Plot score function training loss curve
-├── explore/macro_data_new.csv               # Main dataset (FRED + yfinance)
-├── checkpoints/
+│   ├── unconditional_gen.py                 # Diagnostics table, marginal KDEs (last-day + cumulative), pairwise joint contour plots
+│   ├── conditonal_gen.py                    # Conditional vs real event window marginal KDEs
+│   ├── cov.py                               # Correlation/covariance matrix comparison (real vs uncond vs cond)
+│   └── losses.py                            # Score + H-function loss/accuracy curves (auto-discovers CSVs)
+├── explore/macro_data_new.csv               # Macro dataset (FRED + yfinance): unemp, sp500, baa
+├── Stocks_logret.csv                        # Stock log-return dataset: AAPL, AMZN, JPM, TSLA
+├── ckpt_new/                                # Active checkpoint directory (main.py reads/writes here)
 │   ├── diffusion_model.pt
 │   ├── hfunction.pt
 │   └── q_model.pt
-└── results/                                 # Output plots
+├── checkpoints/                             # Old checkpoint directory (legacy)
+├── run_training.sh                          # Full training launch script
+├── run_sampling.sh                          # Sampling launch script
+└── run_sweep_pretrain.sh                    # (η, stoch, Q-model) sweep over pretrained checkpoints
 ```
 
 ---
 
 ## Data
 
-**File:** `explore/macro_data_new.csv`  
-**Tickers (channels):** `["unemp", "sp500", "baa"]` — 3 channels  
-**Preprocessing pipeline** (`DataProcessor.process_all`):
-1. Load CSV, parse Date index
-2. Remove weekday effect (subtract per-weekday mean)
-3. Standardize (zero mean, unit variance)
-4. Winsorize (clip at 0.5th / 99.5th percentile)
-5. Create rolling 64-day windows → shape `(N, channels, 64)` for diffusion training
-6. Train/test split: last **3000 days** = test set
+Two datasets exist; which is used depends on `config.data.csv_path` and `config.data.tickers`:
 
-**Portfolio tickers:** `["sp500", "baa"]` — 2 of the 3 channels used for portfolio analysis
+| Dataset | Path | Tickers | Notes |
+|---|---|---|---|
+| Macro (config default) | `explore/macro_data_new.csv` | `["unemp", "sp500", "baa"]` | 3 channels |
+| Stocks (README target) | `Stocks_logret.csv` | `["AAPL", "AMZN", "JPM", "TSLA"]` | 4 channels; used by `analyze_regime.py` |
+
+The README documents the intended production configuration as the stock dataset with a specific data window selected by `analyze_regime.py`:
+
+| Split | Date Range | Sequences |
+|---|---|---|
+| Full | 2014-01-28 ~ 2025-10-17 | 2822 |
+| Train | 2014-01-28 ~ 2022-11-07 | 2148 |
+| Test | 2022-11-08 ~ 2025-10-17 | 674 |
+
+These dates are set via `config.data.start_date`, `config.data.end_date`, `config.data.train_end_date` (all `None` by default in config.py).
+
+**Preprocessing pipeline** (`DataProcessor.process_all`):
+1. Load CSV, parse Date index, filter to `[start_date, end_date]` if set
+2. Remove weekday effect (subtract per-weekday mean using `weekday_col` from CSV)
+3. Standardize (divide by std only — no mean subtraction in current version)
+4. Winsorize (clip at `winsorize_lower` / `winsorize_upper` percentiles; **both default 0.0** = no winsorization)
+5. Create rolling 64-day windows → shape `(N, seq_len, channels)` for event detection
+6. Track `start_weekdays` per window for accurate return inversion
+7. Train/test split: by `train_end_date` if set, else last `test_days=2000` rows
+
+`get_diffusion_data()` returns transposed windows `(N, channels, seq_len)` = `(N, A, T)` for UNet1D/Transformer input, training portion only.
 
 ---
 
 ## Models
 
-### 1. DiffusionModel (`models/diffusion_model.py`)
-- **Architecture:** UNet1D (HuggingFace Diffusers)
+### 1. FinancialTransformerScore (`models/transformer_score.py`)
+The primary score network. A dual-axis Transformer conditioned on diffusion time `t` via AdaLN.
+
+- **Input projection:** each scalar return value → `embed_dim` (linear)
+- **Positional embeddings:** learnable temporal `(1, 1, T, D)` + per-asset `(1, A, 1, D)`
+- **Time conditioning:** Gaussian Fourier features → 2-layer MLP → `cond_dim`
+- **`DualAxisBlock`** (N of these):
+  1. Temporal self-attention: `(B*A, T, D)` — each asset over 64 time steps
+  2. Cross-asset self-attention: `(B*T, A, D)` — all assets at each time step
+  3. Position-wise FFN (GELU, 4× expansion)
+  - Each sub-layer uses `AdaLN` (adaptive layer norm): time embedding → scale + shift
+- **Output:** linear projection back to scalar per position → `ScoreOutput.sample` shape `(B, A, T)`
+- **Default params:** `embed_dim=128, n_heads=4, n_layers=6, cond_dim=128` → ~2M parameters
+
+### 2. DiffusionModel (`models/diffusion_model.py`)
+- **Architecture:** Transformer (`arch="transformer"`) or UNet1D (`arch="unet"`)
+  - Config default: `arch="unet"` — README/intended: Transformer
+  - When `arch="transformer"`: instantiates `FinancialTransformerScore`
+  - When `arch="unet"`: instantiates HuggingFace `UNet1DModel`
 - **SDE type:** Variance Preserving (VP)
   - `b_min=0.1`, `b_max=3.25`
-  - `marginal_prob_std(t) = sqrt(1 - exp(-∫β))`
-- **Key params:** `in_channels=3, out_channels=3, sample_size=64, layers_per_block=3, block_out_channels=(64, 128, 256)`
-- **Training:** Denoising score matching, `n_epochs=1000`, `batch_size=75`, `lr=1e-5`
-- **LR Schedule:** Linear warmup (`warmup_epochs=600`, ramps `1e-8` → `1e-5`) then cosine decay (`1e-5` → `1e-6`)
-- **Sampling:** Euler-Maruyama with adaptive VP std grid, `num_steps=200`, `stoch=0.2`
-  - `drift += (1 + stoch²)/2 * g² * score * dt`
-- **Checkpoint:** `checkpoints/diffusion_model.pt`
+  - `marginal_prob_mean(t) = exp(-0.5 * ∫β)`, `marginal_prob_std(t) = sqrt(1 - exp(-∫β))`
+- **Loss:** Denoising score matching: `mean(sum((score * σ + z)², dim=(channels, seq)))`
+- **Optimizer:** AdamW + `ReduceLROnPlateau` (patience=50, factor=0.5)
+- **Config defaults:** `n_epochs=100, batch_size=75, lr=1e-4`; README target: `n_epochs=600`
+- **Sampling:** Euler-Maruyama on adaptive VP std grid (`num_steps=200`)
+  - `adjust = (1 + stoch²) / 2`
+  - `drift += adjust * g² * score * dt`
+  - `x += stoch * sqrt(dt) * g * noise`
+  - Last step returns `mean_x` (no final noise)
+- **Checkpoint:** `ckpt_new/diffusion_model.pt`
 
-### 2. HFunctionCNN (`models/hfunction.py`)
+### 3. HFunctionCNN / HFunctionTransformer (`models/hfunction.py`)
+Both implement `forward(x, t) → sigmoid scalar ∈ [0,1]`.
+
+**HFunctionCNN:**
+- Gaussian Fourier time embedding → Linear → SiLU
+- Conv1d stack: channels → 16 → 64 → 256, GroupNorm + SiLU, AdaptiveAvgPool1d(1)
+- FC head: 256+embed_dim → 128 → 64 → 1 → Sigmoid
+
+**HFunctionTransformer:**
+- Same `DualAxisBlock` stack as the score network, with global average pooling → Sigmoid head
+- Config default: `arch="cnn"` — README/intended: Transformer
+
+**HFunctionTrainer:**
 - **Purpose:** Learn P(event | x_t, t) — Doob's h-function
-- **Architecture:**
-  - Gaussian Fourier time embedding → Linear → SiLU
-  - Conv1d stack: 3 → 16 → 64 → 256 channels, GroupNorm + SiLU, AdaptiveAvgPool1d(1)
-  - FC head: 256+embed_dim → 128 → 64 → 1 → Sigmoid
-- **Training:** MSE loss on binary event labels from synthetic diffusion paths
-  - Paths generated by running `diffusion_model.sample(..., return_path=True)`
-  - `n_epochs=1000`, `batch_size=2048`, `lr=1e-4`, `weight_decay=1e-4`
-- **Checkpoint:** `checkpoints/hfunction.pt`
+- **Training data:** synthetic diffusion paths from `diffusion_model.sample(..., return_path=True)`
+  - `train_batch_size=2048` paths, `train_stoch=0.5`
+  - Mini-batch training: `h_mini_batch_size=512` per gradient step
+- **Loss:** MSE on binary (or soft sigmoid) event labels from terminal states
+- **Grad clipping:** `max_norm=1.0`
+- **Optimizer:** AdamW + `ReduceLROnPlateau`
+- **Config defaults:** `n_epochs=1000, lr=1e-4, weight_decay=1e-4`; README target: `n_epochs=300`
+- **Checkpoint:** `ckpt_new/hfunction.pt`
 
-### 3. ConditionalGenerator (`models/conditional_generator.py`)
+### 4. ConditionalGenerator + GradientHUNet (`models/conditional_generator.py`)
 - **Guided reverse SDE:**
   - Base drift: `g² * score`
-  - Guidance: `(1+eta) * g² * ∇log h(x,t)` (hard constraint mode)
-  - Soft mode: `(g²/beta) * grad_h`
-  - `eta=1.0` (config default; README says 150.0 — differs)
-- **Gradient computation:** autograd by default; optional Q-model to skip it
-- **Q-model (`GradientHUNet`):** UNet1D trained to approximate ∇H via covariation loss
-- **Checkpoint:** `checkpoints/q_model.pt`
+  - Guidance: `(1 + eta) * g² * (grad_h / h)` where `grad_h = ∇H` and `h = H(x, t)`
+  - Default `eta=1.0` (config); note: `generate()` signature defaults `eta=150.0` — config value is what's passed
+- **Gradient computation:** autograd by default (enables grad inside `@no_grad` context)
+- **Q-model (`GradientHUNet`):** `FinancialTransformerScore`-based network trained to approximate `∇H / H` via covariation loss — avoids autograd at sampling time
+  - Q-model architecture: `embed_dim=64, n_heads=4, n_layers=4, cond_dim=64`
+- **Known:** `_sample_batch` hardcodes `(batch_size, 4, 64)` — not driven by config channels/seq_len
+- **Checkpoint:** `ckpt_new/q_model.pt`
 
 ---
 
@@ -93,18 +151,27 @@ CDG_Finance/
 
 Configured in `HFunctionConfig`:
 
-| Field | Value | Meaning |
-|---|---|---|
-| `event_type` | `"absval"` | Look at absolute value of last observation |
-| `event_asset_idx` | `0` | Channel 0 = `unemp` |
-| `event_window` | `3` | Last 3 time steps |
-| `event_threshold` | `1.2` | Trigger if `abs(unemp[-1]) >= 1.2` |
-| `constraint_mode` | `"hard"` | Hard Doob h-constraint |
+| Field | Config Default | README Target | Meaning |
+|---|---|---|---|
+| `event_type` | `"absval"` | `"sum"` | Metric applied to last window |
+| `event_asset_idx` | `0` | `3` (TSLA) | Which channel to watch |
+| `event_window` | `3` | `10` | Lookback period (days) |
+| `event_threshold` | `1.2` | `-0.10 / σ_TSLA` | Trigger threshold |
+| `constraint_mode` | `"hard"` | `"hard"` | Hard Doob h-constraint |
 
-**Mask logic:**
+**Event types:**
+- `"sum"`: `last_window.sum(dim=1) <= threshold` (negative shock)
+- `"change"`: `|last_window[:,-1] - last_window[:,0]| >= threshold`
+- `"absval"`: `|last_window[:,-1]| >= threshold`
+
+**Mask logic (channels-last, for real data):**
 ```python
-last_window = X[:, event_asset_idx, -event_window:]  # shape (N, 3)
-mask = last_window[:, -1].abs() >= event_threshold
+last_window = X[:, -event_window:, event_asset_idx]  # (N, T, A) → (N, window)
+```
+
+**Mask logic in H-function training (channels-first, generated paths):**
+```python
+terminal[:, event_asset_idx, -event_window:]  # (N, A, T) → (N, window)
 ```
 
 ---
@@ -113,25 +180,27 @@ mask = last_window[:, -1].abs() >= event_threshold
 
 ```
 Step 1: DataProcessor.process_all()
-Step 2: DiffusionModel.train() → checkpoints/diffusion_model.pt
-Step 3: HFunctionTrainer.train() → checkpoints/hfunction.pt
+Step 2: DiffusionModel.train() → ckpt_new/diffusion_model.pt
+Step 3: HFunctionTrainer.train() → ckpt_new/hfunction.pt
 Step 4: Extract event masks from train + test sets
-Step 5: ConditionalGenerator.generate() for train events + test events
+Step 5 (optional): ConditionalGenerator.train_q_model() → ckpt_new/q_model.pt
+Step 6: ConditionalGenerator.generate() for train events + test events
          → generated_samples_train.pt, generated_samples_test.pt
-Step 6: PortfolioAnalyzer → min-var / risk-parity / equal-weight stats + plots
+Step 7: PortfolioAnalyzer → min-var / risk-parity / equal-weight stats + plots
          → results/portfolio_comparison_insample.png
          → results/portfolio_comparison_outsample.png
 ```
 
 **CLI flags for main.py:**
-- `--skip-diffusion-training` — load from checkpoint
-- `--skip-hfunction-training` — load from checkpoint
+- `--skip-diffusion-training` — load from `ckpt_new/diffusion_model.pt`
+- `--skip-hfunction-training` — load from `ckpt_new/hfunction.pt`
 - `--skip-qmodel-training` — skip Q-model
+- `--skip-conditional` — exit after step 4 (no generation or portfolio analysis)
+- `--train-q-model` — force Q-model training
 - `--no-wandb` — disable W&B logging
 
-**CLI flags for sample_insample.py / sample_outsample.py:**
-- `--num-steps`, `--stoch`, `--eta`, `--batch-size`
-- `--use-q-model`, `--no-wandb`, `--run-suffix`
+**Data Window Analysis (`analyze_regime.py`):**
+Sliding-window search over `Stocks_logret.csv` (hardcoded to AAPL/AMZN/JPM/TSLA) to find the `[start, end]` window and 75/25 train/test split where event portfolio returns are most similar across strategies. Outputs ranked CSV + plot to `results/regime/`.
 
 ---
 
@@ -139,30 +208,43 @@ Step 6: PortfolioAnalyzer → min-var / risk-parity / equal-weight stats + plots
 
 ```python
 # Data
+csv_path      = "explore/macro_data_new.csv"
 tickers       = ["unemp", "sp500", "baa"]
 seq_len       = 64
-test_days     = 3000
+test_days     = 2000                  # used only when train_end_date is None
+start_date    = None                  # None = use all data
+end_date      = None
+train_end_date= None
+winsorize_lower = 0.0                 # 0.0 = no winsorization
+winsorize_upper = 0.0
 
 # Diffusion
 in_channels   = 3, out_channels = 3, sample_size = 64
-layers_per_block = 3, block_out_channels = (64, 128, 256)
+layers_per_block = 3, block_out_channels = (64, 128, 256)   # UNet only
 b_min=0.1, b_max=3.25
-n_epochs=1000, batch_size=75, lr=1e-5, num_steps=200
-scheduler_type="cosine", warmup_epochs=600, scheduler_eta_min=1e-6
+arch="unet"                           # "unet" or "transformer"
+embed_dim=128, n_heads=4, n_layers=6, cond_dim=128           # Transformer params
+n_epochs=100, batch_size=75, lr=1e-4, num_steps=200
+scheduler_patience=50, scheduler_factor=0.5
 
 # H-Function
 asset_dim=3, time_steps=64, embed_dim=128
 event_type="absval", event_asset_idx=0, event_window=3, event_threshold=1.2
+arch="cnn"                            # "cnn" or "transformer"
 constraint_mode="hard", reward_sharpness=50.0
-n_epochs=1000, batch_size=2048, lr=1e-4
+train_batch_size=2048, train_stoch=0.5
+h_mini_batch_size=512
+n_epochs=1000, lr=1e-4, weight_decay=1e-4
 
 # Conditional Gen
-batch_size=32, num_steps=200, stoch=0.3, eta=1.0
+batch_size=32, num_steps=200, stoch=0, eta=1.0
 use_q_model=False, constraint_mode="hard"
+q_model_epochs=500, q_model_lr=1e-4
+q_model_train_batch_size=4096, q_model_mini_batch_size=256, q_model_train_stoch=0.5
+q_embed_dim=64, q_n_heads=4, q_n_layers=4, q_cond_dim=64
 
 # Portfolio
-window_for_cov=54  (days used to compute covariance)
-last_days_sum=5    (sum of last 5 days for return metric)
+window_for_cov=54, last_days_sum=5
 portfolio_tickers=["sp500", "baa"]
 ```
 
@@ -170,25 +252,80 @@ portfolio_tickers=["sp500", "baa"]
 
 ## Analysis Scripts
 
-- **`diffusion_model_analysis/unconditional_gen.py`** — two figures:
-  1. 1D marginal KDEs per asset (train vs. test, real vs. generated)
-  2. Pairwise 3D joint density surfaces for all pairs in `portfolio_tickers` (real vs. generated)
-  - Both driven entirely by `config.portfolio.portfolio_tickers` (which assets) and `config.data.tickers` (channel indices). No hardcoded asset names.
-  - Outputs: `results/score_function_distribution.png`, `results/score_function_joint_distribution.png`
-- **`diffusion_model_analysis/conditonal_gen.py`** — conditional marginals vs. real event windows
-- **`diffusion_model_analysis/h_function_loss.py`** — score function training loss curve (hardcoded values)
+All analysis scripts auto-detect config from `get_default_config()` and load checkpoints from `ckpt_new/`.
+
+- **`diffusion_model_analysis/unconditional_gen.py`** — three figures:
+  1. Diagnostics table: per-asset mean/std/quantiles for last-day and cumulative returns (real vs generated)
+  2. Marginal KDEs: last-day returns and 64-day cumulative returns per asset (real train/test vs unconditional generated)
+  3. Pairwise joint density contour plots for all asset pairs (real vs generated, last-day)
+  - Outputs to `diffusion_model_analysis/results/`
+
+- **`diffusion_model_analysis/conditonal_gen.py`** — two figures:
+  1. Last-day return KDEs: real event windows vs conditional generated
+  2. Cumulative return KDEs: real event windows vs conditional generated
+  - Reads `generated_samples_train.pt` / `generated_samples_test.pt` from repo root
+  - Outputs to `diffusion_model_analysis/`
+
+- **`diffusion_model_analysis/cov.py`** — correlation and covariance matrix heatmaps:
+  - Four panels per figure: Real (all) / Real (event windows) / Unconditional Generated / Conditional Generated
+  - Generates unconditional samples on-the-fly (`N_uncond=5000, stoch=0`)
+  - Prints matrices to stdout; saves 4 PNGs to `diffusion_model_analysis/results/`
+
+- **`diffusion_model_analysis/losses.py`** — training loss curves:
+  - Auto-discovers `score_losses.csv` / `h_losses.csv` by searching recursively from repo root
+  - Plots score loss; if H-function CSV found, adds H-loss + accuracy/pos_rate panels
+  - Output: `diffusion_model_analysis/results/train_losses.png`
+
+---
+
+## Key Tensor Shapes
+
+| Tensor | Shape | Notes |
+|---|---|---|
+| `X_train` / `X_test` | `(N, seq_len, channels)` = `(N, 64, A)` | Channels-last; for event detection |
+| Diffusion training data | `(N, channels, seq_len)` = `(N, A, 64)` | Channels-first; for UNet1D/Transformer input |
+| `generated_samples_*.pt` | `(N, channels, seq_len)` = `(N, A, 64)` | Output of ConditionalGenerator |
+| H-function input | `(B, channels, seq_len)` = `(B, A, 64)` | Same layout as diffusion |
+| `t_grid` (from sample path) | `(num_steps, batch_size)` | Time steps per trajectory |
+| `y_grid` (from sample path) | `(num_steps, batch_size, channels, seq_len)` | Full reverse-SDE paths |
 
 ---
 
 ## Known Issues / Gotchas
 
-1. **Event mask inconsistency in sample scripts:** `sample_insample.py` and `sample_outsample.py` hardcode the `sum`-type event filter (`sum <= threshold`) instead of reading `config.hfunction.event_type`. Only `main.py` branches correctly on `event_type`. This means the evaluation mask differs from the H-function's training condition when `event_type != "sum"`.
+1. **Duplicate `DataProcessor` in `data/data_processor.py`:** The file contains two complete class definitions. The first (lines ~1–234) is the legacy version; the second (lines ~236–489) is the current version with `start_date`/`end_date`/`train_end_date` support. Python will use whichever is defined last. This should be cleaned up.
 
-2. **`eta` discrepancy:** Config default `eta=1.0` but `ConditionalGenerator.generate()` signature defaults `eta=150.0`. The config value is what's actually passed at runtime.
+2. **`_sample_batch` hardcodes shape:** `ConditionalGenerator._sample_batch` initializes `init_x = torch.randn(batch_size, 4, 64, ...)` — hardcoded 4 channels and 64 seq_len. Breaks for other asset counts or sequence lengths.
 
-3. **`sample_insample.py` uses wrong tensor indexing for X_train:** Line 130 indexes `X_train[:, event_asset_idx, -event_window:]` (channels-first) but `X_train` from `data_processor` is `(N, seq_len, channels)` (channels-last). Same bug in `sample_outsample.py` line 130. `main.py` uses the correct channels-last indexing.
+3. **`arch` default mismatch:** `DiffusionConfig.arch = "unet"` but `DiffusionModel.__init__` defaults to `arch="transformer"`. Same pattern for H-function: `HFunctionConfig.arch = "cnn"` but `HFunctionTrainer` defaults to `arch="transformer"`. The config value is what main.py passes, so config governs at runtime.
 
-4. **Wandb disabled by default** (`enabled=False` in `WandbConfig`).
+4. **`eta` discrepancy:** `ConditionalGenConfig.eta = 1.0` (default) but `ConditionalGenerator.generate()` signature defaults `eta=150.0`. The config value is passed at runtime, so this only matters if `generate()` is called directly without a config.
+
+5. **Config vs README target:** Config defaults still point to macro data (`explore/macro_data_new.csv`, `["unemp", "sp500", "baa"]`, no date filtering). The README describes the intended production setup using `Stocks_logret.csv` with AAPL/AMZN/JPM/TSLA and date-bounded splits — these must be overridden in config at runtime.
+
+6. **Wandb disabled by default** (`WandbConfig.enabled = False`).
+
+---
+
+## Architecture Reference: Dual-Axis Transformer
+
+```
+Input: (B, A, T)  where A=assets, T=seq_len
+  ↓ input_proj (Linear 1→D)
+  → (B, A, T, embed_dim)
+  + temporal_pos (1, 1, T, D) + asset_emb (1, A, 1, D)
+
+For each DualAxisBlock:
+  1. Temporal attn:   reshape (B*A, T, D) → MHA → residual
+  2. Asset attn:      reshape (B*T, A, D) → MHA → residual
+  3. FFN:             GELU, 4× expansion, residual
+  (each sub-layer: AdaLN with t_emb conditioning)
+
+  ↓ output_proj (Linear D→1)
+Output: (B, A, T)  — score or noise prediction
+```
+
+AdaLN: `LayerNorm(x) * (1 + scale(t)) + shift(t)` where scale/shift come from a linear projection of the time embedding.
 
 ---
 
@@ -200,15 +337,4 @@ portfolio_tickers=["sp500", "baa"]
 **Fix:** Switched to noise parameterization — predict `z`, loss = `(eps_pred - z)²`. Score recovered as `-eps_pred / σ(t)` at sampling. Fixed `adjust`.  
 **Config:** `n_epochs=600`, `warmup_epochs=150`, `lr=1e-4`, `batch_size=75`, cosine schedule.
 
----
-
-## Key Tensor Shapes
-
-| Tensor | Shape | Notes |
-|---|---|---|
-| `X_train` / `X_test` | `(N, seq_len, channels)` = `(N, 64, 3)` | Sequences for event detection |
-| Diffusion training data | `(N, channels, seq_len)` = `(N, 3, 64)` | Transposed for UNet1D |
-| `generated_samples_*.pt` | `(N, channels, seq_len)` = `(N, 3, 64)` | Output of ConditionalGenerator |
-| H-function input | `(batch, channels, seq_len)` = `(B, 3, 64)` | Same layout as diffusion |
-| `t_grid` (from sample path) | `(num_steps, batch_size)` | Time steps per trajectory |
-| `y_grid` (from sample path) | `(num_steps, batch_size, channels, seq_len)` | Full reverse-SDE paths |
+> Note: The loss function in the current code still uses `(score * σ + z)²`. The sampling `adjust` fix is in place. The noise-parameterization experiment may have been reverted.

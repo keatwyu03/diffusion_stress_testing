@@ -54,12 +54,12 @@ class DataConfig:
     start_date: str = None            # data window start (None = use all)
     end_date: str = None              # data window end (None = use all)
     train_end_date: str = None        # last day of train set (None = use test_days)
-    winsorize_lower: float = 0.0
-    winsorize_upper: float = 0.0
+    winsorize_lower: float = 0.01
+    winsorize_upper: float = 0.01
 
     def __post_init__(self):
         if self.tickers is None:
-            self.tickers = ["unemp", "sp500", "baa"]
+            self.tickers = ["unemp", "AAPL", "ORCL", "MSFT", "IBM"]
 
 
 @dataclass
@@ -93,7 +93,7 @@ class DiffusionConfig:
     eps: float = 1e-4                  #Stopping point of when we claim the data are now normal
 
     # Architecture: "unet" or "transformer"
-    arch: str = "unet"
+    arch: str = "transformer"
 
     # Transformer-specific parameters (used when arch="transformer")
     embed_dim: int = 128
@@ -134,7 +134,7 @@ class HFunctionConfig:
     reward_sharpness: float = 50.0     # multiplier for sigmoid in soft mode
 
     # Architecture: "transformer" or "cnn"
-    arch: str = "cnn"
+    arch: str = "transformer"
     n_heads: int = 4
     n_layers: int = 4
     cond_dim: int = 128
