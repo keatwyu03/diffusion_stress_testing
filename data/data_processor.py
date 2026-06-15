@@ -296,7 +296,7 @@ class DataProcessor:
         if "Date" in df.columns:
             df["Date"] = pd.to_datetime(df["Date"])
             df = df.sort_values("Date").set_index("Date")
-        df = df[self.tickers + [self.weekday_col]].dropna()
+        df = df[self.tickers].dropna()
         if self.start_date is not None:
             df = df[df.index >= pd.to_datetime(self.start_date)]
         if self.end_date is not None:
@@ -306,8 +306,9 @@ class DataProcessor:
 
     def remove_weekday_effect(self) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """Remove weekday effect from returns"""
-        weekday_mean = self.df.groupby(self.weekday_col)[self.tickers].mean()
-        aligned = self.df[self.weekday_col].map(weekday_mean.to_dict("index"))
+        weekday_series = pd.Series(self.df.index.dayofweek, index=self.df.index)
+        weekday_mean = self.df.groupby(weekday_series)[self.tickers].mean()
+        aligned = weekday_series.map(weekday_mean.to_dict("index"))
         aligned_df = pd.DataFrame(list(aligned), index=self.df.index)[self.tickers]
         r_dw = self.df[self.tickers] - aligned_df
 
@@ -336,7 +337,7 @@ class DataProcessor:
         """Create sequences from standardized returns"""
         z_values = self.df_z.values
         dates = self.df_z.index.to_numpy()
-        weekday_arr = self.df[self.weekday_col].values  # aligned with df_z
+        weekday_arr = self.df_z.index.dayofweek.values
         T, D = z_values.shape
         X_list, y_list, idx_list, sw_list = [], [], [], []
 
