@@ -101,7 +101,8 @@ def make_figure(extract_fn, suptitle, filename, xlabel):
 
     fig.suptitle(suptitle, fontsize=13, fontweight="bold")
     fig.tight_layout()
-    out = os.path.join(_dir, filename)
+    os.makedirs(os.path.join(_dir, "results"), exist_ok=True)
+    out = os.path.join(_dir, "results", filename)
     plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.show()
     print(f"Saved {out}")
