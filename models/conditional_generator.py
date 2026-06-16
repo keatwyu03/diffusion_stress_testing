@@ -201,7 +201,9 @@ class ConditionalGenerator:
         eps: float,
     ) -> torch.Tensor:
         """Sample a single batch"""
-        init_x = torch.randn(batch_size, 4, 64, device=self.device)
+        n_assets = self.score_model.n_assets
+        seq_len  = self.score_model.seq_len
+        init_x = torch.randn(batch_size, n_assets, seq_len, device=self.device)
         x = init_x
 
         time_steps = self.make_vp_std_grid_fn(
