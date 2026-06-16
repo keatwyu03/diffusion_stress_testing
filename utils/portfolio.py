@@ -73,10 +73,10 @@ class PortfolioAnalyzer:
 
         for n in range(samples.shape[0]):
             sample = samples[n].T
-            r_seq, _, _, _ = self.data_processor.invert_samples(sample, monthly=False)
+            r_seq, _, _, _ = self.data_processor.invert_samples(sample)
             r_seq = r_seq[portfolio_tickers]
             R = r_seq.values
-
+            
             cov = np.cov(R[: self.window_for_cov, :], rowvar=False, ddof=1)
             if cov.ndim == 0:
                 cov = cov.reshape(1, 1)
@@ -110,7 +110,7 @@ class PortfolioAnalyzer:
 
             start_weekday = int(start_weekdays[n]) if start_weekdays is not None else None
             r_seq, _, _, _ = self.data_processor.invert_samples(
-                sample, monthly=False, start_weekday=start_weekday
+                sample, start_weekday=start_weekday
             )
             r_seq = r_seq[portfolio_tickers]
             R = r_seq.values

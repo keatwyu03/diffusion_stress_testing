@@ -30,6 +30,9 @@ n_assets = len(tickers)
 X_train = data_processor.X_train  # (N_train, T, A)
 X_test  = data_processor.X_test   # (N_test,  T, A)
 
+config.diffusion.in_channels  = n_assets
+config.diffusion.out_channels = n_assets
+
 # ── Event mask ────────────────────────────────────────────────────────────────
 def get_mask(X):
     last_window = X[:, -config.hfunction.event_window:, config.hfunction.event_asset_idx]
