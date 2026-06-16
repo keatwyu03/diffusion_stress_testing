@@ -51,13 +51,18 @@ diffusion_model = DiffusionModel(
 )
 diffusion_model.load("ckpt_new/diffusion_model.pt")
 
-N_samples = 5000
-print(f"Generating {N_samples} unconditional samples...")
-uncond = diffusion_model.sample(
-    batch_size=N_samples,
-    num_steps=config.diffusion.num_steps,
-    stoch=0,
-).cpu()  # (N_samples, A, T)
+N_samples  = 5000
+batch_size = 256
+print(f"Generating {N_samples} unconditional samples (batch={batch_size})...")
+chunks = []
+for start in range(0, N_samples, batch_size):
+    bs = min(batch_size, N_samples - start)
+    chunks.append(diffusion_model.sample(
+        batch_size=bs,
+        num_steps=config.diffusion.num_steps,
+        stoch=0,
+    ).cpu())
+uncond = torch.cat(chunks, dim=0)  # (N_samples, A, T)
 
 _dir = os.path.dirname(os.path.abspath(__file__))
 os.makedirs(os.path.join(_dir, "results"), exist_ok=True)

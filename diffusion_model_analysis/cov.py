@@ -71,13 +71,18 @@ diffusion_model = DiffusionModel(
 )
 diffusion_model.load("ckpt_new/diffusion_model.pt")
 
-N_uncond = 5000
-print(f"Generating {N_uncond} unconditional samples...")
-uncond = diffusion_model.sample(
-    batch_size=N_uncond,
-    num_steps=config.diffusion.num_steps,
-    stoch=0,
-).cpu()  # (N, A, T)
+N_uncond   = 5000
+batch_size = 256
+print(f"Generating {N_uncond} unconditional samples (batch={batch_size})...")
+chunks = []
+for start in range(0, N_uncond, batch_size):
+    bs = min(batch_size, N_uncond - start)
+    chunks.append(diffusion_model.sample(
+        batch_size=bs,
+        num_steps=config.diffusion.num_steps,
+        stoch=0,
+    ).cpu())
+uncond = torch.cat(chunks, dim=0)  # (N, A, T)
 
 # ── Last-day return matrices: shape (N, A) ────────────────────────────────────
 # Real: X shape is (N, T, A) → last day = X[:, -1, :]
