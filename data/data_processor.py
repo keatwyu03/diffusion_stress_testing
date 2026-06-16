@@ -77,12 +77,12 @@ class DataProcessor:
         return r_dw, weekday_mean
 
     def standardize(self) -> pd.DataFrame:
-        """Standardize using train-set mean/std only to avoid data leakage"""
+        """Standardize using train-set std only to avoid data leakage"""
         data = self.r_dw if self.r_dw is not None else self.df
         train_data = data.iloc[:-self.test_days]
         self.mu_seq = train_data.mean()
         self.sigma_seq = train_data.std()
-        z = (data - self.mu_seq) / self.sigma_seq
+        z = data / self.sigma_seq
         self.df_z = z.dropna(how="any")
         return self.df_z
 
@@ -319,7 +319,7 @@ class DataProcessor:
         return r_dw, weekday_mean
 
     def standardize(self) -> pd.DataFrame:
-        """Standardize using train-set mean/std only to avoid data leakage"""
+        """Standardize using train-set std only to avoid data leakage"""
         if self.train_end_date is not None:
             cutoff = pd.to_datetime(self.train_end_date)
             train_data = self.r_dw[self.r_dw.index <= cutoff]
@@ -327,7 +327,7 @@ class DataProcessor:
             train_data = self.r_dw.iloc[:-self.test_days]
         self.mu_seq = train_data.mean()
         self.sigma_seq = train_data.std()
-        z = (self.r_dw - self.mu_seq) / self.sigma_seq
+        z = self.r_dw / self.sigma_seq
         self.df_z = z.dropna(how="any")
         return self.df_z
 

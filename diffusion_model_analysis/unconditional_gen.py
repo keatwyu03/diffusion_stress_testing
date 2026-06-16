@@ -88,6 +88,9 @@ def diagnose_score_target(dm, x, t_values=(1.0, 0.6, 0.35, 0.15, 0.01)):
                   f"  target|mean|={target_score.abs().mean():.4f}")
 
 
+print("Real X_train mean per asset:", X_train.mean(dim=(0,1)).tolist())
+print("Generated uncond mean per asset:", uncond.mean(dim=(0,2)).tolist())
+
 # ── Diagnostics table ─────────────────────────────────────────────────────────
 rows = []
 for i, ticker in enumerate(tickers):
