@@ -54,8 +54,8 @@ class DataConfig:
     start_date: str = None            # data window start (None = use all)
     end_date: str = None              # data window end (None = use all)
     train_end_date: str = None        # last day of train set (None = use test_days)
-    winsorize_lower: float = 0.01
-    winsorize_upper: float = 0.01
+    winsorize_lower: float = 0.005
+    winsorize_upper: float = 0.995
 
     def __post_init__(self):
         if self.tickers is None:

@@ -27,10 +27,8 @@ data_processor.process_all()
 tickers  = config.data.tickers   # all assets
 n_assets = len(tickers)
 
-# Use the actual diffusion training/test data (same preprocessing as model training)
-# Shape: (N, A, T) — matches uncond format directly
-X_real_train = data_processor.get_diffusion_data()   # (N_train, A, T) from df_z_wins
-X_real_test  = data_processor.X_test.permute(0, 2, 1)  # (N_test, A, T)
+X_train = data_processor.X_train  # (N_train, T, A)
+X_test  = data_processor.X_test   # (N_test,  T, A)
 
 config.diffusion.in_channels  = n_assets
 config.diffusion.out_channels = n_assets
@@ -90,15 +88,15 @@ def diagnose_score_target(dm, x, t_values=(1.0, 0.6, 0.35, 0.15, 0.01)):
                   f"  target|mean|={target_score.abs().mean():.4f}")
 
 
-print("Real train mean per asset:", X_real_train.mean(dim=(0,2)).tolist())
+print("Real X_train mean per asset:", X_train.mean(dim=(0,1)).tolist())
 print("Generated uncond mean per asset:", uncond.mean(dim=(0,2)).tolist())
 
 # ── Diagnostics table ─────────────────────────────────────────────────────────
 rows = []
 for i, ticker in enumerate(tickers):
-    real_last = X_real_train[:, i, -1].numpy()
+    real_last = X_train[:, -1, i].numpy()
     gen_last  = uncond[:, i, -1].numpy()
-    real_cum  = X_real_train[:, i, :].sum(dim=1).numpy()
+    real_cum  = X_train[:, :, i].sum(dim=1).numpy()
     gen_cum   = uncond[:, i, :].sum(dim=1).numpy()
 
     for split, vals_last, vals_cum in [
@@ -153,8 +151,8 @@ def make_figure(extract_real_fn, extract_gen_fn, suptitle, filename, xlabel):
         axes = axes[np.newaxis, :]
 
     splits = [
-        (0, X_real_train, "In-Sample (Train)"),
-        (1, X_real_test,  "Out-of-Sample (Test)"),
+        (0, X_train, "In-Sample (Train)"),
+        (1, X_test,  "Out-of-Sample (Test)"),
     ]
 
     for row, ticker in enumerate(tickers):
@@ -180,9 +178,8 @@ def make_figure(extract_real_fn, extract_gen_fn, suptitle, filename, xlabel):
 
 
 # ── Figure 1: Last-day returns ────────────────────────────────────────────────
-# X is (N, A, T): asset dim=1, time dim=2
 make_figure(
-    extract_real_fn=lambda X, ch: X[:, ch, -1].numpy(),
+    extract_real_fn=lambda X, ch: X[:, -1, ch].numpy(),
     extract_gen_fn =lambda ch:    uncond[:, ch, -1].numpy(),
     suptitle="Unconditional Generation — Last-Day Return",
     filename="unconditional_lastday.png",
@@ -191,7 +188,7 @@ make_figure(
 
 # ── Figure 2: Cumulative returns (64-day sum) ─────────────────────────────────
 make_figure(
-    extract_real_fn=lambda X, ch: X[:, ch, :].sum(dim=1).numpy(),
+    extract_real_fn=lambda X, ch: X[:, :, ch].sum(dim=1).numpy(),
     extract_gen_fn =lambda ch:    uncond[:, ch, :].sum(dim=1).numpy(),
     suptitle="Unconditional Generation — Cumulative Return (64-day sum)",
     filename="unconditional_cumulative.png",
@@ -208,11 +205,11 @@ if n_pairs == 1:
 
 for row, (i, j) in enumerate(pairs):
     t1, t2 = tickers[i], tickers[j]
-    for col, (X, split_label) in enumerate([(X_real_train, "In-Sample (Train)"), (X_real_test, "Out-of-Sample (Test)")]):
+    for col, (X, split_label) in enumerate([(X_train, "In-Sample (Train)"), (X_test, "Out-of-Sample (Test)")]):
         ax = axes2[row, col]
 
-        real_t1 = X[:, i, -1].numpy()
-        real_t2 = X[:, j, -1].numpy()
+        real_t1 = X[:, -1, i].numpy()
+        real_t2 = X[:, -1, j].numpy()
         gen_t1  = uncond[:, i, -1].numpy()
         gen_t2  = uncond[:, j, -1].numpy()
 
