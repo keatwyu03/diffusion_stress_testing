@@ -214,6 +214,7 @@ class HFunctionTrainer:
         )
         loss_fn = nn.MSELoss()
 
+        loss_records = []
         print("Starting H-function training...")
         for epoch in tqdm(range(n_epochs), desc="H-Function Training"):
             # Sample random time steps and trajectories
@@ -268,6 +269,8 @@ class HFunctionTrainer:
                     "hfunction/epoch": epoch,
                 })
 
+            loss_records.append({"epoch": epoch, "loss": loss.item(), "accuracy": acc, "pos_ratio": pos_ratio})
+
             # Log to console periodically
             if epoch % 100 == 0:
                 tqdm.write(
@@ -275,6 +278,9 @@ class HFunctionTrainer:
                     f"Acc: {acc:.4f} | PosRatio: {pos_ratio:.3f}"
                 )
 
+        import pandas as pd, os
+        os.makedirs("ckpt_new", exist_ok=True)
+        pd.DataFrame(loss_records).to_csv("ckpt_new/h_losses.csv", index=False)
         print("H-function training complete!")
 
     def save(self, path: str) -> None:

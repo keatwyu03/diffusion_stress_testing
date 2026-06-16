@@ -190,6 +190,7 @@ class DiffusionModel:
             optimizer, mode="min", factor=scheduler_factor, patience=scheduler_patience
         )
 
+        loss_records = []
         print("Starting diffusion model training...", flush=True)
         for epoch in tqdm(range(n_epochs), desc="Diffusion Training"):
             avg_loss = 0.0
@@ -211,6 +212,7 @@ class DiffusionModel:
             avg_loss /= num_items
             current_lr = optimizer.param_groups[0]['lr']
             scheduler.step(avg_loss)
+            loss_records.append({"epoch": epoch + 1, "loss": avg_loss, "lr": current_lr})
 
             # Log to wandb
             if use_wandb:
@@ -226,6 +228,10 @@ class DiffusionModel:
                     f"Epoch [{epoch+1}/{n_epochs}]  "
                     f"Loss: {avg_loss:.6f}, LR: {current_lr:.2e}"
                 )
+
+        import pandas as pd, os
+        os.makedirs("ckpt_new", exist_ok=True)
+        pd.DataFrame(loss_records).to_csv("ckpt_new/score_losses.csv", index=False)
 
         # Unwrap DataParallel if used
         if isinstance(self.model, nn.DataParallel):
