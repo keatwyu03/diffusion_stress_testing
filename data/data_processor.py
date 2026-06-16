@@ -82,7 +82,7 @@ class DataProcessor:
         train_data = data.iloc[:-self.test_days]
         self.mu_seq = train_data.mean()
         self.sigma_seq = train_data.std()
-        z = data / self.sigma_seq
+        z = (data - self.mu_seq) / self.sigma_seq
         self.df_z = z.dropna(how="any")
         return self.df_z
 
@@ -327,7 +327,7 @@ class DataProcessor:
             train_data = self.r_dw.iloc[:-self.test_days]
         self.mu_seq = train_data.mean()
         self.sigma_seq = train_data.std()
-        z = self.r_dw / self.sigma_seq
+        z = (self.r_dw - self.mu_seq) / self.sigma_seq
         self.df_z = z.dropna(how="any")
         return self.df_z
 
