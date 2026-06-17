@@ -50,7 +50,7 @@ class DataConfig:
     tickers: List[str] = None
     weekday_col: str = "weekday"
     seq_len: int = 64
-    test_days: int = 1000             # used only when train_end_date is None
+    test_days: int = 1500             # used only when train_end_date is None
     start_date: str = None            # data window start (None = use all)
     end_date: str = None              # data window end (None = use all)
     train_end_date: str = None        # last day of train set (None = use test_days)
@@ -59,7 +59,7 @@ class DataConfig:
 
     def __post_init__(self):
         if self.tickers is None:
-            self.tickers = ["unemp", "AAPL", "ORCL", "MSFT", "IBM"]
+            self.tickers = ["aaa", "AAPL", "ORCL", "MSFT", "IBM"]
 
 
 @dataclass
@@ -127,7 +127,7 @@ class HFunctionConfig:
     event_type: str = "change"         # "sum", "change", or "absval"
     event_asset_idx: int = 0           # which asset to watch for the shock
     event_window: int = 64              # lookback period
-    event_threshold: float = 0.1       # threshold in standardized units
+    event_threshold: float = 1.0       # threshold in standardized units
 
     # Constraint mode
     constraint_mode: str = "hard"      # "hard" or "soft" (exponential)

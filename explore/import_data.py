@@ -4,6 +4,7 @@ import numpy as np
 import torch
 import yfinance as yf
 import os
+import matplotlib.pyplot as plt
 
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -14,35 +15,27 @@ cond_event  = _cfg.data.tickers[_cfg.hfunction.event_asset_idx]  # e.g. "unemp"
 h_threshold = _cfg.hfunction.event_threshold
 
 fred = Fred(api_key = '6dac8927ae66be817978bd55e16a9241')
-sp500 = yf.download('^GSPC', start = '1950-01-01')['Close'].squeeze()
+sp500 = yf.download('^GSPC', start = '2008-01-01')['Close'].squeeze()
 
 
 data = {
-    'unemp': fred.get_series('UNRATE'),
-    'cpi': fred.get_series('CPIAUCSL'),
+    'aaa': fred.get_series('AAA'),
     'gdp': fred.get_series('GDP'),
     'spread': fred.get_series('T10Y2Y'),
     'sp500': fred.get_series('SP500'),
     'vix': fred.get_series('VIXCLS'),
-    'baa': fred.get_series('BAA'),
-    'aaa': fred.get_series('AAA'),
 }
 
-
-baa_log = np.log(data['baa'] / data['baa'].shift(1))
-
-cond_series = data[cond_event]  # unemployment level
+cond_series = data[cond_event]  
 
 tickers = ["AAPL", "ORCL", "MSFT", "IBM"]
-df = yf.download(tickers, start = "2010-01-01", auto_adjust=True)["Close"]
+df = yf.download(tickers, start = "2008-01-01", auto_adjust=True)["Close"]
 log_ret = np.log(df / df.shift(1)).dropna()
 
 df[cond_event] = cond_series.reindex(df.index).interpolate(method='time')
-df['baa']      = baa_log.reindex(df.index).interpolate(method='time')
 
 df_out = pd.DataFrame({
     cond_event:            df[cond_event],
-    "baa":                 df["baa"],
     "AAPL":                log_ret["AAPL"],
     "ORCL":                log_ret["ORCL"],
     "MSFT":                log_ret["MSFT"],
@@ -72,6 +65,17 @@ print(f"Split date: {split_date.date()}  (train={n_train}, test={test_days})")
 print(f"Train unemp level: mean={train_mean:.4f}  std={train_std:.4f}")
 
 # count events: abs(std_level[end] - std_level[start]) >= threshold over event_window
+change_vals = []
+time = []
+
+def change_events(vs):
+    for t in range(event_win, len(vs)):
+        change_vals.append(abs(vs[t] - vs[t - event_win]))
+        time.append(df_out.index[t])
+
+change_events(vals_std)
+
+
 def count_events(vs):
     count = 0
     for t in range(event_win, len(vs)):
@@ -84,3 +88,18 @@ test_events  = count_events(vals_std[n_train:])
 
 print(f"TRAIN events: {train_events} / {n_train - event_win}  ({100*train_events/(n_train - event_win):.1f}%)")
 print(f"TEST  events: {test_events} / {max(test_days - event_win, 1)}  ({100*test_events/max(test_days - event_win, 1):.1f}%)")
+
+
+fig, (ax1, ax2) = plt.subplots(1,2)
+ax1.plot(df[cond_event].index, df[cond_event].values)
+ax2.plot(time, change_vals)
+ax2.axhline(h_threshold, color = "red", linestyle = "--")
+ax2.annotate(
+    f"TRAIN events: {train_events} / {n_train - event_win}  ({100*train_events/(n_train - event_win):.1f}%)\n"
+    f"TEST  events: {test_events} / {max(test_days - event_win, 1)}  ({100*test_events/max(test_days - event_win, 1):.1f}%)",
+    xy=(0.5, -0.12), xycoords='axes fraction', ha='center')
+
+ax1.set_title(f"Condition Event Series of {cond_event}")
+ax2.set_title(f"Daily Change of conditioned event series of {cond_event}")
+
+plt.show()
