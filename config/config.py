@@ -64,7 +64,7 @@ class DataConfig:
 
     def __post_init__(self):
         if self.tickers is None:
-            self.tickers = ["gs5", "AAPL", "ORCL", "MSFT", "IBM"]
+            self.tickers = ["t1yffm", "AAPL", "ORCL", "MSFT", "IBM"]
 
 
 @dataclass
@@ -132,7 +132,7 @@ class HFunctionConfig:
     event_type: str = "change"         # "sum", "change", or "absval"
     event_asset_idx: int = 0           # which asset to watch for the shock
     event_window: int = 64              # lookback period
-    event_threshold: float = 1.0      # threshold in standardized units
+    event_threshold: float = 1.5      # threshold in standardized units
 
     # Constraint mode
     constraint_mode: str = "hard"      # "hard" or "soft" (exponential)
