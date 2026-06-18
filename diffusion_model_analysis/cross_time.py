@@ -22,7 +22,7 @@ data_processor = DataProcessor(
     tickers=config.data.tickers,
     weekday_col=config.data.weekday_col,
     seq_len=config.data.seq_len,
-    test_days=0 ,
+    test_days=1,
     winsorize_lower=config.data.winsorize_lower,
     winsorize_upper=config.data.winsorize_upper,
 )
