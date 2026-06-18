@@ -2,8 +2,6 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import gaussian_kde
-from itertools import combinations
-from matplotlib.patches import Patch
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -195,54 +193,3 @@ make_figure(
     xlabel="Cumulative Standardized Return",
 )
 
-# ── Joint distributions (all pairwise combinations) ───────────────────────────
-pairs   = list(combinations(range(n_assets), 2))
-n_pairs = len(pairs)
-
-fig2, axes2 = plt.subplots(n_pairs, 2, figsize=(14, 6 * n_pairs))
-if n_pairs == 1:
-    axes2 = axes2[np.newaxis, :]
-
-for row, (i, j) in enumerate(pairs):
-    t1, t2 = tickers[i], tickers[j]
-    for col, (X, split_label) in enumerate([(X_train, "In-Sample (Train)"), (X_test, "Out-of-Sample (Test)")]):
-        ax = axes2[row, col]
-
-        real_t1 = X[:, -1, i].numpy()
-        real_t2 = X[:, -1, j].numpy()
-        gen_t1  = uncond[:, i, -1].numpy()
-        gen_t2  = uncond[:, j, -1].numpy()
-
-        x_min = min(real_t1.min(), gen_t1.min()) - 0.5
-        x_max = max(real_t1.max(), gen_t1.max()) + 0.5
-        y_min = min(real_t2.min(), gen_t2.min()) - 0.5
-        y_max = max(real_t2.max(), gen_t2.max()) + 0.5
-
-        xx, yy = np.meshgrid(np.linspace(x_min, x_max, 80),
-                             np.linspace(y_min, y_max, 80))
-        grid = np.vstack([xx.ravel(), yy.ravel()])
-
-        zz_real = gaussian_kde(np.vstack([real_t1, real_t2]), bw_method="silverman")(grid).reshape(xx.shape)
-        zz_gen  = gaussian_kde(np.vstack([gen_t1,  gen_t2]),  bw_method="silverman")(grid).reshape(xx.shape)
-
-        ax.contourf(xx, yy, zz_real, levels=10, cmap="Oranges", alpha=0.5)
-        ax.contour( xx, yy, zz_real, levels=10, colors="darkorange", linewidths=0.8, alpha=0.8)
-        ax.contourf(xx, yy, zz_gen,  levels=10, cmap="Blues",   alpha=0.5)
-        ax.contour( xx, yy, zz_gen,  levels=10, colors="steelblue",  linewidths=0.8, alpha=0.8)
-
-        ax.legend(handles=[
-            Patch(color="darkorange", alpha=0.7, label=f"Real last-day (n={len(real_t1)})"),
-            Patch(color="steelblue",  alpha=0.7, label=f"Generated (n={len(gen_t1)})"),
-        ], fontsize=9, loc="upper right")
-
-        ax.set_title(f"Joint {t1.upper()} × {t2.upper()} — {split_label}", fontsize=11)
-        ax.set_xlabel(f"{t1.upper()} Std Return (day 64)")
-        ax.set_ylabel(f"{t2.upper()} Std Return (day 64)")
-        ax.grid(True, alpha=0.3)
-
-fig2.suptitle("Unconditional Generation — Joint Pairwise Distributions (Last Day)", fontsize=13, fontweight="bold")
-fig2.tight_layout()
-out2 = os.path.join(_dir, "results", "unconditional_joint.png")
-plt.savefig(out2, dpi=150, bbox_inches="tight")
-plt.show()
-print(f"Saved {out2}")

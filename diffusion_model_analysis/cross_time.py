@@ -175,16 +175,17 @@ def plot_marginals(panels, title, fname):
         ]:
             x = np.linspace(vals.min() - 0.5, vals.max() + 0.5, 500)
             kde = gaussian_kde(vals)
-            ax_l.plot(x, kde(x), color = color, label = lbl)
+            ax_l.plot(x, kde(x), color=color, label=lbl)
+            ax_l.fill_between(x, kde(x), alpha=0.3, color=color)
 
-                
         for vals, color, lbl in [
             (real_event[:, i],   "darkorange", f"Real (n={len(real_event)})"),
-            (cond_arr[:, i], "steelblue",  f"Unconditional (n={len(cond_arr)})"),
+            (cond_arr[:, i], "steelblue",  f"Conditional (n={len(cond_arr)})"),
         ]:
             x = np.linspace(vals.min() - 0.5, vals.max() + 0.5, 500)
             kde = gaussian_kde(vals)
-            ax_r.plot(x, kde(x), color = color, label = lbl)
+            ax_r.plot(x, kde(x), color=color, label=lbl)
+            ax_r.fill_between(x, kde(x), alpha=0.3, color=color)
 
         ax_l.set_title(f"{tickers[i].upper()} — Unconditional", fontsize=10, fontweight="bold")
         ax_r.set_title(f"{tickers[i].upper()} — Conditional", fontsize=10, fontweight="bold")

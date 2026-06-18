@@ -286,6 +286,14 @@ AdaLN: `LayerNorm(x) * (1 + scale(t)) + shift(t)` where scale/shift come from a 
 **Issue:** Generated std ≈ 2× real std. `corr(score, x)` collapses to ~0 by t=0.59.  
 **Fix:** Switched to noise parameterization, fixed `adjust = (1+stoch²)/2`.
 
+### 2026-06-17
+**Changes:**
+- `config/config.py`: added `start_date="2008-01-01"` to `DataConfig` to restrict training data to post-2008 era. Added `ct_csv_path`, `ct_start_date`, `ct_end_date` fields for cross-time generalization test. Changed `tickers[0]` from `"fedfunds"` to `"aaa"` (AAA corporate bond yield fits score function better than FEDFUNDS).
+- `explore/import_data.py`: added cross-time CSV generation section — downloads 1995-2008 era data and writes to `explore/cross_test_data.csv` using `ct_start_date`/`ct_end_date` from config.
+- `diffusion_model_analysis/cross_time.py`: new script for cross-time OOD generalization. Loads `ct_csv_path` data, generates 2000 unconditional + N_cond conditional samples using the trained checkpoint, plots correlation matrices and marginal KDEs (unconditional vs real all, conditional vs real event windows).
+- `diffusion_model_analysis/unconditional_gen.py`: removed joint pairwise distribution plots, keeping only marginal KDEs.
+- `.gitignore`: removed `*.csv` rule so data CSVs can be committed.
+
 ### 2026-06-15
 **Changes:**
 - `import_data.py`: store unemployment LEVEL (not diff) interpolated to daily. Diagnostic uses train-only standardization.
