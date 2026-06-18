@@ -43,7 +43,6 @@ env/
 *.ipynb
 
 # Data files
-*.csv
 *.pkl
 *.h5
 *.hdf5
