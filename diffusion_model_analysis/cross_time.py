@@ -17,20 +17,14 @@ from scipy.stats import gaussian_kde
 
 config = get_default_config()
 
-start_date = "1995-01-01"
-end_date   = "2005-01-01"
-
-
 data_processor = DataProcessor(
-    csv_path=config.data.csv_path,
+    csv_path=config.data.ct_csv_path,
     tickers=config.data.tickers,
     weekday_col=config.data.weekday_col,
     seq_len=config.data.seq_len,
-    test_days=config.data.test_days,
+    test_days=0 ,
     winsorize_lower=config.data.winsorize_lower,
     winsorize_upper=config.data.winsorize_upper,
-    start_date=start_date,
-    end_date=end_date,
 )
 
 data_processor.process_all()

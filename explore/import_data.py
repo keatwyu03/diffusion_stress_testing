@@ -45,6 +45,23 @@ df_out = pd.DataFrame({
 df_out = df_out.dropna()
 df_out.to_csv("explore/macro_data_new.csv", index_label="Date")
 
+
+df_ct = yf.download(tickers, start = _cfg.data.ct_start_date, end = _cfg.data.ct_end_date ,auto_adjust=True)["Close"]
+log_ret_ct = np.log(df_ct / df_ct.shift(1)).dropna()
+
+df_ct[cond_event] = cond_series.reindex(df_ct.index).interpolate(method='time')
+
+df_out_ct = pd.DataFrame({
+    cond_event:            df_ct[cond_event],
+    "AAPL":                log_ret_ct["AAPL"],
+    "ORCL":                log_ret_ct["ORCL"],
+    "MSFT":                log_ret_ct["MSFT"],
+    "IBM":                 log_ret_ct["IBM"],
+})
+
+df_out_ct = df_out_ct.dropna()
+df_out_ct.to_csv("explore/cross_test_data.csv", index_label="Date")
+
 print(f"total rows: {len(df_out)}")
 
 seq_len    = _cfg.data.seq_len

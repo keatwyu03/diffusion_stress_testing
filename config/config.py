@@ -47,11 +47,16 @@ class DataConfig:
     # Where to load the data. Training/Testing split
     # Outlier handling -> winsorize upper and lower = % bounds to remove
     csv_path: str = "explore/macro_data_new.csv"
+    ct_csv_path: str = "explore/cross_test_data.csv"
+
+    start_date : str = "2008-01-01"
+    ct_start_date : str = "1995-01-01"
+    ct_end_date : str = "2007-12-31"
+
     tickers: List[str] = None
     weekday_col: str = "weekday"
     seq_len: int = 64
     test_days: int = 1500             # used only when train_end_date is None
-    start_date: str = None            # data window start (None = use all)
     end_date: str = None              # data window end (None = use all)
     train_end_date: str = None        # last day of train set (None = use test_days)
     winsorize_lower: float = 0.005
