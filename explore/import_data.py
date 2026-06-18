@@ -19,11 +19,10 @@ sp500 = yf.download('^GSPC', start = '2008-01-01')['Close'].squeeze()
 
 
 data = {
-    't1yffm': fred.get_series('T1YFFM'),
-    'gdp': fred.get_series('GDP'),
+    'gs10': fred.get_series('GS10'),
+    'vix': fred.get_series('VIXCLS'),
     'spread': fred.get_series('T10Y2Y'),
     'sp500': fred.get_series('SP500'),
-    'vix': fred.get_series('VIXCLS'),
 }
 
 cond_series = data[cond_event]  
