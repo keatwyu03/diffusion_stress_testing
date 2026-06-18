@@ -18,7 +18,7 @@ from scipy.stats import gaussian_kde
 config = get_default_config()
 
 start_date = "1995-01-01"
-end_date = "2005-01-01"
+end_date   = "2005-01-01"
 
 
 data_processor = DataProcessor(
@@ -29,6 +29,8 @@ data_processor = DataProcessor(
     test_days=config.data.test_days,
     winsorize_lower=config.data.winsorize_lower,
     winsorize_upper=config.data.winsorize_upper,
+    start_date=start_date,
+    end_date=end_date,
 )
 
 data_processor.process_all()
@@ -72,7 +74,7 @@ print(f"Generating {N_uncond} unconditional samples...")
 
 chunks = []
 
-for start in range(0, N_uncond - batch_size):
+for start in range(0, N_uncond, batch_size):
     bs = min(batch_size, N_uncond - start)
     chunks.append(diffusion_model.sample(
         batch_size = bs,
@@ -177,4 +179,35 @@ def plot_marginals(panels, title, fname):
             (real_all[:, i],   "darkorange", f"Real (n={len(real_all)})"),
             (uncond_arr[:, i], "steelblue",  f"Unconditional (n={len(uncond_arr)})"),
         ]:
-            
+            x = np.linspace(vals.min() - 0.5, vals.max() + 0.5, 500)
+            kde = gaussian_kde(vals)
+            ax_l.plot(x, kde(x), color = color, label = lbl)
+
+                
+        for vals, color, lbl in [
+            (real_event[:, i],   "darkorange", f"Real (n={len(real_event)})"),
+            (cond_arr[:, i], "steelblue",  f"Unconditional (n={len(cond_arr)})"),
+        ]:
+            x = np.linspace(vals.min() - 0.5, vals.max() + 0.5, 500)
+            kde = gaussian_kde(vals)
+            ax_r.plot(x, kde(x), color = color, label = lbl)
+
+        ax_l.set_title(f"{tickers[i].upper()} — Unconditional", fontsize=10, fontweight="bold")
+        ax_r.set_title(f"{tickers[i].upper()} — Conditional", fontsize=10, fontweight="bold")
+        ax_l.set_xlabel("Standardized Return (day 64)")
+        ax_r.set_xlabel("Standardized Return (day 64)")
+        ax_l.set_ylabel("Density")
+        ax_l.legend(fontsize=7)
+        ax_r.legend(fontsize=7)
+
+    fig.suptitle(title, fontsize=13, fontweight="bold")
+    fig.tight_layout()
+    os.makedirs("diffusion_model_analysis/results", exist_ok=True)
+    plt.savefig(f"diffusion_model_analysis/results/{fname}", dpi=150, bbox_inches="tight")
+    plt.show()
+    print(f"Saved {fname}")
+
+
+
+plot_matrices(panels, "Correlation Matrices — Cross-Time Generalization", "corr_cross_time.png")
+plot_marginals(panels, "Marginal Distributions — Cross-Time Generalization", "marginals_cross_time.png")
