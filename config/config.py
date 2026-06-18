@@ -59,7 +59,7 @@ class DataConfig:
 
     def __post_init__(self):
         if self.tickers is None:
-            self.tickers = ["fedfunds", "AAPL", "ORCL", "MSFT", "IBM"]
+            self.tickers = ["aaa", "AAPL", "ORCL", "MSFT", "IBM"]
 
 
 @dataclass
@@ -83,7 +83,7 @@ class DiffusionConfig:
 
     # Training parameters
     batch_size: int = 75               #Stochastic minibatch gradient descent
-    n_epochs: int = 2000               #Number of times to loop through the data
+    n_epochs: int = 500               #Number of times to loop through the data
     learning_rate: float = 1e-4        #Alpha Stepsize
     scheduler_patience: int = 50       #Check convergence every X number of loops through the data
     scheduler_factor: float = 0.5      #Multiplier for the Learning rate when plateau
@@ -127,7 +127,7 @@ class HFunctionConfig:
     event_type: str = "change"         # "sum", "change", or "absval"
     event_asset_idx: int = 0           # which asset to watch for the shock
     event_window: int = 64              # lookback period
-    event_threshold: float = 1.5       # threshold in standardized units
+    event_threshold: float = 1.0       # threshold in standardized units
 
     # Constraint mode
     constraint_mode: str = "hard"      # "hard" or "soft" (exponential)
