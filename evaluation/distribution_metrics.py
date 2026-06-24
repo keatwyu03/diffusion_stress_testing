@@ -83,17 +83,20 @@ def plot_tail_logs():
         (X_train, mask_train, gen_train, "Train"),
         (X_test,  mask_test,  gen_test,  "Test"),
     ]
-    for X, mask, gen, split_label in splits:
-        fig, axes = plt.subplots(n_assets, 2, figsize=(12, 4 * n_assets))
-        if n_assets == 1:
-            axes = [axes]
+    
+    fig, axes = plt.subplots(n_assets, 2, figsize=(12, 4 * n_assets))
+    if n_assets == 1:
+        axes = axes[np.newaxis, :]
         
+
+    for col, (X, mask, gen, split_label) in enumerate(splits):
+
         for ch, ticker, in enumerate(tickers):
             real = np.abs(X[mask, -1, ch].numpy())
-            gen = np.abs(X[mask, ch, -1].numpy())
+            gen_vals = np.abs(gen[:, ch, -1].numpy())
 
-            ax = axes[ch]
-            for vals, color, label in [(real, "darkorange", "Real"), (gen, "steelblue", "Generated")]:
+            ax = axes[ch, col]
+            for vals, color, label in [(real, "darkorange", "Real"), (gen_vals, "steelblue", "Generated")]:
                 s, p = fraction(vals)
                 ax.plot(s, p, color = color, linewidth = 1.5, label = label)
             ax.set_xscale("log")
@@ -105,18 +108,19 @@ def plot_tail_logs():
             ax.grid(True, which="both", alpha=0.3)
 
 
-        fig.suptitle(f"Log-Log Tail Plot — Last-Day Returns ({split_label})", fontsize=13, fontweight="bold")
-        fig.tight_layout()
-        out = os.path.join(_dir, "results", f"tail_loglog_{split_label.lower()}.png")
-        plt.savefig(out, dpi=150, bbox_inches="tight")
-        plt.show()
-        print(f"Saved {out}")
+    fig.suptitle(f"Log-Log Tail Plot — Last-Day Returns ({split_label})", fontsize=13, fontweight="bold")
+    fig.tight_layout()
+    out = os.path.join(_dir, "results", f"tail_loglog_{split_label.lower()}.png")
+    plt.savefig(out, dpi=150, bbox_inches="tight")
+    plt.show()
+    print(f"Saved {out}")
 
 plot_tail_logs()
 
 def tail_index(vals):
+
     s, p = fraction(np.abs(vals))
     log_s = np.log(s[s > 0])
-    log_p = np.log(p[p > 0])
+    log_p = np.log(p[s > 0])
     slope, _ = np.polyfit(log_s, log_p, 1)
     return -1 * slope
