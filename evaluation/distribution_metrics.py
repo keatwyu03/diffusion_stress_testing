@@ -59,8 +59,8 @@ def wasserstein_lastday(X, mask, gen):
         results[ticker] = wasserstein_distance(real, g)
     return results
 
-w_train = wasserstein_distance(X_train, mask_train, gen_train)
-w_test = wasserstein_distance(X_test, mask_test, gen_test)
+w_train = wasserstein_lastday(X_train, mask_train, gen_train)
+w_test = wasserstein_lastday(X_test, mask_test, gen_test)
 
 print("\nWasserstein Distance — Last-Day Marginals")
 print(f"{'Asset':<10} {'Train':>10} {'Test':>10}")
