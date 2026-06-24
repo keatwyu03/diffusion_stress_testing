@@ -69,6 +69,25 @@ for ticker in tickers:
     print(f"{ticker:<10} {w_train[ticker]:>10.4f} {w_test[ticker]:>10.4f}")
 
 
+fig, ax = plt.subplots(figsize=(6, 3))
+ax.axis('off')
+table_data = [[ticker, f"{w_train[ticker]:.4f}", f"{w_test[ticker]:.4f}"] for ticker in tickers]
+table = ax.table(
+    cellText=table_data,
+    colLabels=["Asset", "Train", "Test"],
+    loc='center',
+    cellLoc='center'
+)
+table.scale(1, 1.5)
+fig.suptitle("Wasserstein Distance — Last-Day Marginals", fontsize=12, fontweight="bold")
+os.makedirs(os.path.join(_dir, "results"), exist_ok=True)
+out = os.path.join(_dir, "results", "wasserstein_table.png")
+plt.savefig(out, dpi=150, bbox_inches="tight")
+plt.show()
+print(f"Saved {out}")
+
+
+
 def fraction(vals):
     s = np.sort(vals)
     n = len(s)
