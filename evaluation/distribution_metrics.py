@@ -72,7 +72,7 @@ for ticker in tickers:
 def fraction(vals):
     s = np.sort(vals)
     n = len(s)
-    p = np.arrange(n, 0, -1)/n
+    p = np.arange(n, 0, -1)/n
     return s, p
 
 
