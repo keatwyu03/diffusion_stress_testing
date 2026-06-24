@@ -55,7 +55,7 @@ def wasserstein_lastday(X, mask, gen):
     results = {}
     for ch, ticker in enumerate(tickers):
         real = X[mask, -1, ch].numpy()
-        g = X[:, ch, -1].numpy()
+        g = gen[:, ch, -1].numpy()
         results[ticker] = wasserstein_distance(real, g)
     return results
 
