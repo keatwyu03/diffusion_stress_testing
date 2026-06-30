@@ -181,7 +181,7 @@ class HFunctionDirectTrainer:
                 )
         
         os.makedirs("ckpt_new", exist_ok=True)
-        pd.DataFrame(loss_records).to_csv("ckpt_new/h_direct_losses.csv", index=False)
+        pd.DataFrame(loss_records).to_csv("ckpt_new/h_losses.csv", index=False)
         print("Direct H-function training complete!")
     
     def save(self, path: str) -> None:

@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import os
+import pandas as pd
 
 from config import HFunctionConfig, get_default_config
 from .transformer_score import DualAxisBlock, GaussianFourierFeatures
@@ -178,6 +179,7 @@ class HFunctionTwoStepTrainer:
     
     def train(self, use_wandb = False):
         loss_fn = nn.MSELoss()
+        loss_records = []
         for epoch in range(self.cfg.n_epochs):
             with torch.no_grad():
                 paths = self.diffusion_model.sample(
@@ -197,9 +199,14 @@ class HFunctionTwoStepTrainer:
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
+            
+            loss_records.append({"epoch": epoch, "loss": loss.item()})
 
             if epoch % 100 == 0:
                 print(f"Epoch {epoch} | Loss {loss.item():.4f}")
+
+        os.makedirs("ckpt_new", exist_ok=True)
+        pd.DataFrame(loss_records).to_csv("ckpt_new/h_losses.csv", index=False)
 
     def save(self, path):
         torch.save(self.model.state_dict(), path)
