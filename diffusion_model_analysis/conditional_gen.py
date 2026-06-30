@@ -23,6 +23,8 @@ data_processor.process_all()
 
 tickers = config.data.tickers          # all assets, e.g. ["unemp", "sp500", "baa"]
 n_assets = len(tickers)
+plot_tickers = tickers[1:]
+n_plot       = len(plot_tickers)
 
 # X shape: (N, T, A)   gen shape: (N, A, T)
 X_train = data_processor.X_train
@@ -73,8 +75,8 @@ def make_figure(extract_fn, suptitle, filename, xlabel):
     extract_fn(X, mask, gen, ch) -> (real_vals, gen_vals) as numpy arrays
     Produces a (n_assets x 2) figure: left=train, right=test.
     """
-    fig, axes = plt.subplots(n_assets, 2, figsize=(14, 4 * n_assets))
-    if n_assets == 1:
+    fig, axes = plt.subplots(n_plot, 2, figsize=(14, 4 * n_plot))
+    if n_plot == 1:
         axes = axes[np.newaxis, :]
 
     splits = [
@@ -82,8 +84,7 @@ def make_figure(extract_fn, suptitle, filename, xlabel):
         (1, X_test,  mask_test,  gen_test,  "Out-of-Sample (Test)"),
     ]
 
-    for row, ticker in enumerate(tickers):
-        ch = row
+    for row, (ch, ticker) in enumerate(zip(range(1, n_assets), plot_tickers)):
         for col, X, mask, gen, split_label in splits:
             ax = axes[row, col]
             real_vals, gen_vals = extract_fn(X, mask, gen, ch)

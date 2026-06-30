@@ -10,7 +10,7 @@ sys.path.insert(0, ROOT)
 from config import get_default_config
 from data import DataProcessor
 from models import DiffusionModel, ConditionalGenerator
-from models import HFunctionTrainer
+from models import HFunctionDirectTrainer, EllTrainer, HFunctionTwoStepTrainer
 from scipy.stats import gaussian_kde
 
 
@@ -29,11 +29,14 @@ data_processor = DataProcessor(
 
 data_processor.process_all()
 
-tickers = config.data.tickers
-n_assets = len(tickers)
+tickers      = config.data.tickers
+n_assets     = len(tickers)
+plot_tickers = tickers[1:]
+n_plot       = len(plot_tickers)
 
 config.diffusion.in_channels  = n_assets
 config.diffusion.out_channels = n_assets
+config.hfunction.asset_dim    = n_assets
 def get_mask(X):
     last_window = X[:, -config.hfunction.event_window:, config.hfunction.event_asset_idx]
     if config.hfunction.event_type == "sum":
@@ -85,16 +88,14 @@ N_cond = mask_old.sum().item()
 
 
 
-h_trainer = HFunctionTrainer(
-    asset_dim=n_assets,
-    time_steps=config.hfunction.time_steps,
-    embed_dim=config.hfunction.embed_dim,
-    n_heads=config.hfunction.n_heads,
-    n_layers=config.hfunction.n_layers,
-    cond_dim=config.hfunction.cond_dim,
-    device=config.hfunction.device,
-)
-h_trainer.load("ckpt_new/hfunction.pt")
+if config.hfunction.one_two_step == "one":
+    h_trainer = HFunctionDirectTrainer(cfg=config.hfunction, b_min=config.diffusion.b_min, b_max=config.diffusion.b_max)
+    h_trainer.load("ckpt_new/hfunction.pt")
+else:
+    ell_trainer = EllTrainer(cfg=config.hfunction)
+    ell_trainer.load("ckpt_new/ell_function.pt")
+    h_trainer = HFunctionTwoStepTrainer(cfg=config.hfunction, diffusion_model=diffusion_model, ell_model=ell_trainer.model)
+    h_trainer.load("ckpt_new/hfunction.pt")
 
 cond_generator = ConditionalGenerator(
     score_model=diffusion_model.model,
@@ -117,29 +118,29 @@ cond = cond_generator.generate(
     use_q_model=False,
 )
 panels = [
-    ("Real Old Period (all)", X_old[:, -1,:].numpy()),
-    ("Real Old Period (event  windows)", X_old[mask_old, -1, :].numpy()),
-    ("Unconditional Generated", uncond[:, :, -1].numpy()),
-    ("Conditional Generated", cond[:, :, -1].numpy())
+    ("Real Old Period (all)",          X_old[:, -1, 1:].numpy()),
+    ("Real Old Period (event windows)", X_old[mask_old, -1, 1:].numpy()),
+    ("Unconditional Generated",         uncond[:, 1:, -1].numpy()),
+    ("Conditional Generated",           cond[:, 1:, -1].numpy()),
 ]
 
 
 def plot_matrices(panels, title, fname):
-    tick_lbl = [t.upper() for t in tickers]
-    font_size = max(8, min(13, 40 // n_assets))
+    tick_lbl = [t.upper() for t in plot_tickers]
+    font_size = max(8, min(13, 40 // n_plot))
 
     fig, axes = plt.subplots(2, 2, figsize = (11, 9))
     for ax, (lbl, arr) in zip(axes.ravel(), panels):
         C = np.corrcoef(arr.T)
         im = ax.imshow(C, vmin=-1, vmax=1, cmap="RdBu_r")
-        ax.set_xticks(range(n_assets))
+        ax.set_xticks(range(n_plot))
         ax.set_xticklabels(tick_lbl, fontsize=10)
-        ax.set_yticks(range(n_assets))
+        ax.set_yticks(range(n_plot))
         ax.set_yticklabels(tick_lbl, fontsize=10)
         ax.set_title(f"{lbl}\n(n={len(arr)})", fontsize=10, fontweight="bold", pad=8)
 
-        for r in range(n_assets):
-            for c in range(n_assets):
+        for r in range(n_plot):
+            for c in range(n_plot):
                 v = C[r, c]
                 ax.text(c, r, f"{v:.2f}", ha="center", va="center", fontsize=font_size,
                         fontweight="bold", color="white" if abs(v) > 0.6 else "black")
@@ -163,12 +164,12 @@ def plot_marginals(panels, title, fname):
     uncond_arr = panels[2][1]
     cond_arr = panels[3][1]
     
-    fig, axes = plt.subplots(n_assets, 2, figsize= (12, 3 * n_assets))
-    
-    for i in range(n_assets):
+    fig, axes = plt.subplots(n_plot, 2, figsize= (12, 3 * n_plot))
+
+    for i in range(n_plot):
         ax_l = axes[i,0]
         ax_r = axes[i, 1]
-        
+
         for vals, color, lbl in [
             (real_all[:, i],   "darkorange", f"Real (n={len(real_all)})"),
             (uncond_arr[:, i], "steelblue",  f"Unconditional (n={len(uncond_arr)})"),
@@ -187,8 +188,8 @@ def plot_marginals(panels, title, fname):
             ax_r.plot(x, kde(x), color=color, label=lbl)
             ax_r.fill_between(x, kde(x), alpha=0.3, color=color)
 
-        ax_l.set_title(f"{tickers[i].upper()} — Unconditional", fontsize=10, fontweight="bold")
-        ax_r.set_title(f"{tickers[i].upper()} — Conditional", fontsize=10, fontweight="bold")
+        ax_l.set_title(f"{plot_tickers[i].upper()} — Unconditional", fontsize=10, fontweight="bold")
+        ax_r.set_title(f"{plot_tickers[i].upper()} — Conditional", fontsize=10, fontweight="bold")
         ax_l.set_xlabel("Standardized Return (day 64)")
         ax_r.set_xlabel("Standardized Return (day 64)")
         ax_l.set_ylabel("Density")

@@ -182,16 +182,18 @@ class HFunctionTwoStepTrainer:
         loss_records = []
         for epoch in range(self.cfg.n_epochs):
             with torch.no_grad():
-                paths = self.diffusion_model.sample(
-                    batch_size = self.cfg.train_batch_size,
-                    return_path = True
+                _, path_x, _ = self.diffusion_model.sample(
+                    batch_size=self.cfg.train_batch_size,
+                    return_path=True,
                 )
-                Y_T = paths[:, -1]
+                # path_x: (num_steps, batch_size, A, T)
+                n_steps = path_x.shape[0]
+                Y_T = path_x[-1]
                 ell_labels = self.ell_model(Y_T).squeeze(-1)
-            
-            t_idx = torch.randint(0, paths.shape[1], (self.cfg.train_batch_size,))
-            Y_t = paths[torch.arange(self.cfg.train_batch_size), t_idx]
-            t = t_idx.float() / (paths.shape[1] - 1)
+
+            t_idx = torch.randint(0, n_steps, (self.cfg.train_batch_size,))
+            Y_t = path_x[t_idx, torch.arange(self.cfg.train_batch_size)]
+            t = t_idx.float() / (n_steps - 1)
 
             self.optimizer.zero_grad()
             pred = self.model(Y_t.to(self.device), t.to(self.device)).squeeze(-1)

@@ -24,8 +24,10 @@ data_processor = DataProcessor(
 )
 data_processor.process_all()
 
-tickers  = config.data.tickers
-n_assets = len(tickers)
+tickers      = config.data.tickers
+n_assets     = len(tickers)
+plot_tickers = tickers[1:]
+n_plot       = len(plot_tickers)
 
 X_train = data_processor.X_train  # (N_train, T, A)
 X_test  = data_processor.X_test   # (N_test,  T, A)
@@ -89,17 +91,17 @@ uncond = torch.cat(chunks, dim=0)  # (N, A, T)
 # Generated: shape is (N, A, T) → last day = gen[:, :, -1]
 
 panels_train = [
-    ("Real Train (all)",                                X_train[:, -1, :].numpy()),
-    (f"Real Train (event windows)",                     X_train[mask_train, -1, :].numpy()),
-    ("Unconditional Generated",                         uncond[:, :, -1].numpy()),
-    ("Conditional Generated",                           gen_train[:, :, -1].numpy()),
+    ("Real Train (all)",           X_train[:, -1, 1:].numpy()),
+    ("Real Train (event windows)", X_train[mask_train, -1, 1:].numpy()),
+    ("Unconditional Generated",    uncond[:, 1:, -1].numpy()),
+    ("Conditional Generated",      gen_train[:, 1:, -1].numpy()),
 ]
 
 panels_test = [
-    ("Real Test (all)",                                 X_test[:, -1, :].numpy()),
-    (f"Real Test (event windows)",                      X_test[mask_test, -1, :].numpy()),
-    ("Unconditional Generated",                         uncond[:, :, -1].numpy()),
-    ("Conditional Generated",                           gen_test[:, :, -1].numpy()),
+    ("Real Test (all)",            X_test[:, -1, 1:].numpy()),
+    ("Real Test (event windows)",  X_test[mask_test, -1, 1:].numpy()),
+    ("Unconditional Generated",    uncond[:, 1:, -1].numpy()),
+    ("Conditional Generated",      gen_test[:, 1:, -1].numpy()),
 ]
 
 # ── Print matrices ─────────────────────────────────────────────────────────────
@@ -109,7 +111,7 @@ for split_label, panels in [("TRAIN", panels_train), ("TEST", panels_test)]:
     for lbl, arr in panels:
         C = np.corrcoef(arr.T)
         print(f"\n{lbl}  (n={len(arr)}):")
-        print(pd.DataFrame(C, index=tickers, columns=tickers).round(3).to_string())
+        print(pd.DataFrame(C, index=plot_tickers, columns=plot_tickers).round(3).to_string())
 
     print(f"\n── Covariance Matrices ({split_label}) ──")
     for lbl, arr in panels:
@@ -120,18 +122,18 @@ for split_label, panels in [("TRAIN", panels_train), ("TEST", panels_test)]:
 
 # ── Plot helper ───────────────────────────────────────────────────────────────
 def plot_matrices(panels, title, fname, vmin, vmax, fmt):
-    tick_lbl  = [t.upper() for t in tickers]
-    font_size = max(8, min(13, 40 // n_assets))
+    tick_lbl  = [t.upper() for t in plot_tickers]
+    font_size = max(8, min(13, 40 // n_plot))
 
     fig, axes = plt.subplots(2, 2, figsize=(11, 9))
     for ax, (lbl, arr) in zip(axes.ravel(), panels):
         C  = np.corrcoef(arr.T) if "corr" in fname else np.cov(arr.T)
         im = ax.imshow(C, vmin=vmin, vmax=vmax, cmap="RdBu_r")
-        ax.set_xticks(range(n_assets)); ax.set_xticklabels(tick_lbl, fontsize=10)
-        ax.set_yticks(range(n_assets)); ax.set_yticklabels(tick_lbl, fontsize=10)
+        ax.set_xticks(range(n_plot)); ax.set_xticklabels(tick_lbl, fontsize=10)
+        ax.set_yticks(range(n_plot)); ax.set_yticklabels(tick_lbl, fontsize=10)
         ax.set_title(f"{lbl}\n(n={len(arr)})", fontsize=10, fontweight="bold", pad=8)
-        for r in range(n_assets):
-            for c in range(n_assets):
+        for r in range(n_plot):
+            for c in range(n_plot):
                 v = C[r, c]
                 ax.text(c, r, fmt.format(v), ha="center", va="center", fontsize=font_size,
                         fontweight="bold", color="white" if abs(v) > 0.6 * abs(vmax) else "black")

@@ -22,8 +22,10 @@ data_processor = DataProcessor(
 )
 data_processor.process_all()
 
-tickers  = config.data.tickers   # all assets
-n_assets = len(tickers)
+tickers      = config.data.tickers   # all assets
+n_assets     = len(tickers)
+plot_tickers = tickers[1:]
+n_plot       = len(plot_tickers)
 
 X_train = data_processor.X_train  # (N_train, T, A)
 X_test  = data_processor.X_test   # (N_test,  T, A)
@@ -91,7 +93,7 @@ print("Generated uncond mean per asset:", uncond.mean(dim=(0,2)).tolist())
 
 # ── Diagnostics table ─────────────────────────────────────────────────────────
 rows = []
-for i, ticker in enumerate(tickers):
+for i, ticker in zip(range(1, n_assets), plot_tickers):
     real_last = X_train[:, -1, i].numpy()
     gen_last  = uncond[:, i, -1].numpy()
     real_cum  = X_train[:, :, i].sum(dim=1).numpy()
@@ -144,8 +146,8 @@ def kde_plot(ax, real_vals, gen_vals, real_label, gen_label, xlabel):
 
 def make_figure(extract_real_fn, extract_gen_fn, suptitle, filename, xlabel):
     """rows=assets, col0=train, col1=test"""
-    fig, axes = plt.subplots(n_assets, 2, figsize=(14, 4 * n_assets))
-    if n_assets == 1:
+    fig, axes = plt.subplots(n_plot, 2, figsize=(14, 4 * n_plot))
+    if n_plot == 1:
         axes = axes[np.newaxis, :]
 
     splits = [
@@ -153,11 +155,11 @@ def make_figure(extract_real_fn, extract_gen_fn, suptitle, filename, xlabel):
         (1, X_test,  "Out-of-Sample (Test)"),
     ]
 
-    for row, ticker in enumerate(tickers):
+    for row, (ch, ticker) in enumerate(zip(range(1, n_assets), plot_tickers)):
         for col, X, split_label in splits:
             ax = axes[row, col]
-            real_vals = extract_real_fn(X, row)
-            gen_vals  = extract_gen_fn(row)
+            real_vals = extract_real_fn(X, ch)
+            gen_vals  = extract_gen_fn(ch)
 
             kde_plot(
                 ax, real_vals, gen_vals,
