@@ -228,6 +228,7 @@ def main(args):
         Z_start, Z_end, valid_idx = data_processor.get_z_windows()
         X_train_direct = X_train_direct[valid_idx]
 
+        print(f"Using HFunctionTraining with {config.hfunction.one_two_step} steps")
         if config.hfunction.one_two_step == "one":
             h_trainer = HFunctionDirectTrainer(
                 cfg=config.hfunction,
