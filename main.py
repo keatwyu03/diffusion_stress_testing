@@ -8,8 +8,9 @@ from dataclasses import asdict
 
 from config import get_default_config
 from data import DataProcessor
-from models import DiffusionModel, HFunctionTrainer, HFunctionDirectTrainer, ConditionalGenerator
+from models import DiffusionModel, HFunctionTrainer, HFunctionDirectTrainer, ConditionalGenerator, EllTrainer, HFunctionTwoStepTrainer
 from utils import PortfolioAnalyzer, set_seed
+
 
 
 def init_wandb(config):
@@ -223,32 +224,49 @@ def main(args):
         print("STEP 3: H-Function Training (Direct BCE)")
         print("=" * 60)
 
-        h_trainer = HFunctionDirectTrainer(
-            cfg=config.hfunction,
-            b_min=config.diffusion.b_min,
-            b_max=config.diffusion.b_max,
-        )
-
         X_train_direct = data_processor.get_diffusion_data()
         Z_start, Z_end, valid_idx = data_processor.get_z_windows()
         X_train_direct = X_train_direct[valid_idx]
 
-        h_trainer.train(
-            X_train=X_train_direct,
-            Z_start=Z_start,
-            Z_end=Z_end,
-            use_wandb=use_wandb,
-        )
+        if config.hfunction.one_two_step == "one":
+            h_trainer = HFunctionDirectTrainer(
+                cfg=config.hfunction,
+                b_min=config.diffusion.b_min,
+                b_max=config.diffusion.b_max,
+            )
 
-        h_trainer.save("ckpt_new/hfunction_direct.pt")
+            h_trainer.train(
+                X_train=X_train_direct,
+                Z_start=Z_start,
+                Z_end=Z_end,
+                use_wandb=use_wandb,
+            )
+            
+        else:
+            ell_trainer = EllTrainer(cfg=config.hfunction)
+            ell_trainer.train(X_train=X_train_direct, 
+                              Z_start=Z_start, 
+                              Z_end=Z_end, 
+                              use_wandb=use_wandb)
+            
+            ell_trainer.save("ckpt_new/ell_function.pt")
+            h_trainer = HFunctionTwoStepTrainer(cfg=config.hfunction, 
+                                                diffusion_model=diffusion_model, 
+                                                ell_model=ell_trainer.model)
+            h_trainer.train(use_wandb=use_wandb)
+
+        h_trainer.save("ckpt_new/hfunction.pt")
     else:
         print("\nSkipping H-function training, loading from checkpoint...")
-        h_trainer = HFunctionDirectTrainer(
-            cfg=config.hfunction,
-            b_min=config.diffusion.b_min,
-            b_max=config.diffusion.b_max,
-        )
-        h_trainer.load("ckpt_new/hfunction_direct.pt")
+        if config.hfunction.one_two_step == "one":
+            h_trainer = HFunctionDirectTrainer(cfg=config.hfunction, b_min=config.diffusion.b_min, b_max=config.diffusion.b_max)
+            h_trainer.load("ckpt_new/hfunction.pt")
+        else:
+            ell_trainer = EllTrainer(cfg=config.hfunction)
+            ell_trainer.load("ckpt_new/ell_function.pt")
+            h_trainer = HFunctionTwoStepTrainer(cfg=config.hfunction, diffusion_model=diffusion_model, ell_model=ell_trainer.model)
+            h_trainer.load("ckpt_new/hfunction.pt")
+        
 
     # ==================== Extract Events ====================
     print("\n" + "=" * 60)

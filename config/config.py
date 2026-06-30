@@ -141,6 +141,8 @@ class HFunctionConfig:
 
     # Architecture: "transformer" or "cnn"
     arch: str = "transformer"
+    one_two_step: str = "one" #or two step
+
     n_heads: int = 4
     n_layers: int = 4
     cond_dim: int = 128
