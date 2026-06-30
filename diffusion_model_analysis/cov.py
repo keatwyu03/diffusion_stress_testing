@@ -117,7 +117,7 @@ for split_label, panels in [("TRAIN", panels_train), ("TEST", panels_test)]:
     for lbl, arr in panels:
         C = np.cov(arr.T)
         print(f"\n{lbl}  (n={len(arr)}):")
-        print(pd.DataFrame(C, index=tickers, columns=tickers).round(4).to_string())
+        print(pd.DataFrame(C, index=plot_tickers, columns=plot_tickers).round(4).to_string())
 
 
 # ── Plot helper ───────────────────────────────────────────────────────────────
