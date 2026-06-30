@@ -242,6 +242,9 @@ import numpy as np
 import pandas as pd
 import torch
 from typing import Tuple, List, Optional
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import get_default_config
 
 
 class DataProcessor:
@@ -447,6 +450,72 @@ class DataProcessor:
         else:
             X_diffusion_train = X_all[: -self.test_days]
         return X_diffusion_train
+
+    def get_z_windows(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Extract Z_start and Z_end from the first ticker column (macro series).
+        Only keeps training windows where an actual observation exists within
+        macro_window_tolerance days of both the start and end of the window.
+
+        Returns:
+            Z_start   : (M,) standardized macro value near window start
+            Z_end     : (M,) standardized macro value near window end
+            valid_idx : (M,) indices into get_diffusion_data() for valid windows
+        """
+        cfg = get_default_config()
+        w   = cfg.data.macro_window_tolerance
+
+        # Raw macro column — NaN where no observation
+        macro_col  = self.tickers[0]
+        macro_raw  = self.df[macro_col]
+
+        # Standardize using train-set values only
+        if self.train_end_date is not None:
+            cutoff     = pd.to_datetime(self.train_end_date)
+            train_vals = macro_raw[macro_raw.index <= cutoff].dropna()
+        else:
+            train_vals = macro_raw.iloc[:-self.test_days].dropna()
+
+        z_mean = train_vals.mean()
+        z_std  = train_vals.std()
+        macro_std = (macro_raw - z_mean) / z_std
+
+        macro_values = macro_std.values
+        n_total      = len(macro_values)
+
+        # Determine how many training windows exist (mirrors get_diffusion_data)
+        if self.train_end_date is not None:
+            cutoff    = pd.to_datetime(self.train_end_date)
+            end_dates = self.df.index[self.seq_len - 1:]
+            n_train   = int((end_dates <= cutoff).sum())
+        else:
+            n_train = n_total - self.test_days
+
+        Z_start_list, Z_end_list, valid_idx_list = [], [], []
+
+        for i in range(n_train - self.seq_len + 1):
+            # Look for macro obs within first w days of window
+            start_slice = macro_values[i : i + w + 1]
+            start_vals  = start_slice[~np.isnan(start_slice)]
+
+            # Look for macro obs within last w days of window
+            end_idx   = i + self.seq_len - 1
+            end_slice = macro_values[max(0, end_idx - w) : end_idx + 1]
+            end_vals  = end_slice[~np.isnan(end_slice)]
+
+            if len(start_vals) == 0 or len(end_vals) == 0:
+                continue
+
+            Z_start_list.append(float(start_vals[0]))   # first obs near start
+            Z_end_list.append(float(end_vals[-1]))       # last obs near end
+            valid_idx_list.append(i)
+
+        Z_start   = torch.tensor(Z_start_list, dtype=torch.float32)
+        Z_end     = torch.tensor(Z_end_list,   dtype=torch.float32)
+        valid_idx = torch.tensor(valid_idx_list, dtype=torch.long)
+
+        print(f"Z windows: {len(valid_idx)} valid out of {n_train - self.seq_len + 1} training windows")
+        return Z_start, Z_end, valid_idx
 
     def invert_samples(
         self,

@@ -31,7 +31,7 @@ tickers = ["AAPL", "ORCL", "MSFT", "IBM"]
 df = yf.download(tickers, start = "2008-01-01", auto_adjust=True)["Close"]
 log_ret = np.log(df / df.shift(1)).dropna()
 
-df[cond_event] = cond_series.reindex(df.index).interpolate(method='time')
+df[cond_event] = cond_series.reindex(df.index)
 
 df_out = pd.DataFrame({
     cond_event:            df[cond_event],

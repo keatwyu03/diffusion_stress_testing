@@ -258,6 +258,82 @@ python diffusion_model_analysis/cov.py
 
 ---
 
+## Theoretical Framework: Conditioning on an External Event
+
+### Setup
+
+Let `(X, Z) ~ π` where `X ∈ R^d` is the asset return path and `Z` is an external variable (e.g., macro index). For an event `S` in the state space of `Z`, the target terminal law is:
+
+```
+π^S_X(dx) = P_π(X ∈ dx | Z ∈ S)
+```
+
+The reference (pretrained) generative process has law `P_θ` with `Y_T ~ p_θ ≈ p_X`. The dependence between `X` and `Z` enters only through the **event likelihood**:
+
+```
+ℓ_S(x) := P_π(Z ∈ S | X = x),    ρ := E_{p_X}[ℓ_S(X)] = P_π(Z ∈ S)
+```
+
+Bayes' rule gives: `π^S_X(dx) = (ℓ_S(x) / ρ) p_X(dx)`
+
+### Doob h-Transform
+
+Define the propagated likelihood:
+
+```
+h(t, y) := E_{P_θ}[ℓ_S(Y_T) | Y_t = y]
+```
+
+`h` solves the backward PDE: `(∂_t + L^θ_t) h = 0`, with terminal condition `h(T, y) = ℓ_S(y)`.
+
+By Itô's formula and Girsanov's theorem, the **conditioned process** is:
+
+```
+dY^S_t = [b_θ(t, Y^S_t) + a(t, Y^S_t) ∇_y log h(t, Y^S_t)] dt + σ(t, Y^S_t) dW^S_t
+```
+
+This is the Doob h-transform: the score drift is augmented by `a ∇ log h`. The terminal law is `(ℓ_S(x) / ρ_θ) p_θ(dx)`, which equals the target when `p_θ = p_X` and `ℓ_S` is exact.
+
+### Two Approaches to Learning h
+
+#### Approach 1 — Two-Step MSE (current `hfunction.py`)
+
+Sample noisy trajectories from the frozen diffusion model, label terminal states with `ℓ_S(Y_T)` (binary 0/1 from the event condition), and regress:
+
+```
+ϕ* = argmin_ϕ  (1/T) ∫₀ᵀ E_{Y_{0:T} ~ P_θ} [(h_ϕ(t, Y_t) - ℓ_S(Y_T))²] dt
+```
+
+The population minimizer is `h(t, y) = E_{P_θ}[ℓ_S(Y_T) | Y_t = y]`. Propagation is explicitly under `P_θ` — safer under model mismatch.
+
+#### Approach 2 — Direct BCE Classifier (`hfunction_direct.py`)
+
+When paired `(X, Z)` data are available, train a time-dependent classifier directly with binary cross-entropy:
+
+```
+ϕ* = argmin_ϕ  E_{(X,Z)~π, τ~Unif[0,T], (Y_t)~P_θ(·|Y_T=X)} [BCE(B, h_ϕ(τ, Y_τ))]
+```
+
+where `B = 1{Z ∈ S}`. The population minimizer satisfies:
+
+```
+h_{ϕ*}(t, y) = P(Z ∈ S | Y_t = y) = E[ℓ_S(Y_T) | Y_t = y] = h(t, y)
+```
+
+Mathematically equivalent to Approach 1 when `p_θ = p_X`; combines the two steps (learn `ℓ_S` + propagate) into one. Under model mismatch the two-step MSE is safer.
+
+### Inference (Both Approaches)
+
+Keep `b_θ` frozen and run:
+
+```
+dY^ϕ_t = [b_θ(t, Y^ϕ_t) + a(t, Y^ϕ_t) ∇ log(h_{ϕ*}(t, Y^ϕ_t) + δ)] dt + σ(t, Y^ϕ_t) dW_t
+```
+
+`δ > 0` is a numerical floor only; the exact Doob transform corresponds to `δ = 0`. In code this maps to `eta * g² * ∇log h` in `ConditionalGenerator`.
+
+---
+
 ## Architecture Reference: Dual-Axis Transformer
 
 ```

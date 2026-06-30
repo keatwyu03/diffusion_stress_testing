@@ -61,6 +61,7 @@ class DataConfig:
     train_end_date: str = None        # last day of train set (None = use test_days)
     winsorize_lower: float = 0.005
     winsorize_upper: float = 0.995
+    macro_window_tolerance: int = 5      # max days from window endpoint to accept a macro observation
 
     def __post_init__(self):
         if self.tickers is None:
