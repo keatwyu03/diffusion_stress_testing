@@ -53,7 +53,7 @@ print(f"Test  event windows: {mask_test.sum().item()}  / {len(mask_test)}")
 
 def wasserstein_lastday(X, mask, gen):
     results = {}
-    for ch, ticker in enumerate(tickers):
+    for ch, ticker in enumerate(tickers[1:]):
         real = X[mask, -1, ch].numpy()
         g = gen[:, ch, -1].numpy()
         results[ticker] = wasserstein_distance(real, g)

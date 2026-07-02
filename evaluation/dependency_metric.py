@@ -68,7 +68,7 @@ for X, mask, gen, split_label in splits:
     if n_assets == 1:
         axes = [axes]
 
-    for ch, ticker in enumerate(tickers):
+    for ch, ticker in enumerate(tickers[1:]):
         acf_list_real = []
         acf_list_gen  = []
 

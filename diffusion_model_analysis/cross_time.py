@@ -118,10 +118,10 @@ cond = cond_generator.generate(
     use_q_model=False,
 )
 panels = [
-    ("Real Old Period (all)",          X_old[:, -1, 1:].numpy()),
-    ("Real Old Period (event windows)", X_old[mask_old, -1, 1:].numpy()),
-    ("Unconditional Generated",         uncond[:, 1:, -1].numpy()),
-    ("Conditional Generated",           cond[:, 1:, -1].numpy()),
+    ("Real Old Period (all)",          X_old[:, -1, :].numpy()),
+    ("Real Old Period (event windows)", X_old[mask_old, -1, :].numpy()),
+    ("Unconditional Generated",         uncond[:, :, -1].numpy()),
+    ("Conditional Generated",           cond[:, :, -1].numpy()),
 ]
 
 
