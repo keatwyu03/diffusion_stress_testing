@@ -3,6 +3,7 @@ import torch.nn as nn
 import numpy as np
 import os
 import pandas as pd
+from tqdm.auto import tqdm
 
 from config import HFunctionConfig, get_default_config
 from .transformer_score import DualAxisBlock, GaussianFourierFeatures
@@ -90,11 +91,12 @@ class EllTrainer:
         loss_fn = nn.BCELoss(reduction = "none")
         
         X_train = X_train.to(self.device)
-        for epoch in range(self.cfg.n_epochs):
+        pbar = tqdm(range(self.cfg.n_epochs), desc="Ell (BCE) Training")
+        for epoch in pbar:
             idx = torch.randperm(len(X_train))[:self.cfg.h_mini_batch_size]
             x_batch = X_train[idx]
             b_batch = B_labels[idx]
-            
+
             self.optimizer.zero_grad()
             pred = self.model(x_batch).squeeze(-1)
             raw_loss = loss_fn(pred, b_batch)
@@ -105,10 +107,8 @@ class EllTrainer:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
 
-            if epoch % 100 == 0:
-                acc = ((pred > 0.5) == b_batch.bool()).float().mean()
-                pos_ratio = b_batch.mean()
-                print(f"Epoch {epoch} | Loss {loss.item():.4f} | Acc {acc.item():.4f} | Pos ratio {pos_ratio.item():.4f}")
+            acc = ((pred > 0.5) == b_batch.bool()).float().mean()
+            pbar.set_postfix(loss=f"{loss.item():.4f}", acc=f"{acc.item():.4f}")
 
     def save(self, path):
         torch.save(self.model.state_dict(), path)
@@ -180,7 +180,8 @@ class HFunctionTwoStepTrainer:
     def train(self, use_wandb = False):
         loss_fn = nn.MSELoss()
         loss_records = []
-        for epoch in range(self.cfg.n_epochs):
+        pbar = tqdm(range(self.cfg.n_epochs), desc="H-Function Training")
+        for epoch in pbar:
             with torch.no_grad():
                 _, path_x, _ = self.diffusion_model.sample(
                     batch_size=self.cfg.train_batch_size,
@@ -203,9 +204,8 @@ class HFunctionTwoStepTrainer:
             self.optimizer.step()
             
             loss_records.append({"epoch": epoch, "loss": loss.item()})
-
             if epoch % 100 == 0:
-                print(f"Epoch {epoch} | Loss {loss.item():.4f}")
+                pbar.set_postfix(loss=f"{loss.item():.4f}")
 
         os.makedirs("ckpt_new", exist_ok=True)
         pd.DataFrame(loss_records).to_csv("ckpt_new/h_losses.csv", index=False)
