@@ -93,7 +93,7 @@ print("Generated uncond mean per asset:", uncond.mean(dim=(0,2)).tolist())
 
 # ── Diagnostics table ─────────────────────────────────────────────────────────
 rows = []
-for i, ticker in zip(range(1, n_assets), plot_tickers):
+for i, ticker in zip(range(n_assets), plot_tickers):
     real_last = X_train[:, -1, i].numpy()
     gen_last  = uncond[:, i, -1].numpy()
     real_cum  = X_train[:, :, i].sum(dim=1).numpy()
@@ -155,7 +155,7 @@ def make_figure(extract_real_fn, extract_gen_fn, suptitle, filename, xlabel):
         (1, X_test,  "Out-of-Sample (Test)"),
     ]
 
-    for row, (ch, ticker) in enumerate(zip(range(1, n_assets), plot_tickers)):
+    for row, (ch, ticker) in enumerate(zip(range(n_assets), plot_tickers)):
         for col, X, split_label in splits:
             ax = axes[row, col]
             real_vals = extract_real_fn(X, ch)

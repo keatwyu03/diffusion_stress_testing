@@ -19,9 +19,9 @@ sp500 = yf.download('^GSPC', start = '2008-01-01')['Close'].squeeze()
 
 
 data = {
+    'T10YFF': fred.get_series('T10YFF'),
     't1yffm': fred.get_series('t1yffm'),
     'vix': fred.get_series('VIXCLS'),
-    'spread': fred.get_series('T10Y2Y'),
     'sp500': fred.get_series('SP500'),
 }
 

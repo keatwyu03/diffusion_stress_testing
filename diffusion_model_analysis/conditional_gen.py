@@ -84,7 +84,7 @@ def make_figure(extract_fn, suptitle, filename, xlabel):
         (1, X_test,  mask_test,  gen_test,  "Out-of-Sample (Test)"),
     ]
 
-    for row, (ch, ticker) in enumerate(zip(range(1, n_assets), plot_tickers)):
+    for row, (ch, ticker) in enumerate(zip(range(n_assets), plot_tickers)):
         for col, X, mask, gen, split_label in splits:
             ax = axes[row, col]
             real_vals, gen_vals = extract_fn(X, mask, gen, ch)
