@@ -23,7 +23,7 @@ data_processor = DataProcessor(
 data_processor.process_all()
 
 tickers      = config.data.tickers   # all assets
-n_assets     = len(tickers)
+n_assets     = len(tickers) - 1
 plot_tickers = tickers[1:]
 n_plot       = len(plot_tickers)
 

@@ -30,7 +30,7 @@ data_processor = DataProcessor(
 data_processor.process_all()
 
 tickers = config.data.tickers          # all assets, e.g. ["unemp", "sp500", "baa"]
-n_assets = len(tickers)
+n_assets = len(tickers) - 1 
 
 # X shape: (N, T, A)   gen shape: (N, A, T)
 X_train = data_processor.X_train
