@@ -65,13 +65,13 @@ w_test = wasserstein_lastday(X_test, mask_test, gen_test)
 print("\nWasserstein Distance — Last-Day Marginals")
 print(f"{'Asset':<10} {'Train':>10} {'Test':>10}")
 print("-" * 32)
-for ticker in tickers:
+for ticker in tickers[1:]:
     print(f"{ticker:<10} {w_train[ticker]:>10.4f} {w_test[ticker]:>10.4f}")
 
 
 fig, ax = plt.subplots(figsize=(6, 3))
 ax.axis('off')
-table_data = [[ticker, f"{w_train[ticker]:.4f}", f"{w_test[ticker]:.4f}"] for ticker in tickers]
+table_data = [[ticker, f"{w_train[ticker]:.4f}", f"{w_test[ticker]:.4f}"] for ticker in tickers[1:]]
 table = ax.table(
     cellText=table_data,
     colLabels=["Asset", "Train", "Test"],
@@ -110,7 +110,7 @@ def plot_tail_logs():
 
     for col, (X, mask, gen, split_label) in enumerate(splits):
 
-        for ch, ticker, in enumerate(tickers):
+        for ch, ticker, in enumerate(tickers[1:]):
             real = np.abs(X[mask, -1, ch].numpy())
             gen_vals = np.abs(gen[:, ch, -1].numpy())
 

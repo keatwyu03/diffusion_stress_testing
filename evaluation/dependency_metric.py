@@ -114,7 +114,7 @@ if n_assets == 1:
     axes = axes[np.newaxis, :]
 
 for col, (X, mask, gen, split_label) in enumerate(splits):
-    for ch, ticker in enumerate(tickers):
+    for ch, ticker in enumerate(tickers[1:]):
         # Real: reconstruct full time series from last-day returns across windows
         full_series_real = X[:, -1, ch].numpy()
         mean_acf_squared_real = acf(full_series_real ** 2, nlags=20)
