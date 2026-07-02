@@ -19,7 +19,7 @@ sp500 = yf.download('^GSPC', start = '2008-01-01')['Close'].squeeze()
 
 
 data = {
-    't1yffm': fred.get_series('T1YFFM'),
+    't1yffm': fred.get_series('t1yffm'),
     'vix': fred.get_series('VIXCLS'),
     'spread': fred.get_series('T10Y2Y'),
     'sp500': fred.get_series('SP500'),
@@ -41,7 +41,7 @@ df_out = pd.DataFrame({
     "IBM":                 log_ret["IBM"],
 })
 
-df_out = df_out.dropna()
+df_out = df_out.dropna(subset=["AAPL", "ORCL", "MSFT", "IBM"])
 df_out.to_csv("explore/macro_data_new.csv", index_label="Date")
 
 
@@ -63,59 +63,56 @@ df_out_ct.to_csv("explore/cross_test_data.csv", index_label="Date")
 
 print(f"total rows: {len(df_out)}")
 
-seq_len    = _cfg.data.seq_len
-event_win  = _cfg.hfunction.event_window
-test_days  = _cfg.data.test_days
+from data.data_processor import DataProcessor
 
-vals = df_out[cond_event].values
-n_total  = len(vals)
-n_train  = n_total - test_days
+dp = DataProcessor(
+    csv_path        = "explore/macro_data_new.csv",
+    tickers         = _cfg.data.tickers,
+    seq_len         = _cfg.data.seq_len,
+    test_days       = _cfg.data.test_days,
+    train_end_date  = _cfg.data.train_end_date,
+    winsorize_lower = _cfg.data.winsorize_lower,
+    winsorize_upper = _cfg.data.winsorize_upper,
+)
 
-# standardize using train set mean/std only
-train_mean = vals[:n_train].mean()
-train_std  = vals[:n_train].std()
-vals_std   = (vals - train_mean) / train_std
+dp.load_returns()
+dp.r_dw = dp.df[_cfg.data.tickers[1:]]  # standardize/sequence on stock cols only
+dp.standardize()
+dp.winsorize()
+dp.make_sequences()
+dp.train_test_split()
 
-split_date = df_out.index[n_train]
-print(f"Split date: {split_date.date()}  (train={n_train}, test={test_days})")
-print(f"Train unemp level: mean={train_mean:.4f}  std={train_std:.4f}")
+Z_start, Z_end, valid_idx = dp.get_z_windows()
 
-# count events: abs(std_level[end] - std_level[start]) >= threshold over event_window
-change_vals = []
-time = []
+n_train_windows = len(dp.X_train)
+n_valid         = len(valid_idx)
+abs_change      = (Z_end - Z_start).abs().numpy()
+n_events        = int((abs_change >= h_threshold).sum())
 
-def change_events(vs):
-    for t in range(event_win, len(vs)):
-        change_vals.append(abs(vs[t] - vs[t - event_win]))
-        time.append(df_out.index[t])
+print(f"Training windows:              {n_train_windows}")
+print(f"Valid macro windows:           {n_valid}  ({100*n_valid/n_train_windows:.1f}%)")
+print(f"Events (|ΔZ| >= {h_threshold}): {n_events} / {n_valid}  ({100*n_events/n_valid:.1f}%)")
 
-change_events(vals_std)
+window_end_dates = [dp.df.index[int(i) + dp.seq_len - 1] for i in valid_idx.numpy()]
 
+fig, (ax1, ax2) = plt.subplots(1, 2)
+ax1.plot(dp.df[cond_event].dropna().index, dp.df[cond_event].dropna().values)
+ax1.set_title(f"Condition Event Series: {cond_event}")
 
-def count_events(vs):
-    count = 0
-    for t in range(event_win, len(vs)):
-        if abs(vs[t] - vs[t - event_win]) >= h_threshold:
-            count += 1
-    return count
+event_mask = abs_change >= h_threshold
 
-train_events = count_events(vals_std[:n_train])
-test_events  = count_events(vals_std[n_train:])
-
-print(f"TRAIN events: {train_events} / {n_train - event_win}  ({100*train_events/(n_train - event_win):.1f}%)")
-print(f"TEST  events: {test_events} / {max(test_days - event_win, 1)}  ({100*test_events/max(test_days - event_win, 1):.1f}%)")
-
-
-fig, (ax1, ax2) = plt.subplots(1,2)
-ax1.plot(df[cond_event].index, df[cond_event].values)
-ax2.plot(time, change_vals)
-ax2.axhline(h_threshold, color = "red", linestyle = "--")
+ax2.scatter(window_end_dates, abs_change, s=10, color="steelblue", label="valid window")
+ax2.scatter(
+    [d for d, e in zip(window_end_dates, event_mask) if e],
+    abs_change[event_mask],
+    s=15, color="red", label=f"event (|ΔZ| ≥ {h_threshold})"
+)
+ax2.axhline(h_threshold, color="red", linestyle="--")
+ax2.legend()
 ax2.annotate(
-    f"TRAIN events: {train_events} / {n_train - event_win}  ({100*train_events/(n_train - event_win):.1f}%)\n"
-    f"TEST  events: {test_events} / {max(test_days - event_win, 1)}  ({100*test_events/max(test_days - event_win, 1):.1f}%)",
+    f"Valid windows: {n_valid} / {n_train_windows}  ({100*n_valid/n_train_windows:.1f}%)\n"
+    f"Events: {n_events} / {n_valid}  ({100*n_events/n_valid:.1f}%)",
     xy=(0.5, -0.12), xycoords='axes fraction', ha='center')
-
-ax1.set_title(f"Condition Event Series of {cond_event}")
-ax2.set_title(f"Daily Change of conditioned event series of {cond_event}")
+ax2.set_title(f"|ΔZ| per valid window (window end date)")
 
 plt.show()

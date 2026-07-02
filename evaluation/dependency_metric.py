@@ -115,21 +115,17 @@ if n_assets == 1:
 
 for col, (X, mask, gen, split_label) in enumerate(splits):
     for ch, ticker in enumerate(tickers):
-        acf_sq_real = []
+        # Real: reconstruct full time series from last-day returns across windows
+        full_series_real = X[:, -1, ch].numpy()
+        mean_acf_squared_real = acf(full_series_real ** 2, nlags=20)
+
+        # Generated: windows are independent so per-window average is the only option
         acf_sq_gen = []
-        
-        for i in range(len(X)):
-            series = X[i, :, ch]
-            residuals = get_residuals(series, method)
-            acf_sq_real.append(acf(residuals, nlags = 20))
-        
         for j in range(len(gen)):
             series_g = gen[j, ch, :]
             residuals_g = get_residuals(series_g, method)
-            acf_sq_gen.append(acf(residuals_g, nlags = 20))
-
-        mean_acf_squared_real = np.mean(acf_sq_real, axis = 0)
-        mean_acf_squared_gen = np.mean(acf_sq_gen, axis= 0)
+            acf_sq_gen.append(acf(residuals_g, nlags=20))
+        mean_acf_squared_gen = np.mean(acf_sq_gen, axis=0)
 
         lags = np.arange(0, 21)
         ax = axes[ch, col]

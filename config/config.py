@@ -56,7 +56,7 @@ class DataConfig:
     tickers: List[str] = None
     weekday_col: str = "weekday"
     seq_len: int = 64
-    test_days: int = 1500             # used only when train_end_date is None
+    test_days: int = 30             # used only when train_end_date is None
     end_date: str = None              # data window end (None = use all)
     train_end_date: str = None        # last day of train set (None = use test_days)
     winsorize_lower: float = 0.005
@@ -133,7 +133,7 @@ class HFunctionConfig:
     event_type: str = "change"         # "sum", "change", or "absval"
     event_asset_idx: int = 0           # which asset to watch for the shock
     event_window: int = 64              # lookback period
-    event_threshold: float = 1.5      # threshold in standardized units
+    event_threshold: float = 1.0      # threshold in standardized units
 
     # Constraint mode
     constraint_mode: str = "hard"      # "hard" or "soft" (exponential)

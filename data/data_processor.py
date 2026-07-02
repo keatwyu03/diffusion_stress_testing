@@ -301,7 +301,9 @@ class DataProcessor:
         if "Date" in df.columns:
             df["Date"] = pd.to_datetime(df["Date"])
             df = df.sort_values("Date").set_index("Date")
-        df = df[self.tickers].dropna()
+        df = df[self.tickers]
+        stock_cols = self.tickers[1:]  # tickers[0] is the sparse macro series
+        df = df.dropna(subset=stock_cols)
         if self.start_date is not None:
             df = df[df.index >= pd.to_datetime(self.start_date)]
         if self.end_date is not None:
