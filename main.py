@@ -88,7 +88,7 @@ def main(args):
     print(f"Event threshold: {config.hfunction.event_threshold:.4f} std ({config.hfunction.event_type})")
 
     # Derive asset count from tickers so model dims always match data
-    n_assets = len(config.data.tickers)
+    n_assets = len(config.data.tickers) - 1
     config.diffusion.in_channels  = n_assets
     config.diffusion.out_channels = n_assets
     config.hfunction.asset_dim    = n_assets
