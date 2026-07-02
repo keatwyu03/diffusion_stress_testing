@@ -93,26 +93,66 @@ print(f"Training windows:              {n_train_windows}")
 print(f"Valid macro windows:           {n_valid}  ({100*n_valid/n_train_windows:.1f}%)")
 print(f"Events (|ΔZ| >= {h_threshold}): {n_events} / {n_valid}  ({100*n_events/n_valid:.1f}%)")
 
-window_end_dates = [dp.df.index[int(i) + dp.seq_len - 1] for i in valid_idx.numpy()]
+# Test window event count
+cfg = _cfg
+w = cfg.data.macro_window_tolerance
+macro_col = cfg.data.tickers[0]
+macro_raw = dp.df[macro_col]
+z_mean = macro_raw.iloc[:-cfg.data.test_days].dropna().mean()
+z_std  = macro_raw.iloc[:-cfg.data.test_days].dropna().std()
+macro_std_vals = ((macro_raw - z_mean) / z_std).values
+n_total = len(macro_std_vals)
+n_train = n_total - cfg.data.test_days
 
-fig, (ax1, ax2) = plt.subplots(1, 2)
-ax1.plot(dp.df[cond_event].dropna().index, dp.df[cond_event].dropna().values)
-ax1.set_title(f"Condition Event Series: {cond_event}")
+test_abs_changes, test_end_dates = [], []
+test_events, test_valid = 0, 0
+for i in range(n_train, n_total - dp.seq_len + 1):
+    start_slice = macro_std_vals[i : i + w + 1]
+    start_vals  = start_slice[~np.isnan(start_slice)]
+    end_idx     = i + dp.seq_len - 1
+    end_slice   = macro_std_vals[max(0, end_idx - w) : end_idx + 1]
+    end_vals    = end_slice[~np.isnan(end_slice)]
+    if len(start_vals) == 0 or len(end_vals) == 0:
+        continue
+    chg = abs(float(end_vals[-1]) - float(start_vals[0]))
+    test_abs_changes.append(chg)
+    test_end_dates.append(dp.df.index[end_idx])
+    test_valid += 1
+    if chg >= h_threshold:
+        test_events += 1
 
-event_mask = abs_change >= h_threshold
+n_test_windows = len(dp.X_test)
+print(f"\nTest windows:                  {n_test_windows}")
+print(f"Valid macro windows:           {test_valid}  ({100*test_valid/max(n_test_windows,1):.1f}%)")
+print(f"Events (|ΔZ| >= {h_threshold}): {test_events} / {max(test_valid,1)}  ({100*test_events/max(test_valid,1):.1f}%)")
 
-ax2.scatter(window_end_dates, abs_change, s=10, color="steelblue", label="valid window")
-ax2.scatter(
-    [d for d, e in zip(window_end_dates, event_mask) if e],
-    abs_change[event_mask],
-    s=15, color="red", label=f"event (|ΔZ| ≥ {h_threshold})"
-)
-ax2.axhline(h_threshold, color="red", linestyle="--")
-ax2.legend()
-ax2.annotate(
-    f"Valid windows: {n_valid} / {n_train_windows}  ({100*n_valid/n_train_windows:.1f}%)\n"
-    f"Events: {n_events} / {n_valid}  ({100*n_events/n_valid:.1f}%)",
-    xy=(0.5, -0.12), xycoords='axes fraction', ha='center')
-ax2.set_title(f"|ΔZ| per valid window (window end date)")
+test_abs_changes = np.array(test_abs_changes)
+test_event_mask  = test_abs_changes >= h_threshold
+train_end_dates  = [dp.df.index[int(i) + dp.seq_len - 1] for i in valid_idx.numpy()]
+train_event_mask = abs_change >= h_threshold
 
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+for ax, dates, changes, event_mask, title, n_total_win in [
+    (ax1, train_end_dates, abs_change,       train_event_mask, "Train", n_train_windows),
+    (ax2, test_end_dates,  test_abs_changes,  test_event_mask,  "Test",  n_test_windows),
+]:
+    n_ev = int(event_mask.sum())
+    n_v  = len(changes)
+    ax.scatter(dates, changes, s=10, color="steelblue", label="valid window")
+    ax.scatter(
+        [d for d, e in zip(dates, event_mask) if e],
+        changes[event_mask],
+        s=15, color="red", label=f"event (|ΔZ| ≥ {h_threshold})"
+    )
+    ax.axhline(h_threshold, color="red", linestyle="--")
+    ax.legend()
+    ax.set_title(f"|ΔZ| — {title} windows")
+    ax.annotate(
+        f"Valid: {n_v} / {n_total_win}  ({100*n_v/max(n_total_win,1):.1f}%)\n"
+        f"Events: {n_ev} / {n_v}  ({100*n_ev/max(n_v,1):.1f}%)",
+        xy=(0.5, -0.12), xycoords='axes fraction', ha='center'
+    )
+
+plt.tight_layout()
 plt.show()
