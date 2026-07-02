@@ -91,17 +91,17 @@ uncond = torch.cat(chunks, dim=0)  # (N, A, T)
 # Generated: shape is (N, A, T) → last day = gen[:, :, -1]
 
 panels_train = [
-    ("Real Train (all)",           X_train[:, -1, 1:].numpy()),
-    ("Real Train (event windows)", X_train[mask_train, -1, 1:].numpy()),
-    ("Unconditional Generated",    uncond[:, 1:, -1].numpy()),
-    ("Conditional Generated",      gen_train[:, 1:, -1].numpy()),
+    ("Real Train (all)",           X_train[:, -1, :].numpy()),
+    ("Real Train (event windows)", X_train[mask_train, -1, :].numpy()),
+    ("Unconditional Generated",    uncond[:, :, -1].numpy()),
+    ("Conditional Generated",      gen_train[:, :, -1].numpy()),
 ]
 
 panels_test = [
-    ("Real Test (all)",            X_test[:, -1, 1:].numpy()),
-    ("Real Test (event windows)",  X_test[mask_test, -1, 1:].numpy()),
-    ("Unconditional Generated",    uncond[:, 1:, -1].numpy()),
-    ("Conditional Generated",      gen_test[:, 1:, -1].numpy()),
+    ("Real Test (all)",            X_test[:, -1, :].numpy()),
+    ("Real Test (event windows)",  X_test[mask_test, -1, :].numpy()),
+    ("Unconditional Generated",    uncond[:, :, -1].numpy()),
+    ("Conditional Generated",      gen_test[:, :, -1].numpy()),
 ]
 
 # ── Print matrices ─────────────────────────────────────────────────────────────
