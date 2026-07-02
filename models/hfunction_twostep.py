@@ -180,7 +180,7 @@ class HFunctionTwoStepTrainer:
     def train(self, use_wandb = False):
         loss_fn = nn.MSELoss()
         loss_records = []
-        pbar = tqdm(range(self.cfg.n_epochs), desc="H-Function Training")
+        pbar = tqdm(range(self.cfg.n_epochs), desc="H-Function Training", miniters=100, mininterval=0)
         for epoch in pbar:
             with torch.no_grad():
                 _, path_x, _ = self.diffusion_model.sample(
@@ -204,8 +204,7 @@ class HFunctionTwoStepTrainer:
             self.optimizer.step()
             
             loss_records.append({"epoch": epoch, "loss": loss.item()})
-            if epoch % 100 == 0:
-                pbar.set_postfix(loss=f"{loss.item():.4f}")
+            pbar.set_postfix(loss=f"{loss.item():.4f}")
 
         os.makedirs("ckpt_new", exist_ok=True)
         pd.DataFrame(loss_records).to_csv("ckpt_new/h_losses.csv", index=False)
