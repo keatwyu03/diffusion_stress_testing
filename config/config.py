@@ -75,8 +75,8 @@ class DiffusionConfig:
     #This is the part that controls the denosing method for training s_theta
 
     device: str = field(default_factory=_default_device)
-    in_channels: int = 3
-    out_channels: int = 3
+    in_channels: int = 4
+    out_channels: int = 4
     sample_size: int = 64
 
     #number of layers for each CNN and number of parameters in each of those CNN layers
