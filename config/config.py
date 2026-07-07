@@ -164,8 +164,8 @@ class ConditionalGenConfig:
     device: str = field(default_factory=_default_device)
     batch_size: int = 32
     num_steps: int = 200
-    stoch: float = 0.5
-    eta: float = -50
+    stoch: float = 2
+    eta: float = -0.5
     use_q_model: bool = False
 
     # Q-model training hyperparameters
