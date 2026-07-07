@@ -85,25 +85,31 @@ class DiffusionConfig:
 
     # Variance Preserving diffusion parameters
     b_min: float = 0.1
-    b_max: float = 3.25
+    b_max: float = 20
 
     # Training parameters
     batch_size: int = 75               #Stochastic minibatch gradient descent
-    n_epochs: int = 500               #Number of times to loop through the data
+    n_epochs: int = 750               #Number of times to loop through the data
     learning_rate: float = 1e-4        #Alpha Stepsize
     scheduler_patience: int = 50       #Check convergence every X number of loops through the data
     scheduler_factor: float = 0.5      #Multiplier for the Learning rate when plateau
 
     # Sampling parameters
-    num_steps: int = 200               #Number of noisy elements to add
+    num_steps: int = 500               #Number of noisy elements to add (larger bmax necessitates larger num_steps)
     eps: float = 1e-4                  #Stopping point of when we claim the data are now normal
 
     # Architecture: "unet" or "transformer"
     arch: str = "transformer"
 
     # Transformer-specific parameters (used when arch="transformer")
+    """
+    Each attention layer in the time and asset embedding attention head get split into embed_dim / n_heads
+    Each chunk of that reduced size gets its own learning pattern. 
+    Cond_dim = the number of dimensions that are expanded into for the time pattern
+             -> Time is passed through different layer transformations to encode information in vector form
+    """
     embed_dim: int = 128
-    n_heads: int = 4
+    n_heads: int = 4                  
     n_layers: int = 6
     cond_dim: int = 128
 
@@ -112,12 +118,7 @@ class DiffusionConfig:
 class HFunctionConfig:
     """H-function training configuration"""
     #Doobs H modification for the terminal constraints
-    #Using a Neural Network to learn this
-
-    device: str = field(default_factory=_default_device)
-    asset_dim: int = 3
-    time_steps: int = 64
-    embed_dim: int = 128
+    #Using a dual-axis transformer to learn this
 
     # Training parameters
     train_batch_size: int = 256        # number of noisy trajectories for unconditional diffusion
@@ -142,6 +143,12 @@ class HFunctionConfig:
     # Architecture: "transformer" or "cnn"
     arch: str = "transformer"
     one_two_step: str = "two" #or two step
+
+
+    device: str = field(default_factory=_default_device)
+    asset_dim: int = 3
+    time_steps: int = 64
+    embed_dim: int = 128
 
     n_heads: int = 4
     n_layers: int = 4
