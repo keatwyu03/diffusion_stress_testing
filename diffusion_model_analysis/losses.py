@@ -38,8 +38,11 @@ has_h    = h_path is not None and os.path.exists(h_path)
 if has_h:
     h_df = pd.read_csv(h_path)
 
-# ── Layout: 1 col (score only) or 3 cols (score + h-loss + h-accuracy) ────────
-ncols = 3 if has_h else 1
+# ── Layout: 1 col (score only), 2 cols (+ h-loss), or 3 cols (+ h-accuracy) ───
+# Stale/cross-mode h_losses.csv (e.g. left over from a two-step run, which only
+# logs epoch/loss) shouldn't crash the plot — just skip the accuracy panel.
+has_h_metrics = has_h and "accuracy" in h_df.columns and "pos_ratio" in h_df.columns
+ncols = 3 if has_h_metrics else (2 if has_h else 1)
 fig, axes = plt.subplots(1, ncols, figsize=(6 * ncols, 5))
 if ncols == 1:
     axes = [axes]
@@ -59,7 +62,12 @@ if has_h:
     axes[1].set_title("H-Function Loss", fontsize=13, fontweight="bold")
     axes[1].grid(True, alpha=0.3)
 
-    # H-function accuracy and pos_ratio
+    if not has_h_metrics:
+        print("Note: h_losses.csv has no accuracy/pos_ratio columns "
+              "(likely a two-step-trainer or stale file) — skipping that panel.")
+
+if has_h_metrics:
+    # H-function accuracy and pos_ratio (one-step / legacy trainers only)
     axes[2].plot(h_df["epoch"], h_df["accuracy"],  linewidth=1.5, color="seagreen",    label="Accuracy")
     axes[2].plot(h_df["epoch"], h_df["pos_ratio"], linewidth=1.5, color="mediumpurple",
                  linestyle="--", label="Pos Rate")

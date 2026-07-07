@@ -123,18 +123,16 @@ class HFunctionDirectTrainer:
         N = X_train.shape[0]
         B_labels = self._compute_labels(Z_start, Z_end)
 
-        #Upweighting positive examples to compensate the lack of examples shown
-        n_pos = B_labels.sum().clamp(min = 1)
-        n_neg = (N - n_pos).clamp(min=1)
-        pos_weight = (n_neg / n_pos).to(self.device)
-
-        loss_fn = nn.BCELoss(reduction='none')
+        # Plain (unweighted) BCE: the direct classifier's population minimizer must be
+        # P(Z in S | Y_t = y) exactly (Lemma 1). Upweighting positives shifts that
+        # minimizer in logit space, biasing the propagated likelihood used for guidance.
+        loss_fn = nn.BCELoss(reduction='mean')
         optimizer = optim.AdamW(self.model.parameters(), lr = self.cfg.learning_rate, weight_decay= self.cfg.weight_decay)
         scheduler = ReduceLROnPlateau(optimizer, mode = "min", factor = self.cfg.scheduler_factor, patience= self.cfg.scheduler_patience)
 
         loss_records = []
-        print(f"Direct H-function training | N={N} | pos_ratio={B_labels.mean():.3f} | pos_weight={pos_weight.item():.2f}")
-        
+        print(f"Direct H-function training | N={N} | pos_ratio={B_labels.mean():.3f}")
+
         for epoch in tqdm(range(self.cfg.n_epochs), desc = "HFunction-Direct Training"):
             self.model.train()
 
@@ -145,12 +143,8 @@ class HFunctionDirectTrainer:
             tau = torch.rand(self.cfg.h_mini_batch_size, device = self.device)
             y_tau = self._forward_noise(x_b, tau)
 
-            #Upweighting the positive examples
-            #If b_b is 1 (satisfying the condition) then we upweight the loss of that appearance for that sample
             prob = self.model(y_tau, tau)
-            raw_loss = loss_fn(prob, b_b)
-            sample_weight = torch.where(b_b == 1, pos_weight.expand_as(b_b), torch.ones_like(b_b))
-            loss = (raw_loss * sample_weight).mean()
+            loss = loss_fn(prob, b_b)
 
             optimizer.zero_grad()
             loss.backward()
