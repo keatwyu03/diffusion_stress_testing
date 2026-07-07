@@ -531,20 +531,36 @@ class DataProcessor:
         print(f"Z windows: {len(valid_idx)} valid out of {n_train_windows} training windows")
         return Z_start, Z_end, valid_idx
 
+    def _sequence_split_idx(self) -> int:
+        """Train/test window-count boundary matching X_train.shape[0] exactly
+        (same formula as train_test_split())."""
+        if self.train_end_date is not None:
+            cutoff = pd.to_datetime(self.train_end_date)
+            return int((self.y_dates <= cutoff).sum())
+        return len(self.X) - self.test_days
+
     def get_z_windows_test(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Same as get_z_windows(), but for the held-out TEST windows.
-
-        Returns:
-            Z_start   : (M,) standardized macro value near window start
-            Z_end     : (M,) standardized macro value near window end
-            valid_idx : (M,) indices into X_test for valid windows
+        Z_start/Z_end/valid_idx for the real macro event, aligned with X_train/X_test
+        sizes exactly (unlike get_z_windows(), which aligns with get_diffusion_data()
+        and has one extra trailing window). valid_idx directly indexes X_test.
         """
-        macro_values, n_train = self._macro_std_values_and_n_train()
-        n_total_windows = len(macro_values) - self.seq_len + 1
-        Z_start, Z_end, valid_idx = self._scan_macro_windows(macro_values, n_train, n_total_windows)
-        n_test_windows = n_total_windows - n_train
-        print(f"Z windows: {len(valid_idx)} valid out of {n_test_windows} test windows")
+        macro_values, _ = self._macro_std_values_and_n_train()
+        split_idx = self._sequence_split_idx()
+        Z_start, Z_end, valid_idx = self._scan_macro_windows(macro_values, split_idx, len(self.X))
+        print(f"Event windows: {len(valid_idx)} valid out of {len(self.X) - split_idx} test windows")
+        return Z_start, Z_end, valid_idx
+
+    def get_z_windows_train_aligned(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Z_start/Z_end/valid_idx for the real macro event, aligned with X_train's
+        actual size exactly (unlike get_z_windows(), which has one extra trailing
+        window). valid_idx directly indexes X_train.
+        """
+        macro_values, _ = self._macro_std_values_and_n_train()
+        split_idx = self._sequence_split_idx()
+        Z_start, Z_end, valid_idx = self._scan_macro_windows(macro_values, 0, split_idx)
+        print(f"Event windows: {len(valid_idx)} valid out of {split_idx} train windows")
         return Z_start, Z_end, valid_idx
 
     def invert_samples(

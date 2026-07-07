@@ -54,7 +54,7 @@ def get_mask(X, Z_start, Z_end, valid_idx):
     return mask
 
 
-Z_start_train, Z_end_train, valid_idx_train = data_processor.get_z_windows()
+Z_start_train, Z_end_train, valid_idx_train = data_processor.get_z_windows_train_aligned()
 Z_start_test,  Z_end_test,  valid_idx_test  = data_processor.get_z_windows_test()
 
 mask_train = get_mask(X_train, Z_start_train, Z_end_train, valid_idx_train)

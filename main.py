@@ -225,7 +225,7 @@ def main(args):
         print("=" * 60)
 
         X_train_direct = data_processor.get_diffusion_data()
-        Z_start, Z_end, valid_idx = data_processor.get_z_windows()
+        Z_start, Z_end, valid_idx = data_processor.get_z_windows_train_aligned()
         X_train_direct = X_train_direct[valid_idx]
 
         print(f"Using HFunctionTraining with {config.hfunction.one_two_step} steps")
@@ -280,7 +280,7 @@ def main(args):
     X_train = data_processor.X_train
     asset_sums_train = X_train.sum(dim=2)
 
-    Z_start_train, Z_end_train, valid_idx_train = data_processor.get_z_windows()
+    Z_start_train, Z_end_train, valid_idx_train = data_processor.get_z_windows_train_aligned()
     if config.hfunction.event_type == "change":
         metric_train = (Z_end_train - Z_start_train).abs()
         event_valid_train = metric_train >= config.hfunction.event_threshold

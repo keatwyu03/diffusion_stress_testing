@@ -146,7 +146,7 @@ def main(args):
 
     # Event mask must come from the real macro series (via get_z_windows),
     # not from X, which is stock-returns-only and has no macro channel.
-    Z_start_train, Z_end_train, valid_idx_train = data_processor.get_z_windows()
+    Z_start_train, Z_end_train, valid_idx_train = data_processor.get_z_windows_train_aligned()
     if config.hfunction.event_type == "change":
         metric_train = (Z_end_train - Z_start_train).abs()
         event_valid_train = metric_train >= config.hfunction.event_threshold

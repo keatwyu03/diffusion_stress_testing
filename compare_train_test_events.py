@@ -56,7 +56,7 @@ def main(args):
     X_train = data_processor.X_train   # (N_train, 64, 4)
     X_test  = data_processor.X_test    # (N_test,  64, 4)
 
-    Z_start_train, Z_end_train, valid_idx_train = data_processor.get_z_windows()
+    Z_start_train, Z_end_train, valid_idx_train = data_processor.get_z_windows_train_aligned()
     Z_start_test,  Z_end_test,  valid_idx_test  = data_processor.get_z_windows_test()
 
     if config.hfunction.event_type == "change":
