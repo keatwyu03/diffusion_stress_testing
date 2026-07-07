@@ -142,7 +142,7 @@ class HFunctionConfig:
 
     # Architecture: "transformer" or "cnn"
     arch: str = "transformer"
-    one_two_step: str = "two" #or two step
+    one_two_step: str = "one" #or two step
 
 
     device: str = field(default_factory=_default_device)
