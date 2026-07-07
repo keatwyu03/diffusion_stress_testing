@@ -25,23 +25,19 @@ data = {
     'sp500': fred.get_series('SP500'),
 }
 
-cond_series = data[cond_event]  
+cond_series = data[cond_event]
 
-tickers = ["AAPL", "ORCL", "MSFT", "IBM"]
+tickers = _cfg.data.tickers[1:]  # everything after the macro variable
 df = yf.download(tickers, start = "2008-01-01", auto_adjust=True)["Close"]
 log_ret = np.log(df / df.shift(1)).dropna()
 
 df[cond_event] = cond_series.reindex(df.index)
 
-df_out = pd.DataFrame({
-    cond_event:            df[cond_event],
-    "AAPL":                log_ret["AAPL"],
-    "ORCL":                log_ret["ORCL"],
-    "MSFT":                log_ret["MSFT"],
-    "IBM":                 log_ret["IBM"],
-})
+df_out = pd.DataFrame({cond_event: df[cond_event]})
+for t in tickers:
+    df_out[t] = log_ret[t]
 
-df_out = df_out.dropna(subset=["AAPL", "ORCL", "MSFT", "IBM"])
+df_out = df_out.dropna(subset=tickers)
 df_out.to_csv("explore/macro_data_new.csv", index_label="Date")
 
 
@@ -50,13 +46,9 @@ log_ret_ct = np.log(df_ct / df_ct.shift(1)).dropna()
 
 df_ct[cond_event] = cond_series.reindex(df_ct.index).interpolate(method='time')
 
-df_out_ct = pd.DataFrame({
-    cond_event:            df_ct[cond_event],
-    "AAPL":                log_ret_ct["AAPL"],
-    "ORCL":                log_ret_ct["ORCL"],
-    "MSFT":                log_ret_ct["MSFT"],
-    "IBM":                 log_ret_ct["IBM"],
-})
+df_out_ct = pd.DataFrame({cond_event: df_ct[cond_event]})
+for t in tickers:
+    df_out_ct[t] = log_ret_ct[t]
 
 df_out_ct = df_out_ct.dropna()
 df_out_ct.to_csv("explore/cross_test_data.csv", index_label="Date")

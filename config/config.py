@@ -65,7 +65,7 @@ class DataConfig:
 
     def __post_init__(self):
         if self.tickers is None:
-            self.tickers = ["T10YFF", "AAPL", "ORCL", "MSFT", "IBM"]
+            self.tickers = ["T10YFF", "CSCO", "AMAT", "AAPL", "ORCL", "MSFT", "IBM"]
 
 
 @dataclass
