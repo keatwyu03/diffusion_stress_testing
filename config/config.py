@@ -126,8 +126,8 @@ class HFunctionConfig:
     h_mini_batch_size: int = 512       # mini-batch size per gradient step
     n_epochs: int = 500               # number of times to go through the data
     learning_rate: float = 1e-4        # step size for SGD
-    weight_decay: float = 1e-4         # penalty to prevent overfitting
-    scheduler_patience: int = 50
+    weight_decay: float = 5e-4         # penalty to prevent overfitting
+    scheduler_patience: int = 75
     scheduler_factor: float = 0.5
 
     # Event condition
