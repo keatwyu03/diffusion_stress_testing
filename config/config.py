@@ -85,7 +85,7 @@ class DiffusionConfig:
 
     # Variance Preserving diffusion parameters
     b_min: float = 0.1
-    b_max: float = 20
+    b_max: float = 3.25
 
     # Training parameters
     batch_size: int = 75               #Stochastic minibatch gradient descent
@@ -95,7 +95,7 @@ class DiffusionConfig:
     scheduler_factor: float = 0.5      #Multiplier for the Learning rate when plateau
 
     # Sampling parameters
-    num_steps: int = 500               #Number of noisy elements to add (larger bmax necessitates larger num_steps)
+    num_steps: int = 200               #Number of noisy elements to add (larger bmax necessitates larger num_steps)
     eps: float = 1e-4                  #Stopping point of when we claim the data are now normal
 
     # Architecture: "unet" or "transformer"
