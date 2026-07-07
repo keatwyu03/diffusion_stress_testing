@@ -10,6 +10,7 @@ import argparse
 import os
 
 import numpy as np
+import torch
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -50,21 +51,29 @@ def main(args):
           f"→ {config.hfunction.event_threshold:.4f} std  (σ_{tsla_ticker}={sigma_tsla:.4f})")
 
     # ── Event masks ───────────────────────────────────────────────────────────
+    # Event mask must come from the real macro series (via get_z_windows),
+    # not from X, which is stock-returns-only and has no macro channel.
     X_train = data_processor.X_train   # (N_train, 64, 4)
     X_test  = data_processor.X_test    # (N_test,  64, 4)
 
-    last_train = X_train[:, -config.hfunction.event_window:, config.hfunction.event_asset_idx]
-    last_test  = X_test[:,  -config.hfunction.event_window:, config.hfunction.event_asset_idx]
+    Z_start_train, Z_end_train, valid_idx_train = data_processor.get_z_windows()
+    Z_start_test,  Z_end_test,  valid_idx_test  = data_processor.get_z_windows_test()
 
-    if config.hfunction.event_type == "sum":
-        mask_train = last_train.sum(dim=1) <= config.hfunction.event_threshold
-        mask_test  = last_test.sum(dim=1)  <= config.hfunction.event_threshold
-    elif config.hfunction.event_type == "change":
-        mask_train = (last_train[:, -1] - last_train[:, 0]).abs() >= config.hfunction.event_threshold
-        mask_test  = (last_test[:, -1]  - last_test[:, 0]).abs()  >= config.hfunction.event_threshold
+    if config.hfunction.event_type == "change":
+        event_valid_train = (Z_end_train - Z_start_train).abs() >= config.hfunction.event_threshold
+        event_valid_test  = (Z_end_test  - Z_start_test).abs()  >= config.hfunction.event_threshold
     elif config.hfunction.event_type == "absval":
-        mask_train = last_train[:, -1].abs() >= config.hfunction.event_threshold
-        mask_test  = last_test[:, -1].abs()  >= config.hfunction.event_threshold
+        event_valid_train = Z_end_train.abs() >= config.hfunction.event_threshold
+        event_valid_test  = Z_end_test.abs()  >= config.hfunction.event_threshold
+    else:
+        raise NotImplementedError(
+            f"event_type={config.hfunction.event_type!r} not supported by the "
+            "macro-based mask; only 'change' and 'absval' are implemented."
+        )
+    mask_train = torch.zeros(X_train.shape[0], dtype=torch.bool)
+    mask_train[valid_idx_train] = event_valid_train
+    mask_test = torch.zeros(X_test.shape[0], dtype=torch.bool)
+    mask_test[valid_idx_test] = event_valid_test
 
     n_train_ev = int(mask_train.sum())
     n_test_ev  = int(mask_test.sum())

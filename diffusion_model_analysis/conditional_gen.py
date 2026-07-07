@@ -36,18 +36,29 @@ gen_train = torch.load(os.path.join(_root, 'generated_samples_train.pt'), map_lo
 gen_test  = torch.load(os.path.join(_root, 'generated_samples_test.pt'),  map_location='cpu')
 
 
-def get_mask(X):
-    last_window = X[:, -config.hfunction.event_window:, config.hfunction.event_asset_idx]
-    if config.hfunction.event_type == "sum":
-        return last_window.sum(dim=1) <= config.hfunction.event_threshold
-    elif config.hfunction.event_type == "change":
-        return (last_window[:, -1] - last_window[:, 0]).abs() >= config.hfunction.event_threshold
+def get_mask(X, Z_start, Z_end, valid_idx):
+    # Event mask must come from the real macro series (Z_start/Z_end from
+    # get_z_windows), not from X, which is stock-returns-only and has no
+    # macro channel at all.
+    if config.hfunction.event_type == "change":
+        event_valid = (Z_end - Z_start).abs() >= config.hfunction.event_threshold
     elif config.hfunction.event_type == "absval":
-        return last_window[:, -1].abs() >= config.hfunction.event_threshold
+        event_valid = Z_end.abs() >= config.hfunction.event_threshold
+    else:
+        raise NotImplementedError(
+            f"event_type={config.hfunction.event_type!r} not supported by the "
+            "macro-based mask; only 'change' and 'absval' are implemented."
+        )
+    mask = torch.zeros(X.shape[0], dtype=torch.bool)
+    mask[valid_idx] = event_valid
+    return mask
 
 
-mask_train = get_mask(X_train)
-mask_test  = get_mask(X_test)
+Z_start_train, Z_end_train, valid_idx_train = data_processor.get_z_windows()
+Z_start_test,  Z_end_test,  valid_idx_test  = data_processor.get_z_windows_test()
+
+mask_train = get_mask(X_train, Z_start_train, Z_end_train, valid_idx_train)
+mask_test  = get_mask(X_test,  Z_start_test,  Z_end_test,  valid_idx_test)
 
 print(f"Train event windows: {mask_train.sum().item()} / {len(mask_train)}")
 print(f"Test  event windows: {mask_test.sum().item()}  / {len(mask_test)}")

@@ -144,16 +144,22 @@ def main(args):
     X_train = data_processor.X_train
     asset_sums_train = X_train.sum(dim=2)
 
-    last_window_train = X_train[:, -config.hfunction.event_window:, config.hfunction.event_asset_idx]
-    if config.hfunction.event_type == "sum":
-        metric_train = last_window_train.sum(dim=1)
-        mask_train = metric_train <= config.hfunction.event_threshold
-    elif config.hfunction.event_type == "change":
-        metric_train = (last_window_train[:, -1] - last_window_train[:, 0]).abs()
-        mask_train = metric_train >= config.hfunction.event_threshold
+    # Event mask must come from the real macro series (via get_z_windows),
+    # not from X, which is stock-returns-only and has no macro channel.
+    Z_start_train, Z_end_train, valid_idx_train = data_processor.get_z_windows()
+    if config.hfunction.event_type == "change":
+        metric_train = (Z_end_train - Z_start_train).abs()
+        event_valid_train = metric_train >= config.hfunction.event_threshold
     elif config.hfunction.event_type == "absval":
-        metric_train = last_window_train[:, -1].abs()
-        mask_train = metric_train >= config.hfunction.event_threshold
+        metric_train = Z_end_train.abs()
+        event_valid_train = metric_train >= config.hfunction.event_threshold
+    else:
+        raise NotImplementedError(
+            f"event_type={config.hfunction.event_type!r} not supported by the "
+            "macro-based mask; only 'change' and 'absval' are implemented."
+        )
+    mask_train = torch.zeros(X_train.shape[0], dtype=torch.bool)
+    mask_train[valid_idx_train] = event_valid_train
 
     event_asset_sums_train = asset_sums_train[mask_train]
     N_event_train = event_asset_sums_train.shape[0]

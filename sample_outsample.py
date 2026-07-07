@@ -144,16 +144,22 @@ def main(args):
     X_test = data_processor.X_test
     asset_sums_test = X_test.sum(dim=2)
 
-    last_window_test = X_test[:, -config.hfunction.event_window:, config.hfunction.event_asset_idx]
-    if config.hfunction.event_type == "sum":
-        metric_test = last_window_test.sum(dim=1)
-        mask_test = metric_test <= config.hfunction.event_threshold
-    elif config.hfunction.event_type == "change":
-        metric_test = (last_window_test[:, -1] - last_window_test[:, 0]).abs()
-        mask_test = metric_test >= config.hfunction.event_threshold
+    # Event mask must come from the real macro series (via get_z_windows_test),
+    # not from X, which is stock-returns-only and has no macro channel.
+    Z_start_test, Z_end_test, valid_idx_test = data_processor.get_z_windows_test()
+    if config.hfunction.event_type == "change":
+        metric_test = (Z_end_test - Z_start_test).abs()
+        event_valid_test = metric_test >= config.hfunction.event_threshold
     elif config.hfunction.event_type == "absval":
-        metric_test = last_window_test[:, -1].abs()
-        mask_test = metric_test >= config.hfunction.event_threshold
+        metric_test = Z_end_test.abs()
+        event_valid_test = metric_test >= config.hfunction.event_threshold
+    else:
+        raise NotImplementedError(
+            f"event_type={config.hfunction.event_type!r} not supported by the "
+            "macro-based mask; only 'change' and 'absval' are implemented."
+        )
+    mask_test = torch.zeros(X_test.shape[0], dtype=torch.bool)
+    mask_test[valid_idx_test] = event_valid_test
 
     event_asset_sums_test = asset_sums_test[mask_test]
     N_event_test = event_asset_sums_test.shape[0]
