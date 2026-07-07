@@ -205,6 +205,8 @@ class HFunctionTwoStepTrainer:
             
             loss_records.append({"epoch": epoch, "loss": loss.item()})
             pbar.set_postfix(loss=f"{loss.item():.4f}")
+            if epoch % 100 == 0:
+                tqdm.write(f"Epoch {epoch} | Loss {loss.item():.4f}")
 
         os.makedirs("ckpt_new", exist_ok=True)
         pd.DataFrame(loss_records).to_csv("ckpt_new/h_losses.csv", index=False)
