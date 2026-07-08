@@ -52,6 +52,7 @@ class ConditionalGenerator:
         b_min: float = 0.1,
         b_max: float = 3.25,
         device: str = "cuda",
+        h_t_max: float = 1.0,
     ):
         self.score_model = score_model
         self.h_model = h_model
@@ -61,6 +62,10 @@ class ConditionalGenerator:
         self.b_min = b_min
         self.b_max = b_max
         self.device = device
+        # Guidance is only applied for tau <= h_t_max, matching the range the
+        # h-function was actually trained on — beyond that, Y_tau is near-pure
+        # noise and h's gradient there is unreliable, not just weak.
+        self.h_t_max = h_t_max
 
         self.q_model = None
 
@@ -225,22 +230,26 @@ class ConditionalGenerator:
             score = self.score_model(x, time_step).sample
             drift = (g_expanded**2) * score
 
-            # Condition term
-            h_val = self.h_model(x, batch_time_step)
+            # Guidance only applied for tau <= h_t_max — beyond that, Y_tau is near-pure
+            # noise and the h-function was never trained there, so its gradient is
+            # unreliable rather than just weak. Skip it entirely instead of risking a
+            # spurious nudge that compounds through the rest of the trajectory.
+            if time_step.item() <= self.h_t_max:
+                h_val = self.h_model(x, batch_time_step)
 
-            if use_q_model and self.q_model is not None:
-                grad_h = self.q_model(x, batch_time_step)
-                ratio = grad_h / (h_val.view(-1, 1, 1) + 1e-3)
-            else:
-                with torch.enable_grad():
-                    x.requires_grad_(True)
-                    h_val_autograd = self.h_model(x, batch_time_step)
-                    grad_h = torch.autograd.grad(h_val_autograd.sum(), x)[0]
-                ratio = grad_h / (h_val_autograd.view(-1, 1, 1) + 1e-3)
-                x = x.detach()
-                del h_val_autograd, grad_h
+                if use_q_model and self.q_model is not None:
+                    grad_h = self.q_model(x, batch_time_step)
+                    ratio = grad_h / (h_val.view(-1, 1, 1) + 1e-3)
+                else:
+                    with torch.enable_grad():
+                        x.requires_grad_(True)
+                        h_val_autograd = self.h_model(x, batch_time_step)
+                        grad_h = torch.autograd.grad(h_val_autograd.sum(), x)[0]
+                    ratio = grad_h / (h_val_autograd.view(-1, 1, 1) + 1e-3)
+                    x = x.detach()
+                    del h_val_autograd, grad_h
 
-            drift = drift + (1 + eta) * (g_expanded**2) * ratio
+                drift = drift + (1 + eta) * (g_expanded**2) * ratio
 
             # Euler-Maruyama update
             adjust = (1 + stoch**2) / 2

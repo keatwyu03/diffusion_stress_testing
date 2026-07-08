@@ -129,6 +129,10 @@ class HFunctionConfig:
     weight_decay: float = 5e-4         # penalty to prevent overfitting
     scheduler_patience: int = 75
     scheduler_factor: float = 0.5
+    h_t_max: float = 0.6               # cap on tau during training AND guidance application at
+                                        # sampling time — beyond this, Y_tau is near-pure noise and
+                                        # the true P(Z in S | Y_tau) collapses to the base event rate,
+                                        # so there is no learnable signal to train on or guide with
 
     # Event condition
     event_type: str = "change"         # "sum", "change", or "absval"
@@ -164,8 +168,8 @@ class ConditionalGenConfig:
     device: str = field(default_factory=_default_device)
     batch_size: int = 32
     num_steps: int = 200
-    stoch: float = 2
-    eta: float = -0.5
+    stoch: float = 0.5
+    eta: float = 0
     use_q_model: bool = False
 
     # Q-model training hyperparameters

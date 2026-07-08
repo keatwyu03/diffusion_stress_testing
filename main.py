@@ -354,6 +354,7 @@ def main(args):
         b_min=config.diffusion.b_min,
         b_max=config.diffusion.b_max,
         device=config.conditional.device,
+        h_t_max=config.hfunction.h_t_max,
     )
 
     # Optionally train Q-model
