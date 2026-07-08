@@ -151,3 +151,50 @@ make_figure(
     filename="conditional_cumulative.png",
     xlabel="Cumulative Standardized Return",
 )
+
+# ── Diagnostics table ─────────────────────────────────────────────────────────
+rows = []
+splits = [
+    (0, X_train, mask_train, gen_train, "In-Sample (Train)"),
+    (1, X_test,  mask_test,  gen_test,  "Out-of-Sample (Test)"),
+]
+for i, ticker in zip(range(n_assets), plot_tickers):
+    for col, X, mask, gen, split_label in splits:
+        real_last = X[mask, -1, i].numpy()
+        gen_last  = gen[:, i, -1].numpy()
+        real_cum  = X[mask, :, i].sum(dim=1).numpy()
+        gen_cum   = gen[:, i, :].sum(dim=1).numpy()
+
+        for kind, vals_last, vals_cum in [
+            ("real event",  real_last, real_cum),
+            ("generated",   gen_last,  gen_cum),
+        ]:
+            qs_l = np.quantile(vals_last, [.01, .05, .5, .95, .99]).round(3)
+            qs_c = np.quantile(vals_cum,  [.01, .05, .5, .95, .99]).round(3)
+            rows.append([
+                ticker.upper() if kind == "real event" else "",
+                split_label if kind == "real event" else "",
+                kind,
+                f"{vals_last.mean():.3f}", f"{vals_last.std():.3f}", str(qs_l),
+                f"{vals_cum.mean():.3f}",  f"{vals_cum.std():.3f}",  str(qs_c),
+            ])
+
+col_labels = ["Asset", "Split", "Kind",
+              "Mean (last)", "Std (last)", "q[1,5,50,95,99] last day",
+              "Mean (cum)",  "Std (cum)",  "q[1,5,50,95,99] 64-day sum"]
+fig_d, ax_d = plt.subplots(figsize=(24, 0.45 * len(rows) + 1.5))
+ax_d.axis("off")
+tbl = ax_d.table(cellText=rows, colLabels=col_labels, loc="center", cellLoc="left")
+tbl.auto_set_font_size(False)
+tbl.set_fontsize(9)
+tbl.auto_set_column_width(col=list(range(len(col_labels))))
+fig_d.suptitle(
+    f"Conditional Generation — Diagnostics  "
+    f"[event={config.hfunction.event_type}, thr={config.hfunction.event_threshold}]",
+    fontsize=12, fontweight="bold",
+)
+fig_d.tight_layout()
+out_diag = os.path.join(_dir, "results", "conditional_diagnostics.png")
+plt.savefig(out_diag, dpi=150, bbox_inches="tight")
+plt.close()
+print(f"Saved {out_diag}")
