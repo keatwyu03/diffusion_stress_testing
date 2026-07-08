@@ -384,9 +384,10 @@ def main(args):
     use_q_model = config.conditional.use_q_model or args.train_q_model
 
     # Generate conditional samples for TRAIN set events
-    print(f"Generating {N_event_train} conditional samples for in-sample (train) events...")
+    print(f"Generating {config.conditional.n_gen_samples} conditional samples for in-sample (train) events "
+          f"(real event count: {N_event_train})...")
     generated_samples_train = cond_generator.generate(
-        num_samples=N_event_train,
+        num_samples=config.conditional.n_gen_samples,
         batch_size=config.conditional.batch_size,
         num_steps=config.conditional.num_steps,
         stoch=config.conditional.stoch,
@@ -397,9 +398,10 @@ def main(args):
     torch.save(generated_samples_train, 'generated_samples_train.pt')
 
     # Generate conditional samples for TEST set events
-    print(f"Generating {N_event_test} conditional samples for out-of-sample (test) events...")
+    print(f"Generating {config.conditional.n_gen_samples} conditional samples for out-of-sample (test) events "
+          f"(real event count: {N_event_test})...")
     generated_samples_test = cond_generator.generate(
-        num_samples=N_event_test,
+        num_samples=config.conditional.n_gen_samples,
         batch_size=config.conditional.batch_size,
         num_steps=config.conditional.num_steps,
         stoch=config.conditional.stoch,

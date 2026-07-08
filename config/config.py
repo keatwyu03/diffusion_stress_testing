@@ -137,7 +137,7 @@ class HFunctionConfig:
     # Event condition
     event_type: str = "change"         # "sum", "change", or "absval"
     event_asset_idx: int = 0           # which asset to watch for the shock
-    event_window: int = 64              # lookback period
+    event_window: int = 64             # lookback period
     event_threshold: float = 1.0      # threshold in standardized units
 
     # Constraint mode
@@ -175,6 +175,9 @@ class ConditionalGenConfig:
     stop_early_steps: int = 20          # stop this many steps before the reverse SDE
                                         # reaches t=eps, leaving residual noise/diversity
                                         # instead of fully resolving to the sharp end state
+    n_gen_samples: int = 2000          # number of samples to generate for train/test each,
+                                        # independent of the real event count — reduces
+                                        # Monte Carlo noise in the generated-side KDE estimate
 
     # Q-model training hyperparameters
     q_model_epochs: int = 500
