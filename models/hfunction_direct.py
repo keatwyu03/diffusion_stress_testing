@@ -131,8 +131,17 @@ class HFunctionDirectTrainer:
 
         return alpha * x + sigma * eps
 
-    def _compute_labels(self, Z_start: torch.Tensor, Z_end: torch.Tensor) -> torch.Tensor: 
-        return (torch.abs(Z_end - Z_start) >= self.cfg.event_threshold).float()
+    def _compute_labels(self, Z_start: torch.Tensor, Z_end: torch.Tensor) -> torch.Tensor:
+        if self.cfg.event_type == "change":
+            return (torch.abs(Z_end - Z_start) >= self.cfg.event_threshold).float()
+        elif self.cfg.event_type == "absval":
+            return (Z_end.abs() >= self.cfg.event_threshold).float()
+        else:
+            raise NotImplementedError(
+                f"event_type={self.cfg.event_type!r} not supported here; only 'change' "
+                "and 'absval' are computable from Z_start/Z_end alone ('sum' needs the "
+                "full window, which get_z_windows() does not provide)."
+            )
     
     def train(
             self,

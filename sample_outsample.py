@@ -94,7 +94,12 @@ def main(args):
     )
     data_processor.process_all()
 
-    print(f"Event threshold: {config.hfunction.event_threshold:.4f} std ({config.hfunction.event_type})")
+    # event_threshold is specified as "top X% of |Z_end - Z_start|", converted here
+    # to the equivalent raw numeric cutoff (train-only, no leakage) — see main.py.
+    event_top_fraction = config.hfunction.event_threshold
+    config.hfunction.event_threshold = data_processor.get_event_threshold_from_percentile(event_top_fraction)
+    print(f"Event threshold: top {event_top_fraction:.1%} -> {config.hfunction.event_threshold:.4f} std "
+          f"({config.hfunction.event_type})")
 
     # ==================== Load Models ====================
     print("\n[2/5] Loading models from checkpoints...")

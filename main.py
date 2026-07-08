@@ -85,7 +85,13 @@ def main(args):
 
     data_processor.process_all()
 
-    print(f"Event threshold: {config.hfunction.event_threshold:.4f} std ({config.hfunction.event_type})")
+    # event_threshold is specified as "top X% of |Z_end - Z_start|" (e.g. 0.10 = top
+    # 10%), computed from train data only, then converted to the equivalent raw
+    # numeric cutoff. Everything downstream keeps comparing >= this raw value, unchanged.
+    event_top_fraction = config.hfunction.event_threshold
+    config.hfunction.event_threshold = data_processor.get_event_threshold_from_percentile(event_top_fraction)
+    print(f"Event threshold: top {event_top_fraction:.1%} -> {config.hfunction.event_threshold:.4f} std "
+          f"({config.hfunction.event_type})")
 
     # Derive asset count from tickers so model dims always match data
     n_assets = len(config.data.tickers) - 1

@@ -33,6 +33,12 @@ data_processor = DataProcessor(
 )
 data_processor.process_all()
 
+# event_threshold is specified as "top X% of |Z_end - Z_start|", converted here to
+# the equivalent raw numeric cutoff (train-only, no leakage) — see main.py for details.
+event_top_fraction = config.hfunction.event_threshold
+config.hfunction.event_threshold = data_processor.get_event_threshold_from_percentile(event_top_fraction)
+print(f"Event threshold: top {event_top_fraction:.1%} -> {config.hfunction.event_threshold:.4f} std")
+
 n_assets = len(config.data.tickers) - 1
 config.diffusion.in_channels  = n_assets
 config.diffusion.out_channels = n_assets

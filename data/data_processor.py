@@ -531,6 +531,21 @@ class DataProcessor:
         print(f"Z windows: {len(valid_idx)} valid out of {n_train_windows} training windows")
         return Z_start, Z_end, valid_idx
 
+    def get_event_threshold_from_percentile(self, top_fraction: float) -> float:
+        """
+        Convert a desired "top X% of |Z_end - Z_start|" fraction into the equivalent
+        raw numeric threshold, computed from TRAIN windows only (no leakage into test).
+        E.g. top_fraction=0.10 returns the value such that ~10% of train windows have
+        |Z_end - Z_start| >= that value. Standardized-units thresholds are misleading
+        here because Z_start/Z_end are highly correlated (slow-moving macro series over
+        a short window), so a raw cutoff doesn't correspond to the percentile you'd
+        expect from a single normal variable — computing directly off the empirical
+        train distribution avoids that confusion.
+        """
+        Z_start, Z_end, _ = self.get_z_windows()
+        diffs = (Z_end - Z_start).abs()
+        return torch.quantile(diffs, 1.0 - top_fraction).item()
+
     def _sequence_split_idx(self) -> int:
         """Train/test window-count boundary matching X_train.shape[0] exactly
         (same formula as train_test_split())."""
