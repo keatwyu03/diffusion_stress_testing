@@ -212,6 +212,11 @@ class ConditionalGenerator:
         eps: float,
     ) -> torch.Tensor:
         """Sample a single batch"""
+        self.score_model.eval()
+        self.h_model.eval()
+        if self.q_model is not None:
+            self.q_model.eval()
+
         n_assets = self.score_model.n_assets
         seq_len  = self.score_model.seq_len
         init_x = torch.randn(batch_size, n_assets, seq_len, device=self.device)
@@ -241,27 +246,20 @@ class ConditionalGenerator:
             # unreliable rather than just weak. Skip it entirely instead of risking a
             # spurious nudge that compounds through the rest of the trajectory.
             if time_step.item() <= self.h_t_max:
+                # Using h's raw output directly (no pos_weight correction) — matching
+                # the reference implementation, which doesn't correct for it either.
                 if use_q_model and self.q_model is not None:
                     h_val = self.h_model(x, batch_time_step)
-                    # NOTE: Q-model approximates grad of the raw (pos_weight-biased) h,
-                    # not the corrected q below — this path is not yet fully corrected.
-                    q_val = h_val / (h_val + self.pos_weight * (1 - h_val) + 1e-8)
                     grad_h = self.q_model(x, batch_time_step)
-                    ratio = grad_h / (q_val.view(-1, 1, 1) + 1e-3)
+                    ratio = grad_h / (h_val.view(-1, 1, 1) + 1e-3)
                 else:
                     with torch.enable_grad():
                         x.requires_grad_(True)
                         h_val_autograd = self.h_model(x, batch_time_step)
-                        # Invert the pos_weight training bias to recover the calibrated
-                        # probability, then differentiate THAT (not the raw biased output)
-                        # so guidance uses the true P(Z in S | Y_t=y).
-                        q_val_autograd = h_val_autograd / (
-                            h_val_autograd + self.pos_weight * (1 - h_val_autograd) + 1e-8
-                        )
-                        grad_h = torch.autograd.grad(q_val_autograd.sum(), x)[0]
-                    ratio = grad_h / (q_val_autograd.view(-1, 1, 1) + 1e-3)
+                        grad_h = torch.autograd.grad(h_val_autograd.sum(), x)[0]
+                    ratio = grad_h / (h_val_autograd.view(-1, 1, 1) + 1e-3)
                     x = x.detach()
-                    del h_val_autograd, q_val_autograd, grad_h
+                    del h_val_autograd, grad_h
 
                 drift = drift + (1 + eta) * (g_expanded**2) * ratio
 

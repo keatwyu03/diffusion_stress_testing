@@ -93,8 +93,14 @@ class DualAxisBlock(nn.Module):
         self.ffn = nn.Sequential(
             nn.Linear(dim, dim * ff_mult),
             nn.GELU(),
+            nn.Dropout(dropout),
             nn.Linear(dim * ff_mult, dim),
         )
+
+        # Residual dropout after each sub-layer (no-op when dropout=0.0, e.g. the score model)
+        self.temporal_drop = nn.Dropout(dropout)
+        self.asset_drop = nn.Dropout(dropout)
+        self.ffn_drop = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
         # x: (B, A, T, D),  t_emb: (B, C)
@@ -106,20 +112,20 @@ class DualAxisBlock(nn.Module):
         c_t = t_emb.unsqueeze(1).expand(B, A, C).reshape(B * A, C)
         normed = self.temporal_norm(x_t, c_t)
         out, _ = self.temporal_attn(normed, normed, normed)
-        x = x + out.reshape(B, A, T, D)
+        x = x + self.temporal_drop(out.reshape(B, A, T, D))
 
         # ── Cross-asset self-attention ─────────────────────────────────────
         x_a = x.permute(0, 2, 1, 3).reshape(B * T, A, D)
         c_a = t_emb.unsqueeze(1).expand(B, T, C).reshape(B * T, C)
         normed = self.asset_norm(x_a, c_a)
         out, _ = self.asset_attn(normed, normed, normed)
-        x = x + out.reshape(B, T, A, D).permute(0, 2, 1, 3)
+        x = x + self.asset_drop(out.reshape(B, T, A, D).permute(0, 2, 1, 3))
 
         # ── FFN ────────────────────────────────────────────────────────────
         x_flat = x.reshape(B * A * T, D)
         c_flat = t_emb.unsqueeze(1).unsqueeze(1).expand(B, A, T, C).reshape(B * A * T, C)
         normed = self.ffn_norm(x_flat, c_flat)
-        x = x + self.ffn(normed).reshape(B, A, T, D)
+        x = x + self.ffn_drop(self.ffn(normed).reshape(B, A, T, D))
 
         return x
 

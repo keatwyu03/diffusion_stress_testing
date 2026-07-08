@@ -15,21 +15,33 @@ from config import HFunctionConfig
 #Building the Neural Network
 class HFunctionTransformerDirect(nn.Module):
 
-    def __init__(self, n_assets, seq_len, embed_dim, n_heads, n_layers, cond_dim):
+    def __init__(self, n_assets, seq_len, embed_dim, n_heads, n_layers, cond_dim, dropout=0.0):
         super().__init__()
         self.input_proj = nn.Linear(1, embed_dim)   #Embedding the cross section vector
-        self.temporal_pos = nn.Parameter(torch.randn(1,1, seq_len, embed_dim) * 0.02)    #Setup the positional random vector to learn positional unique impact
-        self.asset_emb = nn.Parameter(torch.randn(1, n_assets, 1, embed_dim) * 0.02)     #Setup the asset random vector to learn asset unique impact
+        # Sinusoidal (not fully-random) positional embedding: nearby days get similar
+        # vectors, distant days get predictably different ones, same style as the
+        # time_embed below. A small MLP lets the network still adapt this smooth base,
+        # rather than needing to learn 64 independent random vectors from scratch.
+        self.temporal_pos_proj = nn.Sequential(
+            GaussianFourierFeatures(embed_dim),
+            nn.Linear(embed_dim, embed_dim),
+            nn.SiLU(),
+            nn.Linear(embed_dim, embed_dim),
+        )
+        day_idx = torch.arange(seq_len, dtype=torch.float32) / max(seq_len - 1, 1)
+        self.register_buffer("day_idx", day_idx)  # normalized day position in [0, 1]
         
+        self.asset_emb = nn.Parameter(torch.randn(1, n_assets, 1, embed_dim) * 0.02)     #Setup the asset random vector to learn asset unique impact
+
         self.time_embed = nn.Sequential(
             GaussianFourierFeatures(cond_dim), #Mapping the scalar into a cond_dim vector of sines and cosines (embedding the time into a vector fomr)
             nn.Linear(cond_dim, cond_dim),
-            nn.SiLU(), 
+            nn.SiLU(),
             nn.Linear(cond_dim, cond_dim)
-        ) #Encoding the diffusion time into a vector the transformer can condition on. 
+        ) #Encoding the diffusion time into a vector the transformer can condition on.
 
         self.blocks = nn.ModuleList([
-            DualAxisBlock(embed_dim, n_heads, cond_dim) for _ in range(n_layers)
+            DualAxisBlock(embed_dim, n_heads, cond_dim, dropout=dropout) for _ in range(n_layers)
         ])#Sets up n_layers dual axis blocks which are feed forward NN
 
         self.norm = nn.LayerNorm(embed_dim)  #Applies the layer norm to the last block
@@ -56,7 +68,8 @@ class HFunctionTransformerDirect(nn.Module):
         h = self.input_proj(x.unsqueeze(-1))
 
         #Adds the temporal and asset based embeddings to the vectors
-        h = h + self.temporal_pos + self.asset_emb
+        temporal_pos = self.temporal_pos_proj(self.day_idx)  # (seq_len, embed_dim)
+        h = h + temporal_pos[None, None, :, :] + self.asset_emb
 
         #Passes each vector throguh through each DualAxisBlock
         for block in self.blocks:
@@ -100,6 +113,7 @@ class HFunctionDirectTrainer:
             n_heads=cfg.n_heads,
             n_layers=cfg.n_layers,
             cond_dim=cfg.cond_dim,
+            dropout=cfg.dropout,
         ).to(cfg.device)
 
     def _marginal_mean(self, t: torch.Tensor) -> torch.Tensor:
@@ -154,58 +168,67 @@ class HFunctionDirectTrainer:
         for epoch in tqdm(range(self.cfg.n_epochs), desc = "HFunction-Direct Training"):
             self.model.train()
 
-            idx = self._sample_spaced_indices(N, self.cfg.h_mini_batch_size)
-            x_b = X_train[idx]
-            b_b = B_labels[idx].unsqueeze(1)
+            # Real epoch: shuffle once, then sweep through every window exactly once
+            # (instead of with-replacement resampling), so no example is over/under-seen.
+            perm = torch.randperm(N, device=self.device)
 
-            # Cap tau at h_t_max: beyond this, Y_tau is near-pure noise and the true
-            # label is unrecoverable from it, so training there just dilutes gradient
-            # signal away from the range where the task is actually learnable.
-            tau = torch.rand(self.cfg.h_mini_batch_size, device = self.device) * self.cfg.h_t_max
-            y_tau = self._forward_noise(x_b, tau)
+            loss_sum = acc_sum = pos_sum = 0.0
+            n_batches = 0
 
-            logits = self.model(y_tau, tau, return_logits=True)
-            loss = loss_fn(logits, b_b)
+            for start in range(0, N, self.cfg.h_mini_batch_size):
+                idx = perm[start : start + self.cfg.h_mini_batch_size]
+                x_b = X_train[idx]
+                b_b = B_labels[idx].unsqueeze(1)
 
-            optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm = 1.0)  #Caps the norm of the gradients at 1.0 to prevent gradients from blowing up
-            optimizer.step()
-            scheduler.step(loss)
+                # Cap tau at h_t_max: beyond this, Y_tau is near-pure noise and the true
+                # label is unrecoverable from it, so training there just dilutes gradient
+                # signal away from the range where the task is actually learnable.
+                tau = torch.rand(x_b.shape[0], device = self.device) * self.cfg.h_t_max
+                y_tau = self._forward_noise(x_b, tau)
 
-            with torch.no_grad():
-                #Computes the average accuracy after we compute the mean and turn it into a python number
-                #Note Boolean.float = 1 if True 0 if False
-                prob = torch.sigmoid(logits)
-                acc = ((prob > 0.5).float() == b_b).float().mean().item()
+                logits = self.model(y_tau, tau, return_logits=True)
+                loss = loss_fn(logits, b_b)
 
-            
+                optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm = 1.0)  #Caps the norm of the gradients at 1.0 to prevent gradients from blowing up
+                optimizer.step()
+
+                with torch.no_grad():
+                    #Computes the average accuracy after we compute the mean and turn it into a python number
+                    #Note Boolean.float = 1 if True 0 if False
+                    prob = torch.sigmoid(logits)
+                    acc = ((prob > 0.5).float() == b_b).float().mean().item()
+
+                loss_sum += loss.item()
+                acc_sum += acc
+                pos_sum += b_b.mean().item()
+                n_batches += 1
+
+            avg_loss = loss_sum / n_batches
+            avg_acc = acc_sum / n_batches
+            avg_pos = pos_sum / n_batches
+            scheduler.step(avg_loss)
+
             #grabs the learning rate from the optimizer
             current_lr = optimizer.param_groups[0]["lr"]
             loss_records.append({
                 "epoch": epoch,
-                "loss": loss.item(), 
-                "accuracy": acc,
-                "pos_ratio": b_b.mean().item(),
+                "loss": avg_loss,
+                "accuracy": avg_acc,
+                "pos_ratio": avg_pos,
                 "lr": current_lr,
             })
 
             if epoch % 100 == 0:
                 tqdm.write(
-                    f"Epoch {epoch:04d} | Loss: {loss.item():.6f} | "
-                    f"Acc: {acc:.4f} | LR: {current_lr:.2e}"
+                    f"Epoch {epoch:04d} | Loss: {avg_loss:.6f} | "
+                    f"Acc: {avg_acc:.4f} | LR: {current_lr:.2e}"
                 )
         
         os.makedirs("ckpt_new", exist_ok=True)
         pd.DataFrame(loss_records).to_csv("ckpt_new/h_losses.csv", index=False)
         print("Direct H-function training complete!")
-
-    def _sample_spaced_indices(self, N : int, batch_size: int) -> torch.Tensor:
-        block_size = N / batch_size
-        block_starts = torch.arange(batch_size, device = self.device, dtype = torch.float32) * block_size
-        offsets = torch.rand(batch_size, device = self.device) * block_size
-        idx = (block_starts + offsets).long().clamp(max = N - 1)
-        return idx
     
     def save(self, path: str) -> None:
         #pos_weight is saved alongside the weights so inference can invert the
