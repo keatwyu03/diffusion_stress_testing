@@ -157,6 +157,7 @@ class ConditionalGenerator:
         eta: float = 150.0,
         use_q_model: bool = False,
         eps: float = 1e-5,
+        stop_early_steps: int = 0,
     ) -> torch.Tensor:
         """
         Generate conditional samples
@@ -169,6 +170,9 @@ class ConditionalGenerator:
             eta: Guidance strength
             use_q_model: Whether to use Q-model
             eps: Epsilon for numerical stability
+            stop_early_steps: Stop this many steps before reaching the end of the
+                reverse SDE (t=eps), leaving some residual noise/diversity in the
+                samples instead of fully resolving to the sharp end state.
 
         Returns:
             all_samples: Generated samples (num_samples, channels, seq_len)
@@ -181,7 +185,7 @@ class ConditionalGenerator:
         for i in range(num_full_batches):
             print(f"Sampling batch {i+1}/{num_full_batches} ...")
             samples = self._sample_batch(
-                batch_size, num_steps, stoch, eta, use_q_model, eps
+                batch_size, num_steps, stoch, eta, use_q_model, eps, stop_early_steps
             )
             all_samples.append(samples.cpu())
             del samples
@@ -191,7 +195,7 @@ class ConditionalGenerator:
         if remainder > 0:
             print(f"Sampling remainder batch of {remainder} ...")
             samples = self._sample_batch(
-                remainder, num_steps, stoch, eta, use_q_model, eps
+                remainder, num_steps, stoch, eta, use_q_model, eps, stop_early_steps
             )
             all_samples.append(samples.cpu())
             del samples
@@ -210,6 +214,7 @@ class ConditionalGenerator:
         eta: float,
         use_q_model: bool,
         eps: float,
+        stop_early_steps: int = 0,
     ) -> torch.Tensor:
         """Sample a single batch"""
         self.score_model.eval()
@@ -226,7 +231,8 @@ class ConditionalGenerator:
             self.b_min, self.b_max, num_steps, eps=eps, device=self.device
         )
 
-        for i in tqdm(range(len(time_steps) - 1)):
+        n_iters = max(len(time_steps) - 1 - stop_early_steps, 1)
+        for i in tqdm(range(n_iters)):
             time_step = time_steps[i]
             next_t = time_steps[i + 1]
             step_size = (time_step - next_t).abs()

@@ -392,6 +392,7 @@ def main(args):
         stoch=config.conditional.stoch,
         eta=config.conditional.eta,
         use_q_model=use_q_model,
+        stop_early_steps=config.conditional.stop_early_steps,
     )
     torch.save(generated_samples_train, 'generated_samples_train.pt')
 
@@ -404,6 +405,7 @@ def main(args):
         stoch=config.conditional.stoch,
         eta=config.conditional.eta,
         use_q_model=use_q_model,
+        stop_early_steps=config.conditional.stop_early_steps,
     )
     torch.save(generated_samples_test, 'generated_samples_test.pt')
 
