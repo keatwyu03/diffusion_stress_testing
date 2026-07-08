@@ -53,6 +53,7 @@ class ConditionalGenerator:
         b_max: float = 3.25,
         device: str = "cuda",
         h_t_max: float = 1.0,
+        pos_weight: float = 1.0,
     ):
         self.score_model = score_model
         self.h_model = h_model
@@ -66,6 +67,11 @@ class ConditionalGenerator:
         # h-function was actually trained on — beyond that, Y_tau is near-pure
         # noise and h's gradient there is unreliable, not just weak.
         self.h_t_max = h_t_max
+        # h_model was trained with pos_weight upweighting the rare positive class,
+        # which shifts its raw output away from the true P(Z in S | Y_t=y). This
+        # inverts that shift back to the calibrated probability before it's used
+        # for guidance. pos_weight=1.0 (default) makes the correction a no-op.
+        self.pos_weight = pos_weight
 
         self.q_model = None
 
@@ -235,19 +241,27 @@ class ConditionalGenerator:
             # unreliable rather than just weak. Skip it entirely instead of risking a
             # spurious nudge that compounds through the rest of the trajectory.
             if time_step.item() <= self.h_t_max:
-                h_val = self.h_model(x, batch_time_step)
-
                 if use_q_model and self.q_model is not None:
+                    h_val = self.h_model(x, batch_time_step)
+                    # NOTE: Q-model approximates grad of the raw (pos_weight-biased) h,
+                    # not the corrected q below — this path is not yet fully corrected.
+                    q_val = h_val / (h_val + self.pos_weight * (1 - h_val) + 1e-8)
                     grad_h = self.q_model(x, batch_time_step)
-                    ratio = grad_h / (h_val.view(-1, 1, 1) + 1e-3)
+                    ratio = grad_h / (q_val.view(-1, 1, 1) + 1e-3)
                 else:
                     with torch.enable_grad():
                         x.requires_grad_(True)
                         h_val_autograd = self.h_model(x, batch_time_step)
-                        grad_h = torch.autograd.grad(h_val_autograd.sum(), x)[0]
-                    ratio = grad_h / (h_val_autograd.view(-1, 1, 1) + 1e-3)
+                        # Invert the pos_weight training bias to recover the calibrated
+                        # probability, then differentiate THAT (not the raw biased output)
+                        # so guidance uses the true P(Z in S | Y_t=y).
+                        q_val_autograd = h_val_autograd / (
+                            h_val_autograd + self.pos_weight * (1 - h_val_autograd) + 1e-8
+                        )
+                        grad_h = torch.autograd.grad(q_val_autograd.sum(), x)[0]
+                    ratio = grad_h / (q_val_autograd.view(-1, 1, 1) + 1e-3)
                     x = x.detach()
-                    del h_val_autograd, grad_h
+                    del h_val_autograd, q_val_autograd, grad_h
 
                 drift = drift + (1 + eta) * (g_expanded**2) * ratio
 

@@ -355,6 +355,7 @@ def main(args):
         b_max=config.diffusion.b_max,
         device=config.conditional.device,
         h_t_max=config.hfunction.h_t_max,
+        pos_weight=getattr(h_trainer, "pos_weight", 1.0),
     )
 
     # Optionally train Q-model
