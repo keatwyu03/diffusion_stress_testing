@@ -169,8 +169,8 @@ class ConditionalGenConfig:
     device: str = field(default_factory=_default_device)
     batch_size: int = 32
     num_steps: int = 200
-    stoch: float = 1.0
-    eta: float = -5
+    stoch: float = 0.5
+    eta: float = 0
     use_q_model: bool = False
     stop_early_steps: int = 20          # stop this many steps before the reverse SDE
                                         # reaches t=eps, leaving residual noise/diversity
