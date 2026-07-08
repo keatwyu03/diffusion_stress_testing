@@ -124,7 +124,7 @@ class HFunctionConfig:
     train_batch_size: int = 256        # number of noisy trajectories for unconditional diffusion
     train_stoch: float = 0.5           # stochasticity for generating training paths (0=ODE, 1=full SDE)
     h_mini_batch_size: int = 512       # mini-batch size per gradient step
-    n_epochs: int = 500               # number of times to go through the data
+    n_epochs: int = 1000              # number of times to go through the data
     learning_rate: float = 1e-4        # step size for SGD
     weight_decay: float = 5e-4         # penalty to prevent overfitting
     scheduler_patience: int = 75
