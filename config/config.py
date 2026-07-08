@@ -89,7 +89,7 @@ class DiffusionConfig:
 
     # Training parameters
     batch_size: int = 75               #Stochastic minibatch gradient descent
-    n_epochs: int = 500               #Number of times to loop through the data
+    n_epochs: int = 1               #Number of times to loop through the data
     learning_rate: float = 1e-4        #Alpha Stepsize
     scheduler_patience: int = 50       #Check convergence every X number of loops through the data
     scheduler_factor: float = 0.5      #Multiplier for the Learning rate when plateau
@@ -121,10 +121,10 @@ class HFunctionConfig:
     #Using a dual-axis transformer to learn this
 
     # Training parameters
-    train_batch_size: int = 256        # number of noisy trajectories for unconditional diffusion
+    train_batch_size: int = 126        # number of noisy trajectories for unconditional diffusion
     train_stoch: float = 0.5           # stochasticity for generating training paths (0=ODE, 1=full SDE)
     h_mini_batch_size: int = 512       # mini-batch size per gradient step
-    n_epochs: int = 1000              # number of times to go through the data
+    n_epochs: int = 750              # number of times to go through the data
     learning_rate: float = 1e-4        # step size for SGD
     weight_decay: float = 5e-4         # penalty to prevent overfitting
     scheduler_patience: int = 75
@@ -149,7 +149,7 @@ class HFunctionConfig:
 
     # Architecture: "transformer" or "cnn"
     arch: str = "transformer"
-    one_two_step: str = "one" #or two step
+    one_two_step: str = "two" #or two step
 
 
     device: str = field(default_factory=_default_device)

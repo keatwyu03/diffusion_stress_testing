@@ -183,18 +183,29 @@ class HFunctionTwoStepTrainer:
         pbar = tqdm(range(self.cfg.n_epochs), desc="H-Function Training", miniters=100, mininterval=0)
         for epoch in pbar:
             with torch.no_grad():
-                _, path_x, _ = self.diffusion_model.sample(
+                path_t, path_x, _ = self.diffusion_model.sample(
                     batch_size=self.cfg.train_batch_size,
                     return_path=True,
                 )
-                # path_x: (num_steps, batch_size, A, T)
+                # path_x: (num_steps, batch_size, A, T), path_t: (num_steps, batch_size)
+                # -- same real VP-SDE time value broadcast across the batch at each step.
                 n_steps = path_x.shape[0]
                 Y_T = path_x[-1]
                 ell_labels = self.ell_model(Y_T).squeeze(-1)
 
-            t_idx = torch.randint(0, n_steps, (self.cfg.train_batch_size,))
-            Y_t = path_x[t_idx, torch.arange(self.cfg.train_batch_size)]
-            t = t_idx.float() / (n_steps - 1)
+            # Restrict the intermediate snapshot fed to h to tau <= h_t_max: beyond that,
+            # the state is too noisy to carry learnable signal about the event (same
+            # reasoning as the training-time cap in hfunction_direct.py).
+            step_times = path_t[:, 0]  # (n_steps,) real tau at each stored step
+            valid_steps = (step_times <= self.cfg.h_t_max).nonzero(as_tuple=True)[0]
+            if valid_steps.numel() == 0:
+                valid_steps = torch.tensor([n_steps - 1], device=path_x.device)
+
+            sel = valid_steps[
+                torch.randint(0, valid_steps.numel(), (self.cfg.train_batch_size,), device=path_x.device)
+            ]
+            Y_t = path_x[sel, torch.arange(self.cfg.train_batch_size, device=path_x.device)]
+            t = step_times[sel]  # real tau, not a linear-index approximation
 
             self.optimizer.zero_grad()
             pred = self.model(Y_t.to(self.device), t.to(self.device)).squeeze(-1)
