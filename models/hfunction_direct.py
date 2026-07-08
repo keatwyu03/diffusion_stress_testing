@@ -33,8 +33,10 @@ class HFunctionTransformerDirect(nn.Module):
         ])#Sets up n_layers dual axis blocks which are feed forward NN
 
         self.norm = nn.LayerNorm(embed_dim)  #Applies the layer norm to the last block
+        # Head takes [start_day, end_day, end-start] pooled features (3*embed_dim),
+        # not a mean over all timesteps — see forward().
         self.head = nn.Sequential(
-            nn.Linear(embed_dim, embed_dim//2),
+            nn.Linear(embed_dim * 3, embed_dim//2),
             nn.SiLU(),
             nn.Linear(embed_dim // 2, 1),
         ) #Unembeds the vector representation back to a single raw logit (no Sigmoid here — see forward())
@@ -60,9 +62,15 @@ class HFunctionTransformerDirect(nn.Module):
         for block in self.blocks:
             h = block(h, t_emb)
 
-        #Passes it through the AdaLN and then decompresses it
-        h = self.norm(h).mean(dim=(1,2))
-        logits = self.head(h)
+        #The label depends only on the window's start/end days (Z_start, Z_end) —
+        #pooling with a mean over all 64 timesteps blends that signal with 62
+        #irrelevant days. Instead, pull out the start/end day embeddings directly
+        #(averaged over assets) and feed the head their values plus their difference.
+        h = self.norm(h)                                # (B, A, T, D)
+        h_start = h[:, :, 0, :].mean(dim=1)              # (B, D)
+        h_end   = h[:, :, -1, :].mean(dim=1)             # (B, D)
+        h_pooled = torch.cat([h_start, h_end, h_end - h_start], dim=-1)  # (B, 3D)
+        logits = self.head(h_pooled)
         #return_logits=True feeds BCEWithLogitsLoss directly (numerically stable with pos_weight);
         #default keeps existing probability-output behavior for sampling/generation call sites.
         if return_logits:
