@@ -158,13 +158,13 @@ for col, (X, mask, gen, split_label) in enumerate(splits):
         non_overlap = np.arange(0, X.shape[0], seq_len)
         for i in non_overlap:
             residuals_rr = get_residuals(X[i, :, ch].numpy(), method)
-            sq_acf_rl.append(acf(residuals_rr))
+            sq_acf_rl.append(acf(residuals_rr, nlags = 20))
         acf_sq_real_again = np.array(sq_acf_rl)
 
         sq_acf_gen = []
         for j in range(len(gen)):
             residuals_gg = get_residuals(gen[j, ch, :], method)
-            sq_acf_gen.append(acf(residuals_gg))
+            sq_acf_gen.append(acf(residuals_gg, nlags = 20))
 
         acf_sq_gen_again = np.array(sq_acf_gen)
 
