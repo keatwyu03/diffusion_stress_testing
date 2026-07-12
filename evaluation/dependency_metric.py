@@ -6,6 +6,7 @@ from statsmodels.tsa.stattools import acf, ccf
 from statsmodels.tsa.ar_model import AutoReg
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from pmdarima import auto_arima
+from scipy.stats import ttest_ind
 
 import matplotlib
 import sys
@@ -141,6 +142,48 @@ for col, (X, mask, gen, split_label) in enumerate(splits):
 fig.suptitle(f"ACF of Squared Residuals [{method}] — Real vs Generated", fontsize=13, fontweight="bold")
 fig.tight_layout()
 out = os.path.join(_dir, "results", f"acf_squared_{method}.png")
+plt.savefig(out, dpi=150, bbox_inches="tight")
+plt.show()
+print(f"Saved {out}")
+
+
+seq_len = config.data.seq_len
+fig_2, axes_2 = plt.subplots(n_assets, 2, figsize=(14, 4 * n_assets))
+if n_assets == 1:
+    axes_2 = axes_2[np.newaxis, :]
+
+for col, (X, mask, gen, split_label) in enumerate(splits):
+    for ch, ticker in enumerate(tickers[1:]):
+        sq_acf_rl = []
+        non_overlap = np.arange(0, X.shape[0], seq_len)
+        for i in non_overlap:
+            residuals_rr = get_residuals(X[i, :, ch].numpy(), method)
+            sq_acf_rl.append(acf(residuals_rr))
+        acf_sq_real_again = np.array(sq_acf_rl)
+
+        sq_acf_gen = []
+        for j in range(len(gen)):
+            residuals_gg = get_residuals(gen[j, ch, :], method)
+            sq_acf_gen.append(acf(residuals_gg))
+
+        acf_sq_gen_again = np.array(sq_acf_gen)
+
+        t_stat, p_vals = ttest_ind(acf_sq_real_again, acf_sq_gen_again, equal_var = False, axis = 0)
+
+        lags = np.arange(0, 21, 1)
+        ax = axes_2[ch, col]
+        ax.plot(lags, p_vals, color="crimson", marker="o", markersize=3, linewidth=1.2, label="p-value")
+        ax.axhline(0.05, color="black", linewidth=0.8, linestyle="--", label="p = 0.05")
+        ax.set_title(f"{ticker.upper()} — Real vs Gen p-value ({split_label})", fontsize=10, fontweight="bold")
+        ax.set_xlabel("Lag")
+        ax.set_ylabel("p-value")
+        ax.set_ylim(-0.02, 1.02)
+        ax.legend(fontsize=8)
+        ax.grid(True, alpha=0.3)
+
+fig_2.suptitle("Two-Sample t-test: Real vs Generated Squared-Residual ACF (p-values)", fontsize=13, fontweight="bold")
+fig_2.tight_layout()
+out = os.path.join(_dir, "results", "acf_squared_pvalues.png")
 plt.savefig(out, dpi=150, bbox_inches="tight")
 plt.show()
 print(f"Saved {out}")
