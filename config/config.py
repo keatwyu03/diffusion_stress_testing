@@ -49,14 +49,14 @@ class DataConfig:
     csv_path: str = "explore/macro_data_new.csv"
     ct_csv_path: str = "explore/cross_test_data.csv"
 
-    start_date : str = "1995-01-01"
+    start_date : str = "1985-01-01"
     ct_start_date : str = "1995-01-01"
     ct_end_date : str = "2007-12-31"
 
     tickers: List[str] = None
     weekday_col: str = "weekday"
     seq_len: int = 64
-    test_days: int = 2500             # used only when train_end_date is None
+    test_days: int = 4000             # used only when train_end_date is None
     end_date: str = None              # data window end (None = use all)
     train_end_date: str = None        # last day of train set (None = use test_days)
     winsorize_lower: float = 0.005
@@ -138,7 +138,7 @@ class HFunctionConfig:
     event_type: str = "change"         # "sum", "change", or "absval"
     event_asset_idx: int = 0           # which asset to watch for the shock
     event_window: int = 64             # lookback period
-    event_threshold: float = 0.25      # top X% of |Z_end - Z_start| counts as an event
+    event_threshold: float = 0.1       # top X% of |Z_end - Z_start| counts as an event
                                         # (e.g. 0.10 = top 10%), converted to a raw
                                         # numeric cutoff from train data at startup —
                                         # see get_event_threshold_from_percentile()
