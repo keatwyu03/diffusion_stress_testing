@@ -15,8 +15,6 @@ cond_event  = _cfg.data.tickers[_cfg.hfunction.event_asset_idx]  # e.g. "unemp"
 h_threshold = _cfg.hfunction.event_threshold
 
 fred = Fred(api_key = '6dac8927ae66be817978bd55e16a9241')
-sp500 = yf.download('^GSPC', start = '2008-01-01')['Close'].squeeze()
-
 
 data = {
     'T10YFF': fred.get_series('T10YFF'),
@@ -28,7 +26,7 @@ data = {
 cond_series = data[cond_event]
 
 tickers = _cfg.data.tickers[1:]  # everything after the macro variable
-df = yf.download(tickers, start = "2008-01-01", auto_adjust=True)["Close"]
+df = yf.download(tickers, start = _cfg.data.start_date, auto_adjust=True)["Close"]
 log_ret = np.log(df / df.shift(1)).dropna()
 
 df[cond_event] = cond_series.reindex(df.index)
@@ -62,6 +60,8 @@ dp = DataProcessor(
     tickers         = _cfg.data.tickers,
     seq_len         = _cfg.data.seq_len,
     test_days       = _cfg.data.test_days,
+    start_date      = _cfg.data.start_date,
+    end_date        = _cfg.data.end_date,
     train_end_date  = _cfg.data.train_end_date,
     winsorize_lower = _cfg.data.winsorize_lower,
     winsorize_upper = _cfg.data.winsorize_upper,

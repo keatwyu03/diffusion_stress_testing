@@ -49,14 +49,14 @@ class DataConfig:
     csv_path: str = "explore/macro_data_new.csv"
     ct_csv_path: str = "explore/cross_test_data.csv"
 
-    start_date : str = "2008-01-01"
+    start_date : str = "1995-01-01"
     ct_start_date : str = "1995-01-01"
     ct_end_date : str = "2007-12-31"
 
     tickers: List[str] = None
     weekday_col: str = "weekday"
     seq_len: int = 64
-    test_days: int = 1200             # used only when train_end_date is None
+    test_days: int = 2500             # used only when train_end_date is None
     end_date: str = None              # data window end (None = use all)
     train_end_date: str = None        # last day of train set (None = use test_days)
     winsorize_lower: float = 0.005
@@ -89,7 +89,7 @@ class DiffusionConfig:
 
     # Training parameters
     batch_size: int = 75               #Stochastic minibatch gradient descent
-    n_epochs: int = 750               #Number of times to loop through the data
+    n_epochs: int = 500               #Number of times to loop through the data
     learning_rate: float = 1e-4        #Alpha Stepsize
     scheduler_patience: int = 50       #Check convergence every X number of loops through the data
     scheduler_factor: float = 0.5      #Multiplier for the Learning rate when plateau
