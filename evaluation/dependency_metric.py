@@ -97,10 +97,11 @@ for col, (X, mask, gen, split_label) in enumerate(splits):
     
         lags = np.arange(0, n_lags + 1)
         ax = axes_real[ch, col]
-        ax.plot(lags, mean_acf_real, color="darkorange", linewidth=1.5, label="Real mean ACF")
-        ax.plot(lags, ci_upper_real, color="black", linestyle=":", linewidth=1, label="95% band")
-        ax.plot(lags, ci_lower_real, color="black", linestyle=":", linewidth=1)
+        ax.plot(lags[1:], mean_acf_real[1:], color="darkorange", linewidth=1.5, label="Real mean ACF")
+        ax.plot(lags[1:], ci_upper_real[1:], color="black", linestyle=":", linewidth=1, label="95% band")
+        ax.plot(lags[1:], ci_lower_real[1:], color="black", linestyle=":", linewidth=1)
         ax.axhline(0, color="black", linewidth=0.8, linestyle="--")
+        ax.set_ylim(-0.05, 0.2)
         ax.set_title(f"{ticker.upper()} — Real ({split_label})", fontsize=10, fontweight="bold")
         ax.set_xlabel("Lag"); ax.set_ylabel("ACF")
         ax.legend(fontsize=8); ax.grid(True, alpha=0.3)
@@ -133,10 +134,11 @@ for col, (X, mask, gen, split_label) in enumerate(splits):
 
         lags = np.arange(0, n_lags + 1)
         ax = axes_gen[ch, col]
-        ax.plot(lags, mean_acf_gen, color="steelblue", linewidth=1.5, label="Generated mean ACF")
-        ax.plot(lags, ci_upper_gen, color="black", linestyle=":", linewidth=1, label="95% band")
-        ax.plot(lags, ci_lower_gen, color="black", linestyle=":", linewidth=1)
+        ax.plot(lags[1:], mean_acf_gen[1:], color="steelblue", linewidth=1.5, label="Generated mean ACF")
+        ax.plot(lags[1:], ci_upper_gen[1:], color="black", linestyle=":", linewidth=1, label="95% band")
+        ax.plot(lags[1:], ci_lower_gen[1:], color="black", linestyle=":", linewidth=1)
         ax.axhline(0, color="black", linewidth=0.8, linestyle="--")
+        ax.set_ylim(-0.05, 0.2)
         ax.set_title(f"{ticker.upper()} — Generated ({split_label})", fontsize=10, fontweight="bold")
         ax.set_xlabel("Lag"); ax.set_ylabel("ACF")
         ax.legend(fontsize=8); ax.grid(True, alpha=0.3)
