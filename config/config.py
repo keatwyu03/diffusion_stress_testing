@@ -80,7 +80,7 @@ class DiffusionConfig:
     device: str = field(default_factory=_default_device)
     in_channels: int = 4
     out_channels: int = 4
-    sample_size: int = 64
+    sample_size: int = 10
 
     #number of layers for each CNN and number of parameters in each of those CNN layers
     layers_per_block: int = 3
@@ -157,7 +157,7 @@ class HFunctionConfig:
 
     device: str = field(default_factory=_default_device)
     asset_dim: int = 4
-    time_steps: int = 64
+    time_steps: int = 10
     embed_dim: int = 64
 
     n_heads: int = 4
