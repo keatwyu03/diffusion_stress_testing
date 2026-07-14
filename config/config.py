@@ -92,7 +92,7 @@ class DiffusionConfig:
 
     # Training parameters
     batch_size: int = 75               #Stochastic minibatch gradient descent
-    n_epochs: int = 1500               #Number of times to loop through the data
+    n_epochs: int = 750                #Number of times to loop through the data
     learning_rate: float = 1e-4        #Alpha Stepsize
     weight_decay: float = 0.0          #AdamW weight decay
     scheduler_patience: int = 50       #Check convergence every X number of loops through the data
@@ -106,10 +106,11 @@ class DiffusionConfig:
     arch: str = "transformer"
 
     # Transformer-specific parameters (used when arch="transformer")
-    embed_dim: int = 256
+    embed_dim: int = 128
     n_heads: int = 16
     n_layers: int = 16
-    cond_dim: int = 256
+    cond_dim: int = 128
+    cov_weight: float = 1.0
 
 
 @dataclass

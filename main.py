@@ -120,6 +120,7 @@ def main(args):
             n_heads=config.diffusion.n_heads,
             n_layers=config.diffusion.n_layers,
             cond_dim=config.diffusion.cond_dim,
+            cov_weight=config.diffusion.cov_weight,
         )
 
         # Get training data
@@ -156,6 +157,7 @@ def main(args):
             n_heads=config.diffusion.n_heads,
             n_layers=config.diffusion.n_layers,
             cond_dim=config.diffusion.cond_dim,
+            cov_weight=config.diffusion.cov_weight,
         )
         diffusion_model.load("ckpt_new/diffusion_model.pt")
 
