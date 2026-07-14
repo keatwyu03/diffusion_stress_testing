@@ -17,7 +17,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import get_default_config
 from data import DataProcessor
 
-n_lags = 10   # max lag used everywhere below (acf/Ljung-Box nlags, plotting x-axis)
 method = "simple"
 def get_residuals(series, method):
     if method == "simple":
@@ -29,6 +28,9 @@ def get_residuals(series, method):
 
 #ACF of returns
 config = get_default_config()
+# acf() requires nlags < nobs, and each window only has seq_len observations,
+# so cap n_lags below seq_len instead of a fixed constant that assumed seq_len=64.
+n_lags = min(10, config.data.seq_len - 1)   # max lag used everywhere below (acf/Ljung-Box nlags, plotting x-axis)
 data_processor = DataProcessor(
     csv_path=config.data.csv_path,
     tickers=config.data.tickers,
