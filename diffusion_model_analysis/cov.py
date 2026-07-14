@@ -53,12 +53,19 @@ def get_mask(X):
 mask_train = get_mask(X_train)
 mask_test  = get_mask(X_test)
 
-# ── Load generated samples ────────────────────────────────────────────────────
+# ── Load generated samples (optional — only needed for the "Conditional
+# Generated" panel, which requires an h-function/ConditionalGenerator run) ─────
 _dir  = os.path.dirname(os.path.abspath(__file__))
 _root = os.path.dirname(_dir)
 
-gen_train = torch.load(os.path.join(_root, 'generated_samples_train.pt'), map_location='cpu')
-gen_test  = torch.load(os.path.join(_root, 'generated_samples_test.pt'),  map_location='cpu')
+_gen_train_path = os.path.join(_root, 'generated_samples_train.pt')
+_gen_test_path  = os.path.join(_root, 'generated_samples_test.pt')
+
+gen_train = torch.load(_gen_train_path, map_location='cpu') if os.path.exists(_gen_train_path) else None
+gen_test  = torch.load(_gen_test_path,  map_location='cpu') if os.path.exists(_gen_test_path)  else None
+
+if gen_train is None or gen_test is None:
+    print("No generated_samples_{train,test}.pt found — skipping 'Conditional Generated' panel.")
 
 # ── Generate unconditional samples ────────────────────────────────────────────
 diffusion_model = DiffusionModel(
@@ -99,15 +106,17 @@ panels_train = [
     ("Real Train (all)",           X_train[:, -1, :].numpy()),
     ("Real Train (event windows)", X_train[mask_train, -1, :].numpy()),
     ("Unconditional Generated",    uncond[:, :, -1].numpy()),
-    ("Conditional Generated",      gen_train[:, :, -1].numpy()),
 ]
+if gen_train is not None:
+    panels_train.append(("Conditional Generated", gen_train[:, :, -1].numpy()))
 
 panels_test = [
     ("Real Test (all)",            X_test[:, -1, :].numpy()),
     ("Real Test (event windows)",  X_test[mask_test, -1, :].numpy()),
     ("Unconditional Generated",    uncond[:, :, -1].numpy()),
-    ("Conditional Generated",      gen_test[:, :, -1].numpy()),
 ]
+if gen_test is not None:
+    panels_test.append(("Conditional Generated", gen_test[:, :, -1].numpy()))
 
 # ── Print matrices ─────────────────────────────────────────────────────────────
 for split_label, panels in [("TRAIN", panels_train), ("TEST", panels_test)]:
@@ -130,8 +139,14 @@ def plot_matrices(panels, title, fname, vmin, vmax, fmt):
     tick_lbl  = [t.upper() for t in plot_tickers]
     font_size = max(8, min(13, 40 // n_plot))
 
-    fig, axes = plt.subplots(2, 2, figsize=(11, 9))
-    for ax, (lbl, arr) in zip(axes.ravel(), panels):
+    n_panels = len(panels)
+    n_cols   = 2
+    n_rows   = (n_panels + n_cols - 1) // n_cols
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(11, 4.5 * n_rows))
+    axes = np.atleast_1d(axes).ravel()
+    for ax in axes[n_panels:]:
+        ax.axis("off")
+    for ax, (lbl, arr) in zip(axes, panels):
         C  = np.corrcoef(arr.T) if "corr" in fname else np.cov(arr.T)
         im = ax.imshow(C, vmin=vmin, vmax=vmax, cmap="RdBu_r")
         ax.set_xticks(range(n_plot)); ax.set_xticklabels(tick_lbl, fontsize=10)
