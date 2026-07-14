@@ -230,7 +230,7 @@ class HFunctionTrainer:
             if self.event_type == "sum":
                 sum_last_window = last_window.sum(dim=1)
                 target = (sum_last_window <= self.event_threshold).float().unsqueeze(1)
-            elif self.event_type == "change":
+            elif self.event_type == "abs_change":
                 diff_over_window = abs(last_window[:, -1] - last_window[:, 0])
                 if self.constraint_mode == "soft":
                     target = torch.sigmoid(self.reward_sharpness * diff_over_window).unsqueeze(1)

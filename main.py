@@ -79,6 +79,7 @@ def main(args):
         start_date=config.data.start_date,
         end_date=config.data.end_date,
         train_end_date=config.data.train_end_date,
+        window_shift=config.data.window_shift,
         winsorize_lower=config.data.winsorize_lower,
         winsorize_upper=config.data.winsorize_upper,
     )
@@ -89,7 +90,7 @@ def main(args):
     # 10%), computed from train data only, then converted to the equivalent raw
     # numeric cutoff. Everything downstream keeps comparing >= this raw value, unchanged.
     event_top_fraction = config.hfunction.event_threshold
-    config.hfunction.event_threshold = data_processor.get_event_threshold_from_percentile(event_top_fraction)
+    config.hfunction.event_threshold = data_processor.get_event_threshold_from_percentile(event_top_fraction, config.hfunction.event_type)
     print(f"Event threshold: top {event_top_fraction:.1%} -> {config.hfunction.event_threshold:.4f} std "
           f"({config.hfunction.event_type})")
 
@@ -287,16 +288,22 @@ def main(args):
     asset_sums_train = X_train.sum(dim=2)
 
     Z_start_train, Z_end_train, valid_idx_train = data_processor.get_z_windows_train_aligned()
-    if config.hfunction.event_type == "change":
+    if config.hfunction.event_type == "abs_change":
         metric_train = (Z_end_train - Z_start_train).abs()
         event_valid_train = metric_train >= config.hfunction.event_threshold
     elif config.hfunction.event_type == "absval":
         metric_train = Z_end_train.abs()
         event_valid_train = metric_train >= config.hfunction.event_threshold
+    elif config.hfunction.event_type == "upper_change":
+        metric_train = Z_end_train - Z_start_train
+        event_valid_train = metric_train >= config.hfunction.event_threshold
+    elif config.hfunction.event_type == "lower_change":
+        metric_train = Z_end_train - Z_start_train
+        event_valid_train = metric_train <= -config.hfunction.event_threshold
     else:
         raise NotImplementedError(
             f"event_type={config.hfunction.event_type!r} not supported by the "
-            "macro-based mask; only 'change' and 'absval' are implemented."
+            "macro-based mask; only 'abs_change', 'absval', 'upper_change', and 'lower_change' are implemented."
         )
     mask_train = torch.zeros(X_train.shape[0], dtype=torch.bool)
     mask_train[valid_idx_train] = event_valid_train
@@ -319,16 +326,22 @@ def main(args):
     asset_sums_test = X_test.sum(dim=2)
 
     Z_start_test, Z_end_test, valid_idx_test = data_processor.get_z_windows_test()
-    if config.hfunction.event_type == "change":
+    if config.hfunction.event_type == "abs_change":
         metric_test = (Z_end_test - Z_start_test).abs()
         event_valid_test = metric_test >= config.hfunction.event_threshold
     elif config.hfunction.event_type == "absval":
         metric_test = Z_end_test.abs()
         event_valid_test = metric_test >= config.hfunction.event_threshold
+    elif config.hfunction.event_type == "upper_change":
+        metric_test = Z_end_test - Z_start_test
+        event_valid_test = metric_test >= config.hfunction.event_threshold
+    elif config.hfunction.event_type == "lower_change":
+        metric_test = Z_end_test - Z_start_test
+        event_valid_test = metric_test <= -config.hfunction.event_threshold
     else:
         raise NotImplementedError(
             f"event_type={config.hfunction.event_type!r} not supported by the "
-            "macro-based mask; only 'change' and 'absval' are implemented."
+            "macro-based mask; only 'abs_change', 'absval', 'upper_change', and 'lower_change' are implemented."
         )
     mask_test = torch.zeros(X_test.shape[0], dtype=torch.bool)
     mask_test[valid_idx_test] = event_valid_test

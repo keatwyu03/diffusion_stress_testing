@@ -16,6 +16,7 @@ data_processor = DataProcessor(
     weekday_col=config.data.weekday_col,
     seq_len=config.data.seq_len,
     test_days=config.data.test_days,
+    window_shift=config.data.window_shift,
     winsorize_lower=config.data.winsorize_lower,
     winsorize_upper=config.data.winsorize_upper,
 )
@@ -24,7 +25,7 @@ data_processor.process_all()
 # event_threshold is specified as "top X% of |Z_end - Z_start|", converted here to
 # the equivalent raw numeric cutoff (train-only, no leakage) — see main.py for details.
 event_top_fraction = config.hfunction.event_threshold
-config.hfunction.event_threshold = data_processor.get_event_threshold_from_percentile(event_top_fraction)
+config.hfunction.event_threshold = data_processor.get_event_threshold_from_percentile(event_top_fraction, config.hfunction.event_type)
 print(f"Event threshold: top {event_top_fraction:.1%} -> {config.hfunction.event_threshold:.4f} std")
 
 tickers = config.data.tickers          # all assets, e.g. ["unemp", "sp500", "baa"]
@@ -46,14 +47,18 @@ def get_mask(X, Z_start, Z_end, valid_idx):
     # Event mask must come from the real macro series (Z_start/Z_end from
     # get_z_windows), not from X, which is stock-returns-only and has no
     # macro channel at all.
-    if config.hfunction.event_type == "change":
+    if config.hfunction.event_type == "abs_change":
         event_valid = (Z_end - Z_start).abs() >= config.hfunction.event_threshold
     elif config.hfunction.event_type == "absval":
         event_valid = Z_end.abs() >= config.hfunction.event_threshold
+    elif config.hfunction.event_type == "upper_change":
+        event_valid = (Z_end - Z_start) >= config.hfunction.event_threshold
+    elif config.hfunction.event_type == "lower_change":
+        event_valid = (Z_end - Z_start) <= -config.hfunction.event_threshold
     else:
         raise NotImplementedError(
             f"event_type={config.hfunction.event_type!r} not supported by the "
-            "macro-based mask; only 'change' and 'absval' are implemented."
+            "macro-based mask; only 'abs_change', 'absval', 'upper_change', and 'lower_change' are implemented."
         )
     mask = torch.zeros(X.shape[0], dtype=torch.bool)
     mask[valid_idx] = event_valid

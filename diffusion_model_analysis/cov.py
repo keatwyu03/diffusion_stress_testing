@@ -19,6 +19,7 @@ data_processor = DataProcessor(
     weekday_col=config.data.weekday_col,
     seq_len=config.data.seq_len,
     test_days=config.data.test_days,
+    window_shift=config.data.window_shift,
     winsorize_lower=config.data.winsorize_lower,
     winsorize_upper=config.data.winsorize_upper,
 )
@@ -40,10 +41,14 @@ def get_mask(X):
     last_window = X[:, -config.hfunction.event_window:, config.hfunction.event_asset_idx]
     if config.hfunction.event_type == "sum":
         return last_window.sum(dim=1) <= config.hfunction.event_threshold
-    elif config.hfunction.event_type == "change":
+    elif config.hfunction.event_type == "abs_change":
         return (last_window[:, -1] - last_window[:, 0]).abs() >= config.hfunction.event_threshold
     elif config.hfunction.event_type == "absval":
         return last_window[:, -1].abs() >= config.hfunction.event_threshold
+    elif config.hfunction.event_type == "upper_change":
+        return (last_window[:, -1] - last_window[:, 0]) >= config.hfunction.event_threshold
+    elif config.hfunction.event_type == "lower_change":
+        return (last_window[:, -1] - last_window[:, 0]) <= -config.hfunction.event_threshold
 
 mask_train = get_mask(X_train)
 mask_test  = get_mask(X_test)

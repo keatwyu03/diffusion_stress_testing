@@ -89,6 +89,7 @@ def main(args):
         start_date=config.data.start_date,
         end_date=config.data.end_date,
         train_end_date=config.data.train_end_date,
+        window_shift=config.data.window_shift,
         winsorize_lower=config.data.winsorize_lower,
         winsorize_upper=config.data.winsorize_upper,
     )
@@ -97,7 +98,7 @@ def main(args):
     # event_threshold is specified as "top X% of |Z_end - Z_start|", converted here
     # to the equivalent raw numeric cutoff (train-only, no leakage) — see main.py.
     event_top_fraction = config.hfunction.event_threshold
-    config.hfunction.event_threshold = data_processor.get_event_threshold_from_percentile(event_top_fraction)
+    config.hfunction.event_threshold = data_processor.get_event_threshold_from_percentile(event_top_fraction, config.hfunction.event_type)
     print(f"Event threshold: top {event_top_fraction:.1%} -> {config.hfunction.event_threshold:.4f} std "
           f"({config.hfunction.event_type})")
 
@@ -152,16 +153,22 @@ def main(args):
     # Event mask must come from the real macro series (via get_z_windows),
     # not from X, which is stock-returns-only and has no macro channel.
     Z_start_train, Z_end_train, valid_idx_train = data_processor.get_z_windows_train_aligned()
-    if config.hfunction.event_type == "change":
+    if config.hfunction.event_type == "abs_change":
         metric_train = (Z_end_train - Z_start_train).abs()
         event_valid_train = metric_train >= config.hfunction.event_threshold
     elif config.hfunction.event_type == "absval":
         metric_train = Z_end_train.abs()
         event_valid_train = metric_train >= config.hfunction.event_threshold
+    elif config.hfunction.event_type == "upper_change":
+        metric_train = Z_end_train - Z_start_train
+        event_valid_train = metric_train >= config.hfunction.event_threshold
+    elif config.hfunction.event_type == "lower_change":
+        metric_train = Z_end_train - Z_start_train
+        event_valid_train = metric_train <= -config.hfunction.event_threshold
     else:
         raise NotImplementedError(
             f"event_type={config.hfunction.event_type!r} not supported by the "
-            "macro-based mask; only 'change' and 'absval' are implemented."
+            "macro-based mask; only 'abs_change', 'absval', 'upper_change', and 'lower_change' are implemented."
         )
     mask_train = torch.zeros(X_train.shape[0], dtype=torch.bool)
     mask_train[valid_idx_train] = event_valid_train
@@ -195,10 +202,14 @@ def main(args):
             pt_last = pretrain_all[:, config.hfunction.event_asset_idx, -config.hfunction.event_window:]
             if config.hfunction.event_type == "sum":
                 pt_mask = pt_last.sum(dim=1) <= config.hfunction.event_threshold
-            elif config.hfunction.event_type == "change":
+            elif config.hfunction.event_type == "abs_change":
                 pt_mask = (pt_last[:, -1] - pt_last[:, 0]).abs() >= config.hfunction.event_threshold
             elif config.hfunction.event_type == "absval":
                 pt_mask = pt_last[:, -1].abs() >= config.hfunction.event_threshold
+            elif config.hfunction.event_type == "upper_change":
+                pt_mask = (pt_last[:, -1] - pt_last[:, 0]) >= config.hfunction.event_threshold
+            elif config.hfunction.event_type == "lower_change":
+                pt_mask = (pt_last[:, -1] - pt_last[:, 0]) <= -config.hfunction.event_threshold
             pretrain_events = pretrain_all[pt_mask]
             if cache_path:
                 torch.save(pretrain_events, cache_path)

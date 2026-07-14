@@ -260,6 +260,7 @@ class DataProcessor:
         start_date: str = None,
         end_date: str = None,
         train_end_date: str = None,
+        window_shift: int = 1,
         winsorize_lower: float = 0.005,
         winsorize_upper: float = 0.995,
     ):
@@ -271,6 +272,7 @@ class DataProcessor:
         self.start_date = start_date
         self.end_date = end_date
         self.train_end_date = train_end_date
+        self.window_shift = window_shift
         self.winsorize_lower = winsorize_lower
         self.winsorize_upper = winsorize_upper
 
@@ -354,7 +356,7 @@ class DataProcessor:
         T, D = z_values.shape
         X_list, y_list, idx_list, sw_list = [], [], [], []
 
-        for t in range(self.seq_len, T):
+        for t in range(self.seq_len, T, self.window_shift):
             X_list.append(z_values[t - self.seq_len : t, :])
             y_list.append(z_values[t, :])
             idx_list.append(dates[t])
@@ -437,7 +439,7 @@ class DataProcessor:
         data = torch.tensor(self.df_z_wins.values, dtype=torch.float32)
         window_size = self.seq_len
         X_all = []
-        for i in range(len(data) - window_size + 1):
+        for i in range(0, len(data) - window_size + 1, self.window_shift):
             X_all.append(data[i : i + window_size].T)
         X_all = torch.stack(X_all)
 
@@ -445,8 +447,9 @@ class DataProcessor:
         if self.train_end_date is not None:
             cutoff = pd.to_datetime(self.train_end_date)
             dates_all = self.df_z_wins.index
-            # Each window i ends at dates_all[i + window_size - 1]
-            end_dates = dates_all[window_size - 1:]
+            # Window j (start = j*window_shift) ends at dates_all[j*window_shift + window_size - 1];
+            # step the slice by window_shift so end_dates lines up 1:1 with X_all's windows.
+            end_dates = dates_all[window_size - 1 :: self.window_shift]
             n_train = int((end_dates <= cutoff).sum())
             X_diffusion_train = X_all[:n_train]
         else:
@@ -482,8 +485,9 @@ class DataProcessor:
         self, macro_values: np.ndarray, start_i: int, end_i: int
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Scan window start-indices [start_i, end_i) for a macro observation
-        within macro_window_tolerance days of both window endpoints.
+        Scan window indices [start_i, end_i) — window j starts at raw row
+        j*self.window_shift — for a macro observation within
+        macro_window_tolerance days of both window endpoints.
 
         valid_idx is 0-indexed relative to this range (i.e. directly indexes
         get_diffusion_data() for the train range, or X_test for the test range).
@@ -493,7 +497,8 @@ class DataProcessor:
 
         Z_start_list, Z_end_list, valid_idx_list = [], [], []
 
-        for pos, i in enumerate(range(start_i, end_i)):
+        for pos, w_idx in enumerate(range(start_i, end_i)):
+            i = w_idx * self.window_shift
             start_slice = macro_values[i : i + w + 1]
             start_vals  = start_slice[~np.isnan(start_slice)]
 
@@ -526,25 +531,44 @@ class DataProcessor:
             valid_idx : (M,) indices into get_diffusion_data() for valid windows
         """
         macro_values, n_train = self._macro_std_values_and_n_train()
-        n_train_windows = n_train - self.seq_len + 1
+        n_train_windows = (n_train - self.seq_len) // self.window_shift + 1
         Z_start, Z_end, valid_idx = self._scan_macro_windows(macro_values, 0, n_train_windows)
         print(f"Z windows: {len(valid_idx)} valid out of {n_train_windows} training windows")
         return Z_start, Z_end, valid_idx
 
-    def get_event_threshold_from_percentile(self, top_fraction: float) -> float:
+    def get_event_threshold_from_percentile(self, top_fraction: float, event_type: str) -> float:
         """
-        Convert a desired "top X% of |Z_end - Z_start|" fraction into the equivalent
-        raw numeric threshold, computed from TRAIN windows only (no leakage into test).
-        E.g. top_fraction=0.10 returns the value such that ~10% of train windows have
-        |Z_end - Z_start| >= that value. Standardized-units thresholds are misleading
-        here because Z_start/Z_end are highly correlated (slow-moving macro series over
-        a short window), so a raw cutoff doesn't correspond to the percentile you'd
-        expect from a single normal variable — computing directly off the empirical
-        train distribution avoids that confusion.
+        Convert a desired "top X% of change" fraction into the equivalent raw numeric
+        threshold, computed from TRAIN windows only (no leakage into test). Standardized-
+        units thresholds are misleading here because Z_start/Z_end are highly correlated
+        (slow-moving macro series over a short window), so a raw cutoff doesn't correspond
+        to the percentile you'd expect from a single normal variable — computing directly
+        off the empirical train distribution avoids that confusion.
+
+        The quantile is taken over the metric matching event_type, since folding to an
+        absolute value before quantiling (e.g. using |Z_end-Z_start| for a one-sided
+        event_type like upper_change/lower_change) mixes both tails together and no
+        longer corresponds to "top X%" of that one-sided metric:
+          - "abs_change": top X% of |Z_end - Z_start|
+          - "absval":     top X% of |Z_end|
+          - "upper_change": top X% largest (most positive) Z_end - Z_start
+          - "lower_change": top X% smallest (most negative) Z_end - Z_start
         """
         Z_start, Z_end, _ = self.get_z_windows()
-        diffs = (Z_end - Z_start).abs()
-        return torch.quantile(diffs, 1.0 - top_fraction).item()
+        diffs = Z_end - Z_start
+        if event_type == "abs_change":
+            return diffs.abs().quantile(1.0 - top_fraction).item()
+        elif event_type == "absval":
+            return Z_end.abs().quantile(1.0 - top_fraction).item()
+        elif event_type == "upper_change":
+            return torch.quantile(diffs, 1.0 - top_fraction).item()
+        elif event_type == "lower_change":
+            return -torch.quantile(diffs, top_fraction).item()
+        else:
+            raise NotImplementedError(
+                f"event_type={event_type!r} not supported by get_event_threshold_from_percentile; "
+                "only 'abs_change', 'absval', 'upper_change', and 'lower_change' are implemented."
+            )
 
     def _sequence_split_idx(self) -> int:
         """Train/test window-count boundary matching X_train.shape[0] exactly

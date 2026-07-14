@@ -168,6 +168,7 @@ def main(args):
         start_date=config.data.start_date,
         end_date=config.data.end_date,
         train_end_date=config.data.train_end_date,
+        window_shift=config.data.window_shift,
         winsorize_lower=config.data.winsorize_lower,
         winsorize_upper=config.data.winsorize_upper,
     )

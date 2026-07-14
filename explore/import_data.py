@@ -63,6 +63,7 @@ dp = DataProcessor(
     start_date      = _cfg.data.start_date,
     end_date        = _cfg.data.end_date,
     train_end_date  = _cfg.data.train_end_date,
+    window_shift    = _cfg.data.window_shift,
     winsorize_lower = _cfg.data.winsorize_lower,
     winsorize_upper = _cfg.data.winsorize_upper,
 )
@@ -79,7 +80,7 @@ Z_start, Z_end, valid_idx = dp.get_z_windows()
 # event_threshold is specified as "top X% of |Z_end - Z_start|" (e.g. 0.10 = top 10%),
 # converted here to the equivalent raw numeric cutoff — see main.py for details.
 event_top_fraction = h_threshold
-h_threshold = dp.get_event_threshold_from_percentile(event_top_fraction)
+h_threshold = dp.get_event_threshold_from_percentile(event_top_fraction, _cfg.hfunction.event_type)
 print(f"Event threshold: top {event_top_fraction:.1%} -> {h_threshold:.4f} std")
 
 n_train_windows = len(dp.X_train)
