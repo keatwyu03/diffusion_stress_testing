@@ -131,6 +131,7 @@ def main(args):
             batch_size=config.diffusion.batch_size,
             n_epochs=config.diffusion.n_epochs,
             learning_rate=config.diffusion.learning_rate,
+            weight_decay=config.diffusion.weight_decay,
             scheduler_patience=config.diffusion.scheduler_patience,
             scheduler_factor=config.diffusion.scheduler_factor,
             use_wandb=use_wandb,

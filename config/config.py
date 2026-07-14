@@ -52,7 +52,7 @@ class DataConfig:
     start_date : str = "2008-01-01"
     end_date: str = "2026-07-08"      # data window end (None = use all)
 
-    ct_start_date : str = "1995-01-01"   #Cross-period test window
+    ct_start_date : str = "1985-01-01"   #Cross-period test window
     ct_end_date : str = "2007-12-31"
 
     window_shift : int = 1
@@ -92,8 +92,9 @@ class DiffusionConfig:
 
     # Training parameters
     batch_size: int = 75               #Stochastic minibatch gradient descent
-    n_epochs: int = 750               #Number of times to loop through the data
+    n_epochs: int = 1500               #Number of times to loop through the data
     learning_rate: float = 1e-4        #Alpha Stepsize
+    weight_decay: float = 0.0          #AdamW weight decay
     scheduler_patience: int = 50       #Check convergence every X number of loops through the data
     scheduler_factor: float = 0.5      #Multiplier for the Learning rate when plateau
 
@@ -105,16 +106,10 @@ class DiffusionConfig:
     arch: str = "transformer"
 
     # Transformer-specific parameters (used when arch="transformer")
-    """
-    Each attention layer in the time and asset embedding attention head get split into embed_dim / n_heads
-    Each chunk of that reduced size gets its own learning pattern. 
-    Cond_dim = the number of dimensions that are expanded into for the time pattern
-             -> Time is passed through different layer transformations to encode information in vector form
-    """
-    embed_dim: int = 128
-    n_heads: int = 8                  
-    n_layers: int = 8
-    cond_dim: int = 128
+    embed_dim: int = 256
+    n_heads: int = 16
+    n_layers: int = 16
+    cond_dim: int = 256
 
 
 @dataclass

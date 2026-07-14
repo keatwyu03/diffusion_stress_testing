@@ -77,20 +77,40 @@ dp.train_test_split()
 
 Z_start, Z_end, valid_idx = dp.get_z_windows()
 
-# event_threshold is specified as "top X% of |Z_end - Z_start|" (e.g. 0.10 = top 10%),
+# event_threshold is specified as "top X% of change" (e.g. 0.10 = top 10%),
 # converted here to the equivalent raw numeric cutoff — see main.py for details.
 event_top_fraction = h_threshold
-h_threshold = dp.get_event_threshold_from_percentile(event_top_fraction, _cfg.hfunction.event_type)
-print(f"Event threshold: top {event_top_fraction:.1%} -> {h_threshold:.4f} std")
+event_type = _cfg.hfunction.event_type
+h_threshold = dp.get_event_threshold_from_percentile(event_top_fraction, event_type)
+print(f"Event threshold: top {event_top_fraction:.1%} -> {h_threshold:.4f} std ({event_type})")
+
+
+def _event_metric_and_mask(z_start, z_end, event_type, threshold):
+    if event_type == "abs_change":
+        metric = abs(z_end - z_start)
+        return metric, metric >= threshold
+    elif event_type == "absval":
+        metric = abs(z_end)
+        return metric, metric >= threshold
+    elif event_type == "upper_change":
+        metric = z_end - z_start
+        return metric, metric >= threshold
+    elif event_type == "lower_change":
+        metric = z_end - z_start
+        return metric, metric <= -threshold
+    else:
+        raise NotImplementedError(f"event_type={event_type!r} not supported here.")
+
 
 n_train_windows = len(dp.X_train)
 n_valid         = len(valid_idx)
-abs_change      = (Z_end - Z_start).abs().numpy()
-n_events        = int((abs_change >= h_threshold).sum())
+train_metric_t, train_event_mask_t = _event_metric_and_mask(Z_start, Z_end, event_type, h_threshold)
+train_metric    = train_metric_t.numpy()
+n_events        = int(train_event_mask_t.sum())
 
 print(f"Training windows:              {n_train_windows}")
 print(f"Valid macro windows:           {n_valid}  ({100*n_valid/n_train_windows:.1f}%)")
-print(f"Events (|ΔZ| >= {h_threshold}): {n_events} / {n_valid}  ({100*n_events/n_valid:.1f}%)")
+print(f"Events ({event_type} vs {h_threshold:.4f}): {n_events} / {n_valid}  ({100*n_events/n_valid:.1f}%)")
 
 # Test window event count
 cfg = _cfg
@@ -103,7 +123,7 @@ macro_std_vals = ((macro_raw - z_mean) / z_std).values
 n_total = len(macro_std_vals)
 n_train = n_total - cfg.data.test_days
 
-test_abs_changes, test_end_dates = [], []
+test_metric, test_end_dates, test_event_list = [], [], []
 test_events, test_valid = 0, 0
 for i in range(n_train, n_total - dp.seq_len + 1):
     start_slice = macro_std_vals[i : i + w + 1]
@@ -113,28 +133,32 @@ for i in range(n_train, n_total - dp.seq_len + 1):
     end_vals    = end_slice[~np.isnan(end_slice)]
     if len(start_vals) == 0 or len(end_vals) == 0:
         continue
-    chg = abs(float(end_vals[-1]) - float(start_vals[0]))
-    test_abs_changes.append(chg)
+    m, is_event = _event_metric_and_mask(float(start_vals[0]), float(end_vals[-1]), event_type, h_threshold)
+    test_metric.append(m)
+    test_event_list.append(bool(is_event))
     test_end_dates.append(dp.df.index[end_idx])
     test_valid += 1
-    if chg >= h_threshold:
+    if is_event:
         test_events += 1
 
 n_test_windows = len(dp.X_test)
 print(f"\nTest windows:                  {n_test_windows}")
 print(f"Valid macro windows:           {test_valid}  ({100*test_valid/max(n_test_windows,1):.1f}%)")
-print(f"Events (|ΔZ| >= {h_threshold}): {test_events} / {max(test_valid,1)}  ({100*test_events/max(test_valid,1):.1f}%)")
+print(f"Events ({event_type} vs {h_threshold:.4f}): {test_events} / {max(test_valid,1)}  ({100*test_events/max(test_valid,1):.1f}%)")
 
-test_abs_changes = np.array(test_abs_changes)
-test_event_mask  = test_abs_changes >= h_threshold
+test_metric      = np.array(test_metric)
+test_event_mask  = np.array(test_event_list)
 train_end_dates  = [dp.df.index[int(i) + dp.seq_len - 1] for i in valid_idx.numpy()]
-train_event_mask = abs_change >= h_threshold
+train_event_mask = train_event_mask_t.numpy()
 
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
+metric_label = {"abs_change": "|ΔZ|", "absval": "|Z_end|",
+                "upper_change": "ΔZ", "lower_change": "ΔZ"}[event_type]
+
 for ax, dates, changes, event_mask, title, n_total_win in [
-    (ax1, train_end_dates, abs_change,       train_event_mask, "Train", n_train_windows),
-    (ax2, test_end_dates,  test_abs_changes,  test_event_mask,  "Test",  n_test_windows),
+    (ax1, train_end_dates, train_metric, train_event_mask, "Train", n_train_windows),
+    (ax2, test_end_dates,  test_metric,  test_event_mask,  "Test",  n_test_windows),
 ]:
     n_ev = int(event_mask.sum())
     n_v  = len(changes)
@@ -142,11 +166,13 @@ for ax, dates, changes, event_mask, title, n_total_win in [
     ax.scatter(
         [d for d, e in zip(dates, event_mask) if e],
         changes[event_mask],
-        s=15, color="red", label=f"event (|ΔZ| ≥ {h_threshold})"
+        s=15, color="red", label=f"event ({event_type})"
     )
     ax.axhline(h_threshold, color="red", linestyle="--")
+    if event_type == "lower_change":
+        ax.axhline(-h_threshold, color="red", linestyle="--")
     ax.legend()
-    ax.set_title(f"|ΔZ| — {title} windows")
+    ax.set_title(f"{metric_label} — {title} windows")
     ax.annotate(
         f"Valid: {n_v} / {n_total_win}  ({100*n_v/max(n_total_win,1):.1f}%)\n"
         f"Events: {n_ev} / {n_v}  ({100*n_ev/max(n_v,1):.1f}%)",

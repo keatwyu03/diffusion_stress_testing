@@ -149,6 +149,7 @@ class DiffusionModel:
         batch_size: int = 256,
         n_epochs: int = 600,
         learning_rate: float = 1e-4,
+        weight_decay: float = 0.01,
         scheduler_patience: int = 50,
         scheduler_factor: float = 0.5,
         num_workers: int = 0,
@@ -162,6 +163,8 @@ class DiffusionModel:
             batch_size: Batch size
             n_epochs: Number of epochs
             learning_rate: Learning rate
+            weight_decay: AdamW weight decay (0.01 is AdamW's own default; set to 0
+                to remove this regularization, e.g. when deliberately overfitting)
             scheduler_patience: Patience for learning rate scheduler
             scheduler_factor: Factor for learning rate reduction
             num_workers: Number of data loader workers
@@ -185,7 +188,7 @@ class DiffusionModel:
         # if torch.cuda.device_count() > 1:
         #     self.model = nn.DataParallel(self.model)
 
-        optimizer = AdamW(self.model.parameters(), lr=learning_rate)
+        optimizer = AdamW(self.model.parameters(), lr=learning_rate, weight_decay=weight_decay)
         scheduler = ReduceLROnPlateau(
             optimizer, mode="min", factor=scheduler_factor, patience=scheduler_patience
         )
