@@ -98,7 +98,7 @@ class DiffusionConfig:
     scheduler_factor: float = 0.5      #Multiplier for the Learning rate when plateau
 
     # Sampling parameters
-    num_steps: int = 500               #Number of noisy elements to add (larger bmax necessitates larger num_steps)
+    num_steps: int = 1000               #Number of noisy elements to add (larger bmax necessitates larger num_steps)
     eps: float = 1e-4                  #Stopping point of when we claim the data are now normal
 
     # Architecture: "unet" or "transformer"
@@ -111,10 +111,10 @@ class DiffusionConfig:
     Cond_dim = the number of dimensions that are expanded into for the time pattern
              -> Time is passed through different layer transformations to encode information in vector form
     """
-    embed_dim: int = 128
-    n_heads: int = 8                  
-    n_layers: int = 8
-    cond_dim: int = 128
+    embed_dim: int = 256
+    n_heads: int = 16                  
+    n_layers: int = 16
+    cond_dim: int = 256
 
 
 @dataclass
