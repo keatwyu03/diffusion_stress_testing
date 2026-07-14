@@ -111,6 +111,8 @@ class DiffusionConfig:
     n_layers: int = 8
     cond_dim: int = 128
     cov_weight: float = 1.0
+    cov_t_max: float = 0.3             # only low-t batch examples (one-step reconstruction
+                                        # is trustworthy) are used for the covariance penalty
 
 
 @dataclass

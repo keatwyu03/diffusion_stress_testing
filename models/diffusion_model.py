@@ -33,7 +33,8 @@ class DiffusionModel:
         n_heads: int = 4,
         n_layers: int = 6,
         cond_dim: int = 128,
-        cov_weight : float = 1.0
+        cov_weight : float = 1.0,
+        cov_t_max: float = 0.3
     ):
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -43,6 +44,7 @@ class DiffusionModel:
         self.device = device
         self.arch = arch
         self.cov_weight = cov_weight
+        self.cov_t_max = cov_t_max
 
         if arch == "transformer":
             self.model = FinancialTransformerScore(
@@ -140,16 +142,22 @@ class DiffusionModel:
         perturbed_x = x * mean_expanded + z * std_expanded
 
         score = self.model(perturbed_x, random_t).sample
-
         # One-step (Tweedie's formula) estimate of x0 from the current noisy input
         x0_hat = (perturbed_x + std_expanded ** 2 * score) / mean_expanded
 
-        # Correlation matrix of this batch's reconstruction — same last-day-return
-        gen_corr = torch.corrcoef(x0_hat[:, :, -1].T)
-        n_assets = gen_corr.shape[0]
-        off_diag_mask = 1.0 - torch.eye(n_assets, device = self.device)
-        corr_diff = (gen_corr - self.real_corr_target) * off_diag_mask
-        cov_penalty = torch.sum(corr_diff ** 2)
+
+        low_t_mask = random_t < self.cov_t_max
+        n_low_t = int(low_t_mask.sum())
+
+        if n_low_t >= 2: 
+            # Correlation matrix of this batch's reconstruction — same last-day-return
+            gen_corr = torch.corrcoef(x0_hat[low_t_mask][:, :, -1].T)
+            n_assets = gen_corr.shape[0]
+            off_diag_mask = 1.0 - torch.eye(n_assets, device = self.device)
+            corr_diff = (gen_corr - self.real_corr_target) * off_diag_mask
+            cov_penalty = torch.sum(corr_diff ** 2)
+        else:
+            cov_penalty = torch.zeros((), device = self.device)
 
         loss = torch.mean(torch.sum((score * std_expanded + z) ** 2, dim=(1, 2))) + self.cov_weight * cov_penalty
 

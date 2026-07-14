@@ -121,6 +121,7 @@ def main(args):
             n_layers=config.diffusion.n_layers,
             cond_dim=config.diffusion.cond_dim,
             cov_weight=config.diffusion.cov_weight,
+            cov_t_max=config.diffusion.cov_t_max,
         )
 
         # Get training data
@@ -158,6 +159,7 @@ def main(args):
             n_layers=config.diffusion.n_layers,
             cond_dim=config.diffusion.cond_dim,
             cov_weight=config.diffusion.cov_weight,
+            cov_t_max=config.diffusion.cov_t_max,
         )
         diffusion_model.load("ckpt_new/diffusion_model.pt")
 
