@@ -98,7 +98,7 @@ class DiffusionConfig:
     scheduler_factor: float = 0.5      #Multiplier for the Learning rate when plateau
 
     # Sampling parameters
-    num_steps: int = 200               #Number of noisy elements to add (larger bmax necessitates larger num_steps)
+    num_steps: int = 500               #Number of noisy elements to add (larger bmax necessitates larger num_steps)
     eps: float = 1e-4                  #Stopping point of when we claim the data are now normal
 
     # Architecture: "unet" or "transformer"
@@ -112,8 +112,8 @@ class DiffusionConfig:
              -> Time is passed through different layer transformations to encode information in vector form
     """
     embed_dim: int = 128
-    n_heads: int = 4                  
-    n_layers: int = 6
+    n_heads: int = 8                  
+    n_layers: int = 8
     cond_dim: int = 128
 
 
@@ -174,7 +174,7 @@ class ConditionalGenConfig:
 
     device: str = field(default_factory=_default_device)
     batch_size: int = 32
-    num_steps: int = 200
+    num_steps: int = 500
     stoch: float = 0.5
     eta: float = 0
     use_q_model: bool = False
