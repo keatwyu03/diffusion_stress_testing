@@ -108,7 +108,7 @@ class DiffusionConfig:
     # Transformer-specific parameters (used when arch="transformer")
     embed_dim: int = 128
     n_heads: int = 16
-    n_layers: int = 16
+    n_layers: int = 8
     cond_dim: int = 128
     cov_weight: float = 1.0
 
