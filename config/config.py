@@ -49,18 +49,17 @@ class DataConfig:
     csv_path: str = "explore/macro_data_new.csv"
     ct_csv_path: str = "explore/cross_test_data.csv"
 
-    start_date : str = "2008-01-01"
+    start_date : str = "2000-01-01"
     end_date: str = "2026-07-08"      # data window end (None = use all)
 
-    ct_start_date : str = "1985-01-01"   #Cross-period test window
+    ct_start_date : str = "1998-01-01"   #Cross-period test window
     ct_end_date : str = "2007-12-31"
 
     window_shift : int = 1
-
     tickers: List[str] = None
     weekday_col: str = "weekday"
     seq_len: int = 10
-    test_days: int = 1200             # used only when train_end_date is None
+    test_days: int = 2000             # used only when train_end_date is None
     train_end_date: str = None        # last day of train set (None = use test_days)
     winsorize_lower: float = 0.005
     winsorize_upper: float = 0.995
@@ -110,6 +109,7 @@ class DiffusionConfig:
     n_heads: int = 16
     n_layers: int = 8
     cond_dim: int = 128
+    
     cov_weight: float = 1.0
     cov_t_max: float = 0.3             # only low-t batch examples (one-step reconstruction
                                         # is trustworthy) are used for the covariance penalty
