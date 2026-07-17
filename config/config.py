@@ -29,9 +29,14 @@ or VP: dXt = (-0.5 * beta Xt + beta(t) * s'(t,xt))dt + sqrt(beta(t))dBt
 """
 Configuration file for the CDG Financial Time Series project
 """
+import os
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 import torch
+
+# Project root (parent of this config/ directory) — anchors data paths so
+# scripts work regardless of the current working directory
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def _default_device() -> str:
     if torch.cuda.is_available():
@@ -46,8 +51,9 @@ class DataConfig:
     """Data configuration"""
     # Where to load the data. Training/Testing split
     # Outlier handling -> winsorize upper and lower = % bounds to remove
-    csv_path: str = "explore/macro_data_new.csv"
-    ct_csv_path: str = "explore/cross_test_data.csv"
+    csv_path: str = os.path.join(_ROOT, "explore", "macro_data_new.csv")
+    ct_csv_path: str = os.path.join(_ROOT, "explore", "cross_test_data.csv")
+    latent_method: Optional[str] = "state_space"
 
     start_date : str = "2000-01-01"
     end_date: str = "2026-07-08"      # data window end (None = use all)
@@ -63,7 +69,6 @@ class DataConfig:
     train_end_date: str = None        # last day of train set (None = use test_days)
     winsorize_lower: float = 0.005
     winsorize_upper: float = 0.995
-    macro_window_tolerance: int = 1      # max days from window endpoint to accept a macro observation
 
     def __post_init__(self):
         if self.tickers is None:

@@ -244,7 +244,6 @@ import torch
 from typing import Tuple, List, Optional
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import get_default_config
 
 
 class DataProcessor:
@@ -486,31 +485,24 @@ class DataProcessor:
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Scan window indices [start_i, end_i) — window j starts at raw row
-        j*self.window_shift — for a macro observation within
-        macro_window_tolerance days of both window endpoints.
+        j*self.window_shift — keeping windows with a macro observation at both
+        window endpoints.
 
         valid_idx is 0-indexed relative to this range (i.e. directly indexes
         get_diffusion_data() for the train range, or X_test for the test range).
         """
-        cfg = get_default_config()
-        w   = cfg.data.macro_window_tolerance
-
         Z_start_list, Z_end_list, valid_idx_list = [], [], []
 
         for pos, w_idx in enumerate(range(start_i, end_i)):
             i = w_idx * self.window_shift
-            start_slice = macro_values[i : i + w + 1]
-            start_vals  = start_slice[~np.isnan(start_slice)]
+            z_start = macro_values[i]
+            z_end   = macro_values[i + self.seq_len - 1]
 
-            end_idx   = i + self.seq_len - 1
-            end_slice = macro_values[max(0, end_idx - w) : end_idx + 1]
-            end_vals  = end_slice[~np.isnan(end_slice)]
-
-            if len(start_vals) == 0 or len(end_vals) == 0:
+            if np.isnan(z_start) or np.isnan(z_end):
                 continue
 
-            Z_start_list.append(float(start_vals[0]))   # first obs near start
-            Z_end_list.append(float(end_vals[-1]))       # last obs near end
+            Z_start_list.append(float(z_start))
+            Z_end_list.append(float(z_end))
             valid_idx_list.append(pos)
 
         Z_start   = torch.tensor(Z_start_list, dtype=torch.float32)
@@ -522,8 +514,7 @@ class DataProcessor:
         """
         Extract Z_start and Z_end from the first ticker column (macro series)
         for the TRAINING windows. Only keeps windows where an actual macro
-        observation exists within macro_window_tolerance days of both the
-        start and end of the window.
+        observation exists at both the start and end of the window.
 
         Returns:
             Z_start   : (M,) standardized macro value near window start

@@ -29,6 +29,8 @@ dp = DataProcessor(
 )
 
 dp.load_returns()
+# tickers[0] is already the chosen conditioning series (latent state or raw
+# macro variable) — import_data.py bakes it into the csv at build time
 dp.r_dw = dp.df[_cfg.data.tickers[1:]]  # standardize/sequence on stock cols only
 dp.standardize()
 dp.winsorize()
@@ -116,7 +118,6 @@ print(f"Events ({event_type} vs {h_threshold:.4f}): {n_events} / {n_valid}  ({10
 
 # Test window event count
 cfg = _cfg
-w = cfg.data.macro_window_tolerance
 macro_col = cfg.data.tickers[0]
 macro_raw = dp.df[macro_col]
 z_mean = macro_raw.iloc[:-cfg.data.test_days].dropna().mean()
@@ -128,14 +129,12 @@ n_train = n_total - cfg.data.test_days
 test_metric, test_end_dates, test_event_list = [], [], []
 test_events, test_valid = 0, 0
 for i in range(n_train, n_total - dp.seq_len + 1):
-    start_slice = macro_std_vals[i : i + w + 1]
-    start_vals  = start_slice[~np.isnan(start_slice)]
-    end_idx     = i + dp.seq_len - 1
-    end_slice   = macro_std_vals[max(0, end_idx - w) : end_idx + 1]
-    end_vals    = end_slice[~np.isnan(end_slice)]
-    if len(start_vals) == 0 or len(end_vals) == 0:
+    z_start = macro_std_vals[i]
+    end_idx = i + dp.seq_len - 1
+    z_end   = macro_std_vals[end_idx]
+    if np.isnan(z_start) or np.isnan(z_end):
         continue
-    m, is_event = _event_metric_and_mask(float(start_vals[0]), float(end_vals[-1]), event_type, h_threshold)
+    m, is_event = _event_metric_and_mask(float(z_start), float(z_end), event_type, h_threshold)
     test_metric.append(m)
     test_event_list.append(bool(is_event))
     test_end_dates.append(dp.df.index[end_idx])
