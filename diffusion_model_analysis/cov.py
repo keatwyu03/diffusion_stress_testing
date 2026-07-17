@@ -19,6 +19,9 @@ data_processor = DataProcessor(
     weekday_col=config.data.weekday_col,
     seq_len=config.data.seq_len,
     test_days=config.data.test_days,
+    start_date=config.data.start_date,
+    end_date=config.data.end_date,
+    train_end_date=config.data.train_end_date,
     window_shift=config.data.window_shift,
     winsorize_lower=config.data.winsorize_lower,
     winsorize_upper=config.data.winsorize_upper,
@@ -36,22 +39,31 @@ X_test  = data_processor.X_test   # (N_test,  T, A)
 config.diffusion.in_channels  = n_assets
 config.diffusion.out_channels = n_assets
 
-# ── Event mask ────────────────────────────────────────────────────────────────
-def get_mask(X):
-    last_window = X[:, -config.hfunction.event_window:, config.hfunction.event_asset_idx]
-    if config.hfunction.event_type == "sum":
-        return last_window.sum(dim=1) <= config.hfunction.event_threshold
-    elif config.hfunction.event_type == "abs_change":
-        return (last_window[:, -1] - last_window[:, 0]).abs() >= config.hfunction.event_threshold
-    elif config.hfunction.event_type == "absval":
-        return last_window[:, -1].abs() >= config.hfunction.event_threshold
-    elif config.hfunction.event_type == "upper_change":
-        return (last_window[:, -1] - last_window[:, 0]) >= config.hfunction.event_threshold
-    elif config.hfunction.event_type == "lower_change":
-        return (last_window[:, -1] - last_window[:, 0]) <= -config.hfunction.event_threshold
+# ── Event mask — from the real macro/latent series, same as main.py ───────────
+# (X is stock-returns-only and has no macro channel, so the mask must come from
+# get_z_windows_*; the config threshold is a "top X%" fraction that must be
+# converted to a raw cutoff first)
+event_type  = config.hfunction.event_type
+h_threshold = data_processor.get_event_threshold_from_percentile(
+    config.hfunction.event_threshold, event_type)
+print(f"Event threshold: top {config.hfunction.event_threshold:.1%} -> "
+      f"{h_threshold:.4f} std ({event_type})")
 
-mask_train = get_mask(X_train)
-mask_test  = get_mask(X_test)
+def event_mask(Z_start, Z_end):
+    if event_type == "abs_change":
+        return (Z_end - Z_start).abs() >= h_threshold
+    elif event_type == "absval":
+        return Z_end.abs() >= h_threshold
+    elif event_type == "upper_change":
+        return Z_end - Z_start >= h_threshold
+    elif event_type == "lower_change":
+        return Z_end - Z_start <= -h_threshold
+    raise NotImplementedError(f"event_type={event_type!r}")
+
+Zs_tr, Ze_tr, vidx_tr = data_processor.get_z_windows_train_aligned()
+Zs_te, Ze_te, vidx_te = data_processor.get_z_windows_test()
+X_train_events = X_train[vidx_tr][event_mask(Zs_tr, Ze_tr)]
+X_test_events  = X_test[vidx_te][event_mask(Zs_te, Ze_te)]
 
 # ── Load generated samples (optional — only needed for the "Conditional
 # Generated" panel, which requires an h-function/ConditionalGenerator run) ─────
@@ -104,7 +116,7 @@ uncond = torch.cat(chunks, dim=0)  # (N, A, T)
 
 panels_train = [
     ("Real Train (all)",           X_train[:, -1, :].numpy()),
-    ("Real Train (event windows)", X_train[mask_train, -1, :].numpy()),
+    ("Real Train (event windows)", X_train_events[:, -1, :].numpy()),
     ("Unconditional Generated",    uncond[:, :, -1].numpy()),
 ]
 if gen_train is not None:
@@ -112,7 +124,7 @@ if gen_train is not None:
 
 panels_test = [
     ("Real Test (all)",            X_test[:, -1, :].numpy()),
-    ("Real Test (event windows)",  X_test[mask_test, -1, :].numpy()),
+    ("Real Test (event windows)",  X_test_events[:, -1, :].numpy()),
     ("Unconditional Generated",    uncond[:, :, -1].numpy()),
 ]
 if gen_test is not None:
@@ -159,10 +171,12 @@ def plot_matrices(panels, title, fname, vmin, vmax, fmt):
                         fontweight="bold", color="white" if abs(v) > 0.6 * abs(vmax) else "black")
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
-    event_lbl = tickers[config.hfunction.event_asset_idx].upper()
+    event_lbl = (tickers[config.hfunction.event_asset_idx].upper()
+                 if config.data.latent_method is None
+                 else f"latent ({config.data.latent_method})")
     fig.suptitle(
-        f"{title}\n(event: {event_lbl} {config.hfunction.event_type} ≥ {config.hfunction.event_threshold},"
-        f"  last-day returns)",
+        f"{title}\n(event: {event_lbl} {event_type} ≥ {h_threshold:.3f} std"
+        f" [top {config.hfunction.event_threshold:.0%}],  last-day returns)",
         fontsize=13, fontweight="bold"
     )
     fig.tight_layout()

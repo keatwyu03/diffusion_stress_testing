@@ -4,6 +4,7 @@ import torch
 import os
 import matplotlib.pyplot as plt
 from statsmodels.graphics.tsaplots import plot_acf
+from statsmodels.tsa.stattools import adfuller
 
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -220,3 +221,53 @@ for ax, data, title in [
 
 plt.tight_layout()
 plt.savefig(os.path.join(save_dir, "correlation_matrices.png"), dpi=150, bbox_inches="tight")
+
+# ── Conditional series — stationarity check ───────────────────────────────────
+# Is the conditioning series (tickers[0]) stationary? Constant mean via rolling
+# mean, constant variance via rolling std, persistence via ACF, plus an ADF test.
+cond_series = dp.df[_cfg.data.tickers[0]].dropna()
+roll_win = 252  # ~1 trading year
+
+roll_mean = cond_series.rolling(roll_win).mean()
+roll_std  = cond_series.rolling(roll_win).std()
+
+adf_stat, adf_p, *_ = adfuller(cond_series.values, autolag="AIC")
+adf_verdict = "stationary" if adf_p < 0.05 else "NON-stationary"
+print(f"\nConditional series ADF test: stat={adf_stat:.3f}, p={adf_p:.4f} "
+      f"-> {adf_verdict} at 5%")
+
+fig_cs, (ax_lvl, ax_var, ax_acf2) = plt.subplots(3, 1, figsize=(14, 12))
+
+ax_lvl.plot(cond_series.index, cond_series.values, linewidth=0.7, color="steelblue",
+            label="conditional series")
+ax_lvl.plot(roll_mean.index, roll_mean.values, color="darkorange", linewidth=1.6,
+            label=f"rolling mean ({roll_win}d)")
+ax_lvl.axhline(cond_series.mean(), color="black", linewidth=0.8, linestyle="--",
+               label="full-sample mean")
+ax_lvl.axvline(test_start_date, color="red", linestyle="--", linewidth=1.2, label="Test start")
+ax_lvl.set_ylabel("Level")
+cond_label = (_cfg.data.tickers[0] if _cfg.data.latent_method is None
+              else f"latent state — {_cfg.data.latent_method}")
+ax_lvl.set_title(f"Conditional Series ({cond_label}) — "
+                 f"ADF p={adf_p:.4f} ({adf_verdict} at 5%)",
+                 fontsize=11, fontweight="bold")
+ax_lvl.legend(fontsize=8)
+
+ax_var.plot(roll_std.index, roll_std.values, color="steelblue", linewidth=1.2,
+            label=f"rolling std ({roll_win}d)")
+ax_var.axhline(cond_series.std(), color="black", linewidth=0.8, linestyle="--",
+               label="full-sample std")
+ax_var.axvline(test_start_date, color="red", linestyle="--", linewidth=1.2)
+ax_var.set_ylabel("Std")
+ax_var.set_title("Rolling Standard Deviation — constant-variance check",
+                 fontsize=11, fontweight="bold")
+ax_var.legend(fontsize=8)
+
+plot_acf(cond_series.values, lags=120, ax=ax_acf2, title="")
+ax_acf2.set_title("ACF of Conditional Series — persistence / mean reversion",
+                  fontsize=11, fontweight="bold")
+ax_acf2.set_xlabel("Lag (days)")
+ax_acf2.set_ylabel("ACF")
+
+plt.tight_layout()
+plt.savefig(os.path.join(save_dir, "conditional_series.png"), dpi=150, bbox_inches="tight")
