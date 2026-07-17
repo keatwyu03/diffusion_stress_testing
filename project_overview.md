@@ -2,15 +2,33 @@
 
 ## What It Does
 
-Conditional Diffusion Generation (CDG) for financial time series. Trains a VP-SDE score model using a **dual-axis Transformer** architecture on financial returns, then conditions the reverse diffusion on a user-defined market event using Doob's h-transform. Portfolio strategies (min-variance, risk-parity, equal-weight) are evaluated on generated vs. real event windows.
+Conditional Diffusion Generation (CDG) for financial time series. Trains a VP-SDE score model using a **dual-axis Transformer** architecture on financial returns, then conditions the reverse diffusion on a user-defined market event using Doob's h-transform. The conditioning variable is a **daily latent macro state** estimated from monthly growth/inflation panels via a tracking regression + joint Kalman filter (new this session — see Latent State Estimation). Portfolio strategies (min-variance, risk-parity, equal-weight) are evaluated on generated vs. real event windows.
+
+---
+
+## Pipeline (top level)
+
+```
+latent_state_estimation/macro_importer.py   # step 0 (rare): refresh raw FRED macro panels
+explore/import_data.py                      # build dataset — bakes the conditioning series
+                                            # (latent state or raw FRED) into column 0
+explore/diagnosis.py                        # data/event sanity checks + stationarity
+main.py                                     # train diffusion + h-function → ckpt_new/
+diffusion_model_analysis/                   # model evaluation scripts
+evaluation/                                 # distribution / dependency metrics
+```
+
+Everything downstream of `import_data.py` **trusts that the first column of the CSV
+(`tickers[0]`) is the chosen conditioning series** — no other script runs the latent
+estimation or swaps columns.
 
 ---
 
 ## Directory Structure
 
 ```
-CDG_Finance/
-├── config/config.py                         # All hyperparameters as dataclasses
+CDG_Finance/Code/
+├── config/config.py                         # All hyperparameters as dataclasses; paths root-anchored via _ROOT
 ├── data/data_processor.py                   # Full preprocessing pipeline (note: file contains two DataProcessor class defs — second one is the current version)
 ├── models/
 │   ├── transformer_score.py                 # Dual-axis Transformer score network (primary score model)
@@ -23,28 +41,101 @@ CDG_Finance/
 │   ├── helpers.py                           # set_seed
 │   └── portfolio.py                         # Portfolio strategies + stats/plots
 ├── main.py                                  # Full end-to-end pipeline
-├── sample_insample.py                       # Load checkpoints, generate for train events
-├── sample_outsample.py                      # Load checkpoints, generate for test events
-├── compare_train_test_events.py             # Real train events vs real test events (no generation)
-├── analyze_regime.py                        # Sliding-window search for best train/test data window
+├── latent_state_estimation/
+│   ├── macro_importer.py                    # Downloads FRED macro panels → growth/inflation {macro,daily}.csv
+│   ├── tracking_regression.py               # PCA monthly factor + tracking regression → daily tracking portfolio u_t
+│   ├── state_space.py                       # StateSpace — vector-form daily-state Kalman filter (see below)
+│   ├── macro_main.py                        # LatentStateEstimator class ONLY (no script code)
+│   ├── growth_macro.csv / growth_daily.csv  # Raw macro panels (inputs to the estimator)
+│   └── inflation_macro.csv / inflation_daily.csv
 ├── diffusion_model_analysis/
-│   ├── unconditional_gen.py                 # Diagnostics table, marginal KDEs, pairwise joint contour plots
+│   ├── unconditional_gen.py                 # Diagnostics table, marginal KDEs
 │   ├── conditional_gen.py                   # Conditional vs real event window marginal KDEs + diagnostics table
 │   ├── cov.py                               # Correlation/covariance matrix comparison (real vs uncond vs cond)
-│   ├── cross_time.py                        # Cross-time (pre-2008) OOD generalization check
+│   ├── cross_time.py                        # Cross-time OOD generalization check
 │   ├── h_function_eval.py                   # H-function calibration check — bypasses sampling/guidance entirely
 │   └── losses.py                            # Score + H-function loss/accuracy curves (auto-discovers CSVs)
+├── evaluation/
+│   ├── distribution_metrics.py
+│   └── dependency_metric.py
 ├── explore/
-│   ├── import_data.py                       # Downloads FRED + yfinance data, writes macro_data_new.csv (no interpolation on macro series)
-│   └── macro_data_new.csv                   # t1yffm (raw, NaN where no obs) + AAPL/ORCL/MSFT/IBM log-returns
-├── ckpt_new/                                # Active checkpoint directory
-│   ├── diffusion_model.pt
-│   ├── hfunction.pt                         # h-function checkpoint (one-step or two-step, same path)
-│   ├── ell_function.pt                      # EllTransformer checkpoint (two-step only)
-│   ├── q_model.pt
-│   └── score_losses.csv                     # Written by diffusion_model.py after training
-└── run_training.sh
+│   ├── import_data.py                       # Builds macro_data_new.csv + cross_test_data.csv; runs LatentStateEstimator
+│   ├── diagnosis.py                         # Event/correlation/stationarity diagnostics → explore/diagnosis_plots/
+│   ├── macro_data_new.csv                   # conditioning series (col 0) + AAPL/ORCL/MSFT/IBM log-returns
+│   └── cross_test_data.csv                  # cross-period test window dataset
+└── ckpt_new/                                # Active checkpoint directory (created by training)
+    ├── diffusion_model.pt
+    ├── hfunction.pt                         # h-function checkpoint (one-step or two-step, same path)
+    ├── ell_function.pt                      # EllTransformer checkpoint (two-step only)
+    ├── q_model.pt
+    └── score_losses.csv                     # Written by diffusion_model.py after training
 ```
+
+**Deleted this session (2026-07-17)** — 16 stale root-level files: `example.py`, `generate_data.py`, `Stocks_logret.csv`, `analyze_regime.py`, `train.log`, `setup.py`, root `__init__.py`, `cleanup_wandb.sh`, `PRIVACY.md`, `run_training.sh`, `run_sampling.sh`, `run_sweep_pretrain.sh`, `sample_insample.py`, `sample_outsample.py`, `pretrain_and_plot.py`, `compare_train_test_events.py`. The root sample/analysis scripts were superseded by `diffusion_model_analysis/` + `evaluation/`. All recoverable from git.
+
+---
+
+## Latent State Estimation (`latent_state_estimation/`) — new this session
+
+The conditioning variable is no longer a raw FRED series but a **single daily latent
+macro state** estimated from monthly growth and inflation panels. Two stages per
+macro variable, then one joint filter across both:
+
+### Stage 1 — `TrackingRegression` (per variable: growth, inflation)
+- Monthly factor `z_m` = first principal component of the standardized monthly macro panel
+  (sign convention: positive loadings on average).
+- Tracking regression: OLS of `z_{m+1}` on `z_m` + monthly-summed daily asset returns
+  → betas → **daily tracking portfolio** `u_t = daily_returns @ betas`.
+
+### Stage 2 — `StateSpace` (joint, vector form)
+`state_space.py`'s `StateSpace(y, x)` was generalized in place from scalar to vector
+form: `y` = DataFrame of **n** monthly factors (growth + inflation), `x` = DataFrame of
+**k** daily tracking portfolios. **The state stays 2-dimensional `[s, c]`** — one common
+daily latent state `s_t` plus one intramonth cumulator `c_t`:
+
+```
+s_t = b0 + b1·s_{t-1} + Σ_j b2_j·x_{j,t-1} + η_t        (daily transition)
+c_t = γ_t·c_{t-1} + (same daily increment)               (γ=0 on first day of month)
+y_{j,m} = a0_j + a1_j·c_t + ε_j,  ε_j ~ N(0, σ²_j)      (each monthly factor observed
+                                                          at month end; NaN months skipped)
+```
+
+Parameters `[b0, b1, b2 (k), a0 (n), a1 (n), log σ² (n)]` (10 for k=n=2) fitted by MLE
+(prediction-error decomposition, Nelder-Mead). Both monthly factors act as two noisy
+sensors of the *same* cumulated latent state, weighted by their fitted signal-to-noise.
+Kalman update uses matrix form (`np.linalg.solve` / `slogdet`); with n=k=1 the class
+reduces **exactly** to the previous scalar version (verified to 1e-14 against the old
+implementation).
+
+Fitted (2026-07-17, full sample): loglik −1471.4, converged; `b1 ≈ 0.924` (persistent,
+mean-reverting daily state), `b2_growth ≈ 2.08`, `b2_inflation ≈ −0.55`, both `a1 > 0`.
+
+### `LatentStateEstimator` (`macro_main.py`)
+`macro_main.py` is **only** a class — importing it has no side effects.
+`LatentStateEstimator(method).fit()` returns the latent state as a daily `pd.Series`
+named `"latent"`. Fitted `TrackingRegression`s and the `StateSpace` remain accessible
+via `.trackers` / `.state_space` for diagnostics.
+
+`config.data.latent_method` selects the method:
+
+| Value | Meaning |
+|---|---|
+| `"state_space"` (default) | Joint Kalman filter — one latent state from both indicators/factors |
+| `"tracking_regression"` | Standardized average of the two daily tracking portfolios (no Kalman) |
+| `None` | No latent state — condition on the raw FRED macro series (`tickers[0]`) |
+
+**The estimator runs in exactly one place: `explore/import_data.py`**, which bakes the
+chosen series into the first column of `macro_data_new.csv` at build time. There is no
+`latent_states.csv` anymore (deleted) — the series lives only in the dataset CSV.
+
+### Stationarity of the conditioning series (from `diagnosis.py`)
+ADF test strongly rejects a unit root (stat −8.96, p ≈ 0.0000): **stationary in mean**
+(rolling mean hugs the full-sample mean, no drift). **Not stationary in variance**:
+252-day rolling std spikes ~3× in 2008–09 and ~5× in 2020 vs. a baseline of ~1
+(volatility clustering in crisis regimes). ACF decays geometrically to ~0 by lag 50,
+consistent with the fitted `b1 ≈ 0.92`. Consequence: events (latent upward spikes)
+cluster in crisis periods rather than arriving uniformly, so the test window's event
+rate depends on which regimes fall in it.
 
 ---
 
@@ -52,20 +143,33 @@ CDG_Finance/
 
 ### CSV: `explore/macro_data_new.csv`
 
-Generated by `explore/import_data.py`. Contains daily rows with:
+Generated by `explore/import_data.py`. **Always regenerated on every run** — the
+"found existing dataset, skipping download" logic was removed this session, so
+switching `latent_method` (or dates/tickers) takes effect by simply rerunning
+`import_data.py`. Contains daily rows with:
 
 | Column | Type | Description |
 |---|---|---|
-| `t1yffm` | Raw level, **no interpolation** — NaN on dates with no FRED observation | 1-year Treasury minus Fed Funds Rate spread |
-| `AAPL`, `ORCL`, `MSFT`, `IBM` | Log return | Daily stock log-returns from yfinance (start=2008-01-01) |
+| `T10YFF` (name = `tickers[0]`) | Conditioning series | **Content depends on `latent_method` at build time**: latent state (default) or the raw FRED series. NaN on days with no observation; no interpolation. Column *name* stays `tickers[0]` regardless of content. |
+| `AAPL`, `ORCL`, `MSFT`, `IBM` | Log return | Daily stock log-returns from yfinance |
 
-**Important:** `t1yffm` is stored raw with NaN where no observation exists. No linear interpolation or forward-fill is applied. `DataProcessor.get_z_windows()` handles the NaN-aware extraction of Z_start and Z_end per window.
+`cross_test_data.csv` (cross-period window, `ct_start_date`–`ct_end_date`) gets the
+same conditioning series. Caveat: the latent state only starts 2000-09 (macro panel
+coverage), so with a latent method the pre-2000-09 portion of the cross-test window
+drops out via `dropna()`.
 
 ### Tickers
 
 `config.data.tickers = ["T10YFF", "AAPL", "ORCL", "MSFT", "IBM"]` — 5 channels. `tickers[0]` is always the macro conditioning variable and is **excluded** from `X`/the diffusion channels — `r_dw = self.df[self.tickers[1:]]`, so `X`/`X_train`/`X_test` are stock-returns-only (4 channels) with no macro column at all. `n_assets = len(tickers) - 1` is derived dynamically in `main.py` and used to override `config.diffusion.in_channels`, `config.diffusion.out_channels`, and `config.hfunction.asset_dim`.
 
-**Important:** because the macro series lives only in `self.df`/`self.df_z`, not in `X`, any event-mask logic must read the macro value via `get_z_windows*()` (below) — indexing into `X[:, :, event_asset_idx]` silently reads a stock channel instead of the macro variable. This was a real bug found and fixed this session (see Experiments log).
+**Important:** because the macro series lives only in `self.df`/`self.df_z`, not in `X`, any event-mask logic must read the macro value via `get_z_windows*()` (below) — indexing into `X[:, :, event_asset_idx]` silently reads a stock channel instead of the macro variable. This bug was found in `main.py` etc. on 2026-07-08 and found **again** in `diffusion_model_analysis/cov.py` on 2026-07-17 (see Experiments log).
+
+### Paths — root-anchored (new this session)
+
+`config/config.py` computes `_ROOT` from its own file location and builds `csv_path` /
+`ct_csv_path` as absolute paths, so **every script works regardless of the current
+working directory** (previously, relative paths broke when running from inside a
+subdirectory).
 
 ### Preprocessing pipeline (`DataProcessor.process_all`)
 
@@ -73,20 +177,20 @@ Generated by `explore/import_data.py`. Contains daily rows with:
 2. ~~Remove weekday effect~~ — **disabled**: `r_dw = self.df[self.tickers[1:]]` (weekday removal is commented out; `self.weekday_mean` stays `None`)
 3. **Standardize using train-set stats only** — `mu_seq` and `sigma_seq` computed from train rows only (first `len - test_days` rows, or up to `train_end_date`). Applied as `z = (data - mu) / sigma` to all data. Prevents data leakage.
 4. Winsorize (clip at `winsorize_lower` / `winsorize_upper` percentiles; defaults 0.005/0.995)
-5. Create rolling `seq_len`-day windows → shape `(N, seq_len, channels)` for event detection, stepped by `config.data.window_shift` (default `1` = every day; `2` would slide the window forward 2 days at a time, roughly halving `N`)
-6. Train/test split: by `train_end_date` if set, else last `test_days` rows (default 1200)
+5. Create rolling `seq_len`-day windows → shape `(N, seq_len, channels)` for event detection, stepped by `config.data.window_shift` (default `1`)
+6. Train/test split: by `train_end_date` if set, else last `test_days` rows (default 2000)
 
 `get_diffusion_data()` returns transposed windows `(N, A, T)` from the winsorized data, training portion only. It has its own independent window-slicing loop (separate from `make_sequences()`'s), also stepped by `window_shift`.
 
-**`window_shift`** (`config.data.window_shift`, default `1`): controls the stride between consecutive windows. Threaded through three independently-coded window-scanning loops that all need to agree on it: `make_sequences()`, `get_diffusion_data()`, and `_scan_macro_windows()` (the latter converts a window *index* to a raw row offset via `i = w_idx * window_shift`, since its `start_i`/`end_i` args are window-index space, not row-offset space). `get_z_windows()`'s `n_train_windows` count is likewise `(n_train - seq_len) // window_shift + 1`, not a plain subtraction. Passed into every `DataProcessor(...)` construction call site across the codebase.
+**`window_shift`** (`config.data.window_shift`, default `1`): controls the stride between consecutive windows. Threaded through three independently-coded window-scanning loops that all need to agree on it: `make_sequences()`, `get_diffusion_data()`, and `_scan_macro_windows()` (the latter converts a window *index* to a raw row offset via `i = w_idx * window_shift`). `get_z_windows()`'s `n_train_windows` count is likewise `(n_train - seq_len) // window_shift + 1`.
 
-**Z-window extraction (macro `Z_start`/`Z_end` per window)** — several sibling methods, all built around `_macro_std_values_and_n_train()` + `_scan_macro_windows()`, using `config.data.macro_window_tolerance` (default `1`) as the max days from a window endpoint within which a real macro observation must exist:
+**Z-window extraction (macro `Z_start`/`Z_end` per window)** — several sibling methods, all built around `_macro_std_values_and_n_train()` + `_scan_macro_windows()`. **`macro_window_tolerance` was removed this session** — a window is now valid only if the conditioning series has an actual observation at **both** exact endpoints (no ±w-day search). With the (dense) latent series this keeps ~98% of windows; gaps are holiday NaNs.
 - `get_z_windows()` — aligned with `get_diffusion_data()` (has one extra trailing window vs. `X_train`).
 - `get_z_windows_train_aligned()` — aligned exactly with `X_train.shape[0]`; `valid_idx` indexes `X_train` directly. Use this (not `get_z_windows()`) whenever the mask must line up with `X_train`.
 - `get_z_windows_test()` — same idea, aligned exactly with `X_test.shape[0]`.
-- `get_event_threshold_from_percentile(top_fraction, event_type)` — converts a "top X%" fraction into the equivalent raw numeric threshold, computed from **train windows only** (no leakage). The quantile computation branches on `event_type` (see Event Condition section below) — folding to an absolute value before quantiling is only correct for the two-sided types (`abs_change`/`absval`); the one-sided types (`upper_change`/`lower_change`) need the quantile taken on the signed value instead, or the threshold silently corresponds to a different (larger) fraction than requested.
+- `get_event_threshold_from_percentile(top_fraction, event_type)` — converts a "top X%" fraction into the equivalent raw numeric threshold, computed from **train windows only** (no leakage). The quantile computation branches on `event_type` (see Event Condition section).
 
-All three `get_z_windows*` variants return `(Z_start, Z_end, valid_idx)`, where `valid_idx` filters out windows with no macro observation within tolerance of an endpoint.
+All three `get_z_windows*` variants return `(Z_start, Z_end, valid_idx)`, where `valid_idx` filters out windows lacking a conditioning-series observation at an endpoint.
 
 ---
 
@@ -99,18 +203,17 @@ The primary score network. A dual-axis Transformer conditioned on diffusion time
 - **Positional embeddings:** learnable temporal `(1, 1, T, D)` + per-asset `(1, A, 1, D)`
 - **Time conditioning:** Gaussian Fourier features → 2-layer MLP → `cond_dim`
 - **`DualAxisBlock`** (N of these):
-  1. Temporal self-attention: `(B*A, T, D)` — each asset over 64 time steps
+  1. Temporal self-attention: `(B*A, T, D)` — each asset over the window
   2. Cross-asset self-attention: `(B*T, A, D)` — all assets at each time step
   3. Position-wise FFN (GELU, 4× expansion)
   - Each sub-layer uses `AdaLN`: time embedding → scale + shift
 - **Output:** linear projection back to scalar per position → `ScoreOutput.sample` shape `(B, A, T)`
-- **Default params:** `embed_dim=128, n_heads=4, n_layers=6, cond_dim=128`
 
 ### 2. DiffusionModel (`models/diffusion_model.py`)
-- **Architecture:** Transformer (`arch="transformer"`) — config default is now transformer
+- **Architecture:** Transformer (`arch="transformer"`) — config default
 - **SDE type:** Variance Preserving (VP): `b_min=0.1`, `b_max=3.25`
-- **Loss:** Denoising score matching: `mean(sum((score * σ + z)², dim=(channels, seq)))`
-- **Optimizer:** AdamW + `ReduceLROnPlateau` (patience=50, factor=0.5). `weight_decay` (added this session, `config.diffusion.weight_decay`) is now an explicit, controllable `train()` param passed into `AdamW(..., weight_decay=weight_decay)` — previously it wasn't exposed at all, so `AdamW`'s own default (`0.01`) was silently applied with no way to turn it off (e.g. to test a deliberately-overfit regime).
+- **Loss:** Denoising score matching + covariance penalty (`cov_weight`, applied only to low-t batch examples via `cov_t_max`)
+- **Optimizer:** AdamW + `ReduceLROnPlateau` (patience=50, factor=0.5). `weight_decay` is an explicit `train()` param (`config.diffusion.weight_decay`, default 0.0)
 - **Loss logging:** saves `ckpt_new/score_losses.csv` (epoch, loss, lr) after training
 - **Checkpoint:** `ckpt_new/diffusion_model.pt`
 
@@ -118,45 +221,31 @@ The primary score network. A dual-axis Transformer conditioned on diffusion time
 
 **`"one"` — One-Step BCE (`models/hfunction_direct.py`)** — this is the trainer actually used by `main.py` (`config.hfunction.one_two_step = "one"`)
 - **Network:** `HFunctionTransformerDirect` — dual-axis Transformer with AdaLN time conditioning → raw logit (Sigmoid applied outside, or `return_logits=True` for loss computation)
-- **Positional embedding:** sinusoidal (`GaussianFourierFeatures` + small MLP) over normalized day index, not a fully-learned random `(1,1,T,D)` tensor — smoother, more data-efficient prior for temporal position
-- **Pooling:** explicit `[h_start, h_end, h_end - h_start]` concatenation (asset-averaged) fed to the head, **not** a mean over all 64 timesteps — since the label only depends on the window's start/end days, mean-pooling over all 64 days was diluting the relevant signal with 62 irrelevant days
+- **Positional embedding:** sinusoidal (`GaussianFourierFeatures` + small MLP) over normalized day index
+- **Pooling:** explicit `[h_start, h_end, h_end - h_start]` concatenation (asset-averaged) fed to the head — the label only depends on the window's start/end days
 - **Purpose:** Learn `h(t, y) = P(event | Y_t = y)` directly from real `(X, Z)` pairs
-- **Forward noising:** `Y_τ = α(τ)·X + σ(τ)·ε`, `τ ~ Uniform[0, h_t_max]` — capped at `h_t_max` (not the full `[0,1]`), since beyond that `Y_τ` is near-pure noise and carries no learnable signal about the event
-- **Label (`_compute_labels`):** branches on `event_type` — `"abs_change"`: `|Z_end - Z_start| >= event_threshold`; `"upper_change"`: `Z_end - Z_start >= event_threshold`; `"lower_change"`: `Z_end - Z_start <= -event_threshold`; `"absval"`: `|Z_end| >= event_threshold`; `"sum"` raises `NotImplementedError` (not computable from `Z_start`/`Z_end` endpoints alone — would need the full window)
-- **Loss:** `BCEWithLogitsLoss(pos_weight = n_neg/n_pos)` — upweights the rare positive class; `pos_weight` is stored on the trainer and persisted in the checkpoint (`{"state_dict":..., "pos_weight":...}`) so inference can know what bias was applied
-- **Training loop:** real per-epoch shuffling (`torch.randperm`) with an inner mini-batch loop over `h_mini_batch_size` — every window seen exactly once per epoch, not resampled with replacement
+- **Forward noising:** `Y_τ = α(τ)·X + σ(τ)·ε`, `τ ~ Uniform[0, h_t_max]`
+- **Label (`_compute_labels`):** branches on `event_type` (`abs_change`/`upper_change`/`lower_change`/`absval`; `"sum"` raises `NotImplementedError`)
+- **Loss:** `BCEWithLogitsLoss(pos_weight = n_neg/n_pos)`; `pos_weight` persisted in the checkpoint
+- **Training loop:** real per-epoch shuffling (`torch.randperm`) with mini-batches
 - **Checkpoint:** `ckpt_new/hfunction.pt`
-- **Note:** `constraint_mode`/`reward_sharpness` (soft sigmoid-reward labels) exist in `HFunctionConfig` but are **not wired into this trainer** — `_compute_labels()` always produces hard 0/1 labels regardless of `constraint_mode`. Only the legacy `models/hfunction.py` implements the soft branch.
+- **Note:** `constraint_mode`/`reward_sharpness` (soft labels) are **not wired into this trainer** — only the legacy `models/hfunction.py` implements the soft branch.
 
 **`"two"` — Two-Step MSE (`models/hfunction_twostep.py`)**
 
-Step 1 — `EllTrainer` trains `EllTransformer`:
-- **Network:** `EllTransformer` — dual-axis Transformer with standard LayerNorm (no time conditioning) → Sigmoid
-- **Purpose:** Learn `ℓ_S(x) = P(Z ∈ S | X = x)` from real `(X, B)` pairs — pure supervised classifier on terminal windows
-- **Loss:** weighted `BCELoss(reduction='none')` with `pos_weight = n_neg/n_pos`
-- **Checkpoint:** `ckpt_new/ell_function.pt`
+Step 1 — `EllTrainer` trains `EllTransformer`: learns `ℓ_S(x) = P(Z ∈ S | X = x)` from real `(X, B)` pairs; weighted BCE; `ckpt_new/ell_function.pt`.
 
-Step 2 — `HFunctionTwoStepTrainer` trains `HFunctionTransformerTwoStep`:
-- **Network:** `HFunctionTransformerTwoStep` — dual-axis Transformer with `DualAxisBlock` + AdaLN time conditioning → Sigmoid
-- **Purpose:** Learn `h_φ(t, Y_t)` to minimize `(1/T) ∫₀ᵀ E_{P_θ}[(h_φ(t,Y_t) - ℓ_S(Y_T))²] dt`
-- **Training:** generates synthetic paths from frozen `DiffusionModel`, labels terminal states with frozen `EllTransformer`, samples random `τ`, regresses with MSE
-- **Loss:** `MSELoss` — soft labels from `EllTransformer`, no class balancing needed
-- **Checkpoint:** `ckpt_new/hfunction.pt`
+Step 2 — `HFunctionTwoStepTrainer` trains `HFunctionTransformerTwoStep`: generates synthetic paths from the frozen `DiffusionModel`, labels terminal states with the frozen `EllTransformer`, regresses `h_φ(t, Y_t)` with MSE; `ckpt_new/hfunction.pt`.
 
 Both paths save to `ckpt_new/hfunction.pt` and pass `h_trainer.model` to `ConditionalGenerator`.
 
-### 3c. HFunctionTrainer (`models/hfunction.py`) — **Legacy, kept for reference**
-- Two-step approach using hard binary labels on synthetic paths — superseded by `hfunction_twostep.py`
-
 ### 4. ConditionalGenerator (`models/conditional_generator.py`)
 - **Guided reverse SDE:** base drift `g² * score` + guidance `(1 + eta) * g² * (∇H / H)`
-- **`h_t_max` cutoff:** guidance is only added when `time_step <= h_t_max` (matches the range `h` was trained on) — beyond that, only the base score drift is used
-- **`pos_weight` param:** constructor accepts it (to invert the training-time class-upweighting bias) but the correction is **not applied** — guidance uses `h`'s raw output directly, matching the reference implementation this was aligned to. `pos_weight` is currently unused inside `_sample_batch`.
-- **Eval mode:** `_sample_batch` explicitly calls `.eval()` on `score_model`/`h_model`/`q_model` at the top — previously missing, meaning dropout/BatchNorm (if any) were never disabled at sampling time
-- **`stop_early_steps`:** stops the reverse SDE this many steps before reaching `t=eps`, leaving residual noise/diversity instead of fully resolving to the sharp end state
-- **`_sample_batch`:** derives `n_assets` and `seq_len` dynamically from `score_model.n_assets` and `score_model.seq_len` — no hardcoded shapes
-- **Q-model (`GradientHUNet`):** optional; approximates `∇H / H` to avoid autograd at sampling time
-- **Checkpoint:** `ckpt_new/q_model.pt`
+- **`h_t_max` cutoff:** guidance is only added when `time_step <= h_t_max` (matches the range `h` was trained on)
+- **`pos_weight` param:** constructor accepts it but the correction is **not applied** — guidance uses `h`'s raw output directly (matches the reference implementation)
+- **`stop_early_steps`:** stops the reverse SDE this many steps before `t=eps`, leaving residual diversity
+- **`_sample_batch`:** derives `n_assets`/`seq_len` dynamically from the score model; calls `.eval()` on all models
+- **Q-model:** optional; approximates `∇H / H` to avoid autograd at sampling time; `ckpt_new/q_model.pt`
 
 ---
 
@@ -166,44 +255,36 @@ Configured in `HFunctionConfig`:
 
 | Field | Current Default | Meaning |
 |---|---|---|
-| `event_type` | `"upper_change"` | `Z_end - Z_start >= threshold` (one-sided: only large upward macro moves) |
-| `event_asset_idx` | `0` | Watches `T10YFF` (index 0 in tickers — the macro series, not a stock) |
-| `event_window` | `10` | Lookback period in days (2 trading weeks) |
+| `event_type` | `"upper_change"` | `Z_end - Z_start >= threshold` (one-sided: only large upward moves of the conditioning series) |
+| `event_asset_idx` | `0` | Watches `tickers[0]` — the conditioning series (latent state), not a stock |
+| `event_window` | `10` | Lookback period in days (= `seq_len`) |
 | `event_threshold` | `0.10` | **Percentage/quantile semantics** — "top X%" (e.g. `0.10` = top 10% rarest), **not** a raw standardized-units cutoff |
 | `h_t_max` | `0.6` | Cap on τ for both training the classifier and applying guidance at sampling time |
-| `constraint_mode` | `"hard"` | Hard Doob h-constraint — only implemented in legacy `hfunction.py`, not `hfunction_direct.py` (see Models §3) |
+| `constraint_mode` | `"hard"` | Hard Doob h-constraint — only implemented in legacy `hfunction.py` |
 
-**Why percentage, not raw standardized units:** `Z_start`/`Z_end` are two points on a slow-moving macro series close together in time, so they're highly correlated — `Var(Z_end - Z_start)` is much smaller than 1, meaning a raw standardized-unit threshold doesn't correspond to simple single-normal-variable percentile intuition. The percentage is computed from **train windows only** (no leakage) via `data_processor.get_event_threshold_from_percentile(top_fraction, event_type)`, then converted **once** to the equivalent raw numeric cutoff right after `process_all()`:
+**Why percentage, not raw standardized units:** `Z_start`/`Z_end` are two points close together in time on a persistent series, so they're highly correlated — `Var(Z_end - Z_start)` is much smaller than 1 and raw-unit thresholds don't correspond to percentile intuition. The fraction is converted **once** to a raw cutoff via `get_event_threshold_from_percentile(top_fraction, event_type)` (train windows only, no leakage). With the current latent-state data: top 10% → **≈ 1.207 std**, giving 421 train / 226 test events.
 
-```python
-event_top_fraction = config.hfunction.event_threshold
-config.hfunction.event_threshold = data_processor.get_event_threshold_from_percentile(
-    event_top_fraction, config.hfunction.event_type
-)
-```
-
-Every downstream consumer reads the same mutated `config.hfunction.event_threshold` field afterward, so all comparisons stay consistent. This conversion (now passing `event_type` through) is duplicated in `main.py`, `diffusion_model_analysis/conditional_gen.py`, `diffusion_model_analysis/h_function_eval.py`, `sample_insample.py`, `sample_outsample.py`, `compare_train_test_events.py`, and `explore/import_data.py`.
+The conversion + mask-from-macro-series pattern is used by every consumer: `main.py`, `explore/diagnosis.py`, `diffusion_model_analysis/{cov,conditional_gen,h_function_eval}.py`. (The former root-level sample/compare scripts that also did this were deleted this session.)
 
 **Event types:**
-- `"abs_change"` (renamed from `"change"` this session): `|Z_end - Z_start| >= threshold`
-- `"upper_change"` (added this session): `Z_end - Z_start >= threshold` — one-sided, only large *positive* moves
-- `"lower_change"` (added this session): `Z_end - Z_start <= -threshold` — one-sided, only large *negative* moves (note the negated threshold — comparing against `+threshold` instead is a real bug, since `event_threshold` is always a positive magnitude from `get_event_threshold_from_percentile`, and `diff <= +threshold` is true for almost the entire distribution rather than just the rare negative tail)
+- `"abs_change"`: `|Z_end - Z_start| >= threshold`
+- `"upper_change"` (default): `Z_end - Z_start >= threshold` — one-sided positive
+- `"lower_change"`: `Z_end - Z_start <= -threshold` — one-sided negative (note the negated threshold)
 - `"absval"`: `|Z_end| >= threshold`
-- `"sum"`: only implemented in the legacy `models/hfunction.py` path (needs the full window, not just endpoints) — every other consumer raises `NotImplementedError` for `"sum"`, since `get_z_windows*()` only returns `Z_start`/`Z_end` endpoints, not the full window
+- `"sum"`: legacy `models/hfunction.py` only
 
-**`get_event_threshold_from_percentile`'s quantile computation also branches on `event_type`** (fixed this session — previously it always computed the quantile off `|Z_end-Z_start|` regardless of type). For the one-sided types, folding to an absolute value before quantiling mixes both tails together and no longer corresponds to "top X%" of that one-sided metric — e.g. requesting the top 10% of `upper_change` events used to actually select roughly the top 20% (both tails), since a one-sided threshold calibrated against `|diff|` captures the mirror-image tail too when compared against the signed value elsewhere. Now: `abs_change`/`absval` take the quantile of the absolute value (unchanged), `upper_change` takes `quantile(signed_diffs, 1-top_fraction)`, `lower_change` takes `-quantile(signed_diffs, top_fraction)`.
+**Quantile computation branches on `event_type`** (fixed 2026-07-14): `abs_change`/`absval` take the quantile of the absolute value; `upper_change` takes `quantile(signed_diffs, 1-top_fraction)`; `lower_change` takes `-quantile(signed_diffs, top_fraction)`.
 
-**Mask/label logic is now macro-series-based, not `X`-based** — a real bug fixed this session: masks were previously read from `X[:, :, event_asset_idx]`, but `X` is stock-returns-only (macro is excluded from `X` entirely, see Data section). Masks/labels must come from `Z_start`/`Z_end` via `get_z_windows_train_aligned()` / `get_z_windows_test()` instead. Applied consistently in:
-- `main.py` (train + test event detection, Step 4)
-- `models/hfunction_direct.py` (`_compute_labels`, now branches on `event_type` — see Models §3)
-- `diffusion_model_analysis/conditional_gen.py`, `h_function_eval.py`
-- `sample_insample.py`, `sample_outsample.py`, `compare_train_test_events.py`
+**Mask/label logic must be macro-series-based, not `X`-based** — masks come from `Z_start`/`Z_end` via `get_z_windows_train_aligned()` / `get_z_windows_test()`, never from `X[:, :, event_asset_idx]` (X has no macro channel). Fixed in main.py & co. on 2026-07-08; the same bug was found and fixed in `cov.py` on 2026-07-17.
 
 ---
 
 ## Pipeline (main.py)
 
 ```
+Step 0 (separate): explore/import_data.py — build macro_data_new.csv with the
+         conditioning series in column 0 (runs LatentStateEstimator per
+         config.data.latent_method; always regenerates)
 Step 1: DataProcessor.process_all()
          → weekday removal skipped; standardize with train-only mu/sigma
          → event_threshold: top-X% fraction converted to raw numeric cutoff
@@ -220,82 +301,93 @@ Step 4: Extract event masks (train + test) — from Z_start/Z_end (get_z_windows
          get_z_windows_test), NOT from X (X has no macro channel)
 Step 5: ConditionalGenerator.generate() using h_trainer.model as h_model
          → num_samples = config.conditional.n_gen_samples (decoupled from real event
-           count, to reduce Monte Carlo noise in the generated-side KDE comparison)
-         → stop_early_steps applied; pos_weight passed through (see Models §4) but
-           not currently used to correct guidance
+           count, to reduce Monte Carlo noise in the generated-side comparison)
          → generated_samples_train.pt, generated_samples_test.pt
 Step 6: PortfolioAnalyzer → results/
 ```
 
-**CLI flags:**
-- `--skip-diffusion-training` — load from `ckpt_new/diffusion_model.pt`
-- `--skip-hfunction-training` — load from `ckpt_new/hfunction_direct.pt`
-- `--skip-qmodel-training` — skip Q-model
-- `--skip-conditional` — exit after step 4
-- `--train-q-model` — force Q-model training
-- `--no-wandb` — disable W&B logging
+**CLI flags:** `--skip-diffusion-training`, `--skip-hfunction-training`, `--skip-qmodel-training`, `--skip-conditional`, `--train-q-model`, `--no-wandb`
+
+**Interpreter note:** `/usr/local/bin/python3` (the VSCode default here) now has sklearn installed (added this session); the conda `~/anaconda3/bin/python3` also works. The `(base)` prompt prefix does not apply when invoking `/usr/local/bin/python3` by absolute path.
 
 ---
 
-## Config Defaults Summary
+## Config Defaults Summary (current)
 
 ```python
 # Data
-csv_path                = "explore/macro_data_new.csv"
-tickers                 = ["T10YFF", "AAPL", "ORCL", "MSFT", "IBM"]   # 5 entries; tickers[0] is macro Z, excluded from X (4 asset channels)
-start_date              = "2008-01-01"
-seq_len                 = 64
-test_days               = 1200                                        # used only when train_end_date is None
-winsorize_lower         = 0.005
-winsorize_upper         = 0.995
-macro_window_tolerance  = 1        # max days from window endpoint to accept a macro observation
+csv_path        = <ROOT>/explore/macro_data_new.csv    # root-anchored absolute path
+ct_csv_path     = <ROOT>/explore/cross_test_data.csv
+latent_method   = "state_space"    # "state_space" | "tracking_regression" | None
+tickers         = ["T10YFF", "AAPL", "ORCL", "MSFT", "IBM"]  # tickers[0] = conditioning series, excluded from X
+start_date      = "2000-01-01"
+end_date        = "2026-07-08"
+ct_start_date   = "1998-01-01"; ct_end_date = "2007-12-31"
+window_shift    = 1
+seq_len         = 10
+test_days       = 2000             # used only when train_end_date is None
+winsorize_lower = 0.005; winsorize_upper = 0.995
 
 # Diffusion
-in_channels=4, out_channels=4      # overridden dynamically in main.py to n_assets=4
-sample_size=64
+in_channels=4, out_channels=4      # overridden dynamically in main.py to n_assets
+sample_size=10
 arch="transformer"
 b_min=0.1, b_max=3.25
-embed_dim=128, n_heads=4, n_layers=6, cond_dim=128
-n_epochs=500, batch_size=75, lr=1e-4, num_steps=200
+embed_dim=128, n_heads=16, n_layers=8, cond_dim=128
+n_epochs=750, batch_size=75, lr=1e-4, weight_decay=0.0, num_steps=500
+cov_weight=1.0, cov_t_max=0.3
 
 # H-Function (HFunctionDirectTrainer — one_two_step="one" is the active path)
-asset_dim=4                        # overridden dynamically in main.py to n_assets=4
-time_steps=64, embed_dim=64, n_heads=4, n_layers=2, cond_dim=64, dropout=0.0
-h_t_max=0.6                         # cap on tau for both training and guidance
-event_type="change", event_asset_idx=0, event_window=64
-event_threshold=0.10                # top 10% of |Z_end-Z_start| — percentage, converted to raw at startup
-constraint_mode="hard"              # not wired into hfunction_direct.py; legacy hfunction.py only
-one_two_step="one"                  # "one" = direct BCE, "two" = two-step MSE
-n_epochs=1000, lr=1e-4, weight_decay=5e-4, scheduler_patience=75
+asset_dim=4                        # overridden dynamically in main.py
+time_steps=10, embed_dim=64, n_heads=4, n_layers=2, cond_dim=64, dropout=0.0
+h_t_max=0.6
+event_type="upper_change", event_asset_idx=0, event_window=10
+event_threshold=0.10               # top 10% — percentage, converted to raw at startup (≈1.207 std currently)
+constraint_mode="hard"             # not wired into hfunction_direct.py; legacy hfunction.py only
+one_two_step="one"
+n_epochs=50, lr=1e-4, weight_decay=5e-4, scheduler_patience=75
 
 # Conditional Gen
-batch_size=32, num_steps=200, stoch=0.5, eta=0
+batch_size=32, num_steps=500, stoch=0.5, eta=0
 use_q_model=False
-stop_early_steps=20                 # stop this many steps before t=eps, leaving residual diversity
-n_gen_samples=2000                  # decoupled from real event count, to reduce generation-side MC noise
+stop_early_steps=20
+n_gen_samples=2000                 # decoupled from real event count (generated-side MC noise)
+
+# Portfolio
+window_for_cov=54, last_days_sum=5
 ```
 
 ---
 
+## Diagnostics (`explore/diagnosis.py`)
+
+Reads the dataset CSV as-is (column 0 = conditioning series) and writes to
+`explore/diagnosis_plots/`:
+
+- **`winsorized_standardized_returns.png`** — per-stock standardized return series with test-start marker
+- **`acf_squared_residuals.png`** — ACF of squared residuals (volatility clustering)
+- **`event_detection.png`** — ΔZ scatter for train/test windows with event threshold line; prints valid-window and event counts
+- **`correlation_matrices.png`** — **2×2** last-day-return correlation heatmaps (new layout this session): top-left train-unconditional, top-right train-conditional (event windows), bottom-left test-unconditional, bottom-right test-conditional. Current data: conditioning raises average off-diagonal correlation ~0.45→0.56 in train, directionally consistent in test (n=226, so ±0.13 sampling noise per pair).
+- **`conditional_series.png`** — stationarity check for the conditioning series (new this session): level + 252-day rolling mean, rolling std, ACF (120 lags), and ADF test verdict in the title (also printed to console).
+
+Note the **unconditional** correlation baseline shifts between train and test (e.g.
+AAPL–MSFT 0.40 train vs 0.67 test — mega-cap era regime drift). When judging
+out-of-sample generation, part of any gap is this drift, not conditioning failure.
+
 ## Analysis Scripts (`diffusion_model_analysis/`)
 
-All scripts run from the **project root** (not from inside the subdirectory). All outputs save to `diffusion_model_analysis/results/`.
+All scripts run from the **project root**. All outputs save to `diffusion_model_analysis/results/`.
 
-```bash
-python diffusion_model_analysis/losses.py
-python diffusion_model_analysis/unconditional_gen.py
-python diffusion_model_analysis/conditional_gen.py
-python diffusion_model_analysis/cov.py
-python diffusion_model_analysis/h_function_eval.py
-python diffusion_model_analysis/cross_time.py
-```
+- **`unconditional_gen.py`** — diagnostics table + marginal KDEs. Generates 2000 unconditional samples.
+- **`conditional_gen.py`** — conditional vs real event window KDEs + diagnostics table. Loads pre-generated `.pt` files from root.
+- **`cov.py`** — correlation/covariance heatmaps (real all / real events / uncond generated / cond generated). Event mask rebuilt this session (see Experiments 2026-07-17): now sourced from the conditioning series via `get_z_windows_*` with the percentile-converted threshold, matching main.py/diagnosis.py exactly (421 train / 226 test events). "Conditional Generated" panel (needs `generated_samples_*.pt`) remains optional.
+- **`h_function_eval.py`** — forward-noises real windows at fixed τ and reports `h_model` output split by true label (calibration check, no sampling).
+- **`cross_time.py`** — cross-time OOD generalization check on `ct_csv_path`.
+- **`losses.py`** — auto-discovers `ckpt_new/*.csv` loss curves.
 
-- **`unconditional_gen.py`** — diagnostics table + marginal KDEs + pairwise joint contour plots. Generates 2000 unconditional samples in batches of 128. Dynamically sets `config.diffusion.in/out_channels = n_assets`.
-- **`conditional_gen.py`** — conditional vs real event window KDEs + diagnostics table (mean/std/quantiles, mirrors `unconditional_gen.py`'s style). Loads pre-generated `.pt` files from root — no model inference needed. Mask now built from `Z_start`/`Z_end`, not `X`.
-- **`cov.py`** — correlation/covariance matrix heatmaps (up to 4 panels: real all / real events / uncond generated / cond generated). Generates 2000 unconditional samples in batches of 128. The "Conditional Generated" panel and its `generated_samples_{train,test}.pt` loading are now optional (fixed this session) — if those files don't exist yet (e.g. no h-function/`ConditionalGenerator` run has happened), it prints a note and falls back to 3 panels instead of crashing on `torch.load`. `plot_matrices()`'s subplot grid sizes itself dynamically to however many panels are actually available, rather than assuming a fixed 2×2 layout.
-- **`h_function_eval.py`** — bypasses sampling/guidance entirely; forward-noises real train/test windows at fixed τ values and reports `h_model(y_τ, τ)` split by true label, to check whether `h` itself is well-calibrated independent of the guidance formula.
-- **`cross_time.py`** — cross-time (pre-2008) OOD generalization check.
-- **`losses.py`** — auto-discovers `ckpt_new/score_losses.csv` and `ckpt_new/h_losses.csv`. Requires at least one training run to exist since these are written by `diffusion_model.py`/`hfunction_direct.py` at the end of training.
+**Warning:** the other analysis scripts may still contain the old `X`-based event-mask
+pattern that was fixed in `cov.py` this session — audit `h_function_eval.py`,
+`conditional_gen.py`, `cross_time.py` before trusting their event splits.
 
 ---
 
@@ -303,26 +395,32 @@ python diffusion_model_analysis/cross_time.py
 
 | Tensor | Shape | Notes |
 |---|---|---|
-| `X_train` / `X_test` | `(N, 64, A)` | Channels-last; from `make_sequences()` using `df_z` |
-| Diffusion training data | `(N, A, 64)` | Channels-first; from `get_diffusion_data()` using `df_z_wins` |
-| `generated_samples_*.pt` | `(N, A, 64)` | Output of `ConditionalGenerator` |
-| H-function input | `(B, A, 64)` | Channels-first (same as diffusion) |
+| `X_train` / `X_test` | `(N, seq_len, A)` | Channels-last; from `make_sequences()` using `df_z`; seq_len=10 |
+| Diffusion training data | `(N, A, seq_len)` | Channels-first; from `get_diffusion_data()` using `df_z_wins` |
+| `generated_samples_*.pt` | `(N, A, seq_len)` | Output of `ConditionalGenerator` |
+| H-function input | `(B, A, seq_len)` | Channels-first (same as diffusion) |
 
 ---
 
 ## Known Issues / Gotchas
 
-1. **Duplicate `DataProcessor` in `data/data_processor.py`:** Two complete class definitions in one file (first is commented out, ~lines 13-247; active one starts at line 253). Should be cleaned up.
+1. **Duplicate `DataProcessor` in `data/data_processor.py`:** Two complete class definitions in one file (first is commented out; active one is the second). Should be cleaned up.
 
-2. **`invert_samples()` doesn't add back `mu_seq`:** Since we standardize as `z = (data - mu) / sigma`, the inverse should be `r = z * sigma + mu`. `invert_samples()` (line ~599) currently only does `r_dw_t = z_seq[t] * sigma_seq`, no `+ mu_seq` term. Portfolio analysis using this method will have a mean offset for any asset with non-zero mean.
+2. **`invert_samples()` doesn't add back `mu_seq`:** Since we standardize as `z = (data - mu) / sigma`, the inverse should be `r = z * sigma + mu`. `invert_samples()` currently only does `r_dw_t = z_seq[t] * sigma_seq`, no `+ mu_seq` term.
 
-3. **`invert_samples()` references `self.weekday_mean`:** Weekday removal is disabled (`self.weekday_mean` stays `None` since `remove_weekday_effect()` is never called from `process_all()`). Calling `invert_samples()` will crash with `AttributeError`.
+3. **`invert_samples()` references `self.weekday_mean`:** weekday removal is disabled, so `self.weekday_mean` stays `None`; calling `invert_samples()` will crash with `AttributeError`.
 
-4. **`hfunction_direct.py`'s `_compute_labels()` now respects `event_type`** (fixed this session — see Experiments log), but **`constraint_mode`/`reward_sharpness` (soft labels) are still not wired in** — only the legacy `models/hfunction.py` implements the soft-sigmoid-reward branch. Setting `constraint_mode="soft"` in config currently has no effect on the active training path.
+4. **`constraint_mode`/`reward_sharpness` (soft labels) are not wired into `hfunction_direct.py`** — only the legacy `models/hfunction.py` implements the soft branch. Setting `constraint_mode="soft"` currently has no effect on the active training path.
 
-5. **Conditional generation is fundamentally data-limited at rare event thresholds.** Diagnosed this session: at `event_threshold` set to the top ~10% rarest changes, there are only ~138 positive real training windows from ~12 distinct historical episodes — not enough distinct information for `h` to produce well-calibrated guidance, causing conditional generation to be visibly narrower than real event-window data. Confirmed via a controlled experiment at a much less rare threshold (top ~50%, ~1658 positive examples): the std-ratio gap closed substantially. No architecture or sampling-hyperparameter change (capacity, dropout, `eta`, `stoch`, `h_t_max`, epochs) fixed this at the rare threshold — only more positive data did. See Experiments log for the full diagnosis and untried next steps (soft labels, synthetic-trajectory training data for `h`).
+5. **Conditional generation is fundamentally data-limited at rare event thresholds** (diagnosed 2026-07-08): at top-10% thresholds there are only a few hundred positive train windows from ~a dozen historical episodes. Untried levers: soft labels, training `h` on synthetic diffusion-generated trajectories.
 
-6. **Score model's own baseline under-dispersion:** unconditional generation is itself somewhat under-dispersed vs. real data (~65-79% std ratio) even before any conditioning. Accepted as "close enough" for now — not being actively chased via further diffusion-model retraining.
+6. **Score model's own baseline under-dispersion:** unconditional generation is somewhat under-dispersed vs. real (~65-79% std ratio) before any conditioning. Accepted for now.
+
+7. **Checkpoints are data-tied:** `ckpt_new/` doesn't currently exist (nothing trained since the latent-state dataset rebuild); the old `checkpoints/` directory holds stale February-era weights that no current code loads. Retrain via `main.py` after any dataset/`latent_method` change.
+
+8. **Config `latent_method` vs. CSV content can drift:** the dataset's conditioning column is whatever `import_data.py` last baked in; scripts *label* plots from the config value. After changing `latent_method`, rerun `import_data.py` to keep them in sync.
+
+9. **Latent state coverage starts 2000-09** — the cross-test window (1998-01-01 start) loses its pre-2000-09 rows when a latent method is active.
 
 ---
 
@@ -330,7 +428,7 @@ python diffusion_model_analysis/cross_time.py
 
 ### Setup
 
-Let `(X, Z) ~ π` where `X ∈ R^d` is the asset return path and `Z` is an external variable (e.g., macro index). For an event `S` in the state space of `Z`, the target terminal law is:
+Let `(X, Z) ~ π` where `X ∈ R^d` is the asset return path and `Z` is an external variable (the latent macro state). For an event `S` in the state space of `Z`, the target terminal law is:
 
 ```
 π^S_X(dx) = P_π(X ∈ dx | Z ∈ S)
@@ -364,9 +462,9 @@ This is the Doob h-transform: the score drift is augmented by `a ∇ log h`. The
 
 ### Two Approaches to Learning h
 
-#### Approach 1 — Two-Step MSE (current `hfunction.py`)
+#### Approach 1 — Two-Step MSE (`hfunction_twostep.py`)
 
-Sample noisy trajectories from the frozen diffusion model, label terminal states with `ℓ_S(Y_T)` (binary 0/1 from the event condition), and regress:
+Sample noisy trajectories from the frozen diffusion model, label terminal states with `ℓ_S(Y_T)`, and regress:
 
 ```
 ϕ* = argmin_ϕ  (1/T) ∫₀ᵀ E_{Y_{0:T} ~ P_θ} [(h_ϕ(t, Y_t) - ℓ_S(Y_T))²] dt
@@ -388,7 +486,7 @@ where `B = 1{Z ∈ S}`. The population minimizer satisfies:
 h_{ϕ*}(t, y) = P(Z ∈ S | Y_t = y) = E[ℓ_S(Y_T) | Y_t = y] = h(t, y)
 ```
 
-Mathematically equivalent to Approach 1 when `p_θ = p_X`; combines the two steps (learn `ℓ_S` + propagate) into one. Under model mismatch the two-step MSE is safer.
+Mathematically equivalent to Approach 1 when `p_θ = p_X`; combines the two steps into one. Under model mismatch the two-step MSE is safer.
 
 ### Inference (Both Approaches)
 
@@ -426,79 +524,65 @@ AdaLN: `LayerNorm(x) * (1 + scale(t)) + shift(t)` where scale/shift come from a 
 
 ## Experiments
 
+### 2026-07-17 — Latent-state conditioning pipeline, vector-form Kalman filter, codebase cleanup, cov.py mask bug
+
+**Latent macro state replaces the raw FRED series as the conditioning variable.**
+- `latent_state_estimation/state_space.py`: `StateSpace` generalized **in place** from scalar to vector form — `y` can be a DataFrame of n monthly factors and `x` a DataFrame of k daily indicators; `Z` becomes n×2, `F` n×n (`np.linalg.solve`/`slogdet`), missing monthly observations are skipped row-wise. The state stays `[s, c]` (one common latent + intramonth cumulator) — the dimension that grows is observations/inputs, *not* the latent. Verified the n=k=1 case reproduces the old scalar implementation's loglik and filtered states to 1e-14. Params: `[b0, b1, b2 (k), a0 (n), a1 (n), log_var (n)]`; Nelder-Mead MLE (`maxiter=5000, maxfev=10000`).
+- Joint fit on growth+inflation (full sample): loglik −1471.4, converged; `b1=0.924`, `b2_growth=2.08`, `b2_inflation=−0.55`, both `a1>0`; growth PCA explained variance 0.683, inflation 0.606.
+- `macro_main.py` rewritten as **only** the `LatentStateEstimator` class (methods `"state_space"` = joint KF, `"tracking_regression"` = standardized average of the two daily tracking portfolios). `fit()` returns a daily `pd.Series` named `"latent"`. No CSV output; `latent_states.csv` deleted. Iterated through several architectures (CSV handoff → class called by every consumer → final design) before settling on:
+- **Single-injection-point architecture:** `explore/import_data.py` is the only place the estimator runs; it bakes the chosen conditioning series into column 0 of `macro_data_new.csv` (and `cross_test_data.csv`). `config.data.latent_method: Optional[str] = "state_space"` (`"tracking_regression"` | `None` = raw FRED series). All downstream scripts (main.py, diagnosis.py, analysis scripts) consume `tickers[0]` blindly — no estimator imports or column swaps anywhere downstream. Event thresholds rescale automatically since `get_event_threshold_from_percentile` re-derives the cutoff from the data each run (raw FRED: 0.2035 std → latent: 1.2070 std at top-10%).
+
+**Config paths root-anchored:** `_ROOT` computed from `config.py`'s location; `csv_path`/`ct_csv_path` absolute. Fixes a class of `FileNotFoundError`s when running scripts from subdirectories (the session opened with one). `import_data.py`'s cross-test CSV write also switched from a cwd-relative literal to `ct_csv_path`.
+
+**`macro_window_tolerance` removed entirely** (config field, `_scan_macro_windows`'s ±w-day endpoint search, diagnosis.py's mirror loop, the then-unused `get_default_config` import in `data_processor.py`). Windows now require an exact observation at both endpoints; with the dense latent series this keeps ~98% of windows (holiday NaNs account for the rest).
+
+**`import_data.py` always regenerates** — the "existing CSV covers the range → skip download" logic removed. Eliminates the stale-dataset trap when toggling `latent_method`/dates.
+
+**Codebase cleanup — 16 root files deleted** (old synthetic-data era: `example.py`, `generate_data.py`, `Stocks_logret.csv`, `analyze_regime.py`, `train.log`; packaging: `setup.py`, root `__init__.py`; wandb/cluster tooling: `cleanup_wandb.sh`, `PRIVACY.md`, `run_training.sh`, `run_sampling.sh`, `run_sweep_pretrain.sh`; root eval scripts superseded by `diffusion_model_analysis/`+`evaluation/`: `sample_insample.py`, `sample_outsample.py`, `pretrain_and_plot.py`, `compare_train_test_events.py`). Verified nothing living references them.
+
+**diagnosis.py upgrades:**
+- Correlation figure now **2×2**: train/test rows × unconditional/conditional (event-window) columns, with event masks from `get_z_windows_train_aligned()`/`get_z_windows_test()`. Finding: conditioning on latent-state spikes raises average off-diagonal correlation ~0.45→0.56 in train, directionally consistent in test; the *unconditional* baseline itself shifts train→test (AAPL–MSFT 0.40→0.67 — regime drift to the mega-cap era), which must be kept in mind when judging out-of-sample generation.
+- New **`conditional_series.png`** stationarity figure: level + 252-day rolling mean, rolling std, 120-lag ACF, ADF test in title + console. Finding: latent state is stationary in mean (ADF −8.96, p≈0) but heteroskedastic (rolling std ~3× in 2008-09, ~5× in 2020) with geometric ACF decay matching `b1≈0.92` — events cluster in crisis regimes.
+
+**`cov.py` event-mask bug (the 2026-07-08 bug, resurfaced):** its `get_mask(X)` read `X[:, :, event_asset_idx]` — a *stock* channel (AAPL), since X has no macro column — and compared against the raw fraction `0.1` instead of the percentile-converted cutoff. Result: "Real Train (event windows) n=2120" (~45% of windows) instead of the true 421. Fixed to the main.py pattern (`get_event_threshold_from_percentile` + `get_z_windows_*` + `valid_idx` indexing); also added the missing `start_date`/`end_date`/`train_end_date` to its `DataProcessor` (it was silently using a different data window — 422/229 vs 421/226 until aligned); suptitle now shows the converted threshold and a latent-aware label. Verified exact agreement with diagnosis.py (threshold 1.2070, 421/226). The clarified non-bug: "Conditional Generated (n=2000)" is `n_gen_samples` by design. **The other analysis scripts have not yet been audited for the same X-based-mask pattern.**
+
+**Environment:** installed scikit-learn into `/usr/local/bin/python3` (the VSCode-invoked interpreter), which was missing it; `~/anaconda3/bin/python3` has the full stack.
+
 ### 2026-07-14 — Directional event types, window_shift support, threshold-quantile fix, weight_decay exposure
 
 **Event type renamed and extended:**
-- `"change"` renamed to `"abs_change"` everywhere (`event_type == "change"` comparisons, error messages, docstrings) across `main.py`, `models/hfunction_direct.py`, `models/hfunction.py` (legacy), `compare_train_test_events.py`, `sample_insample.py`, `sample_outsample.py`, `diffusion_model_analysis/{cov,cross_time,conditional_gen,h_function_eval}.py`, `evaluation/{distribution_metrics,dependency_metric}.py`, `data/data_processor.py`.
-- Two new one-sided event types added, matching the same file list: `"upper_change"` (`Z_end - Z_start >= threshold`) and `"lower_change"` (`Z_end - Z_start <= -threshold`). A sign bug was caught and fixed in every `lower_change` branch (13 occurrences) — first written as `<= threshold` (positive), which is true for almost the entire distribution rather than just the rare negative tail, since `event_threshold` is always a positive magnitude; corrected to `<= -threshold`.
-- `config.hfunction.event_type` default changed to `"upper_change"`.
+- `"change"` renamed to `"abs_change"` everywhere; two new one-sided event types added: `"upper_change"` (`Z_end - Z_start >= threshold`) and `"lower_change"` (`Z_end - Z_start <= -threshold`). A sign bug was caught and fixed in every `lower_change` branch (first written as `<= threshold`, true for almost the entire distribution). `config.hfunction.event_type` default changed to `"upper_change"`.
 
-**`get_event_threshold_from_percentile()` quantile computation fixed to depend on `event_type`:** previously always computed the quantile off `|Z_end - Z_start|` regardless of type — correct for `abs_change`, but wrong for the one-sided types, since folding to an absolute value before quantiling mixes both tails together. A one-sided threshold calibrated this way ends up selecting roughly double the intended fraction (both the real tail plus its mirror image) once compared against the signed value elsewhere in the codebase. Now takes an `event_type` argument and branches: `abs_change`/`absval` unchanged (quantile of the absolute value); `upper_change` takes `quantile(signed_diffs, 1-top_fraction)`; `lower_change` takes `-quantile(signed_diffs, top_fraction)`. All 7 call sites (`main.py`, `compare_train_test_events.py`, `sample_insample.py`, `sample_outsample.py`, `diffusion_model_analysis/{h_function_eval,conditional_gen}.py`, `explore/import_data.py`) updated to pass `event_type` through.
+**`get_event_threshold_from_percentile()` quantile computation fixed to depend on `event_type`:** previously always computed the quantile off `|Z_end - Z_start|` — for one-sided types this mixes both tails and selects roughly double the intended fraction. Now branches per type.
 
-**`explore/import_data.py`'s standalone diagnostic script had the same class of bug, independently:** its own event-count printout and plot always used `abs(Z_end - Z_start)` compared against the (correctly event-type-aware) threshold, regardless of `event_type` — so with `event_type="upper_change"`, the printed "top 10%" was actually showing close to 20% of windows (the true upper tail plus the accidentally-included lower tail). Fixed by adding a local `_event_metric_and_mask()` helper mirroring `_compute_labels()`'s branching, applied to both the train (vectorized) and test (per-window loop) event counts, and the diagnostic plot (now plots the correctly-signed metric with matching threshold line(s), including a second line at `-threshold` for `lower_change`).
+**`window_shift` config field added** (default `1`) and threaded through the three independently-coded window-scanning loops (`make_sequences()`, `get_diffusion_data()`, `_scan_macro_windows()`) and every `DataProcessor(...)` call site — previously the field existed but was never passed, so it had zero effect.
 
-**`window_shift` config field added** (`config.data.window_shift`, default `1`) to control the stride between consecutive rolling windows (e.g. `2` = slide forward 2 days per window instead of 1). Threading it through required touching three independently-coded window-scanning loops that previously all assumed stride 1:
-- `make_sequences()` — loop stepped by `window_shift`.
-- `get_diffusion_data()` — loop stepped by `window_shift`; the `train_end_date` cutoff branch's `end_dates` slicing fixed to only count the *shifted* windows' end-dates (`dates_all[window_size-1::window_shift]`) instead of every daily end-date.
-- `_scan_macro_windows()` — its `start_i`/`end_i` args are window-index space (not raw row offsets), so it now converts `i = w_idx * window_shift` before indexing into `macro_values`.
-- `get_z_windows()`'s `n_train_windows` formula updated from `n_train - seq_len + 1` to `(n_train - seq_len) // window_shift + 1`.
-- `get_z_windows_train_aligned()`/`get_z_windows_test()` needed no changes — their `start_i`/`end_i` args were already in shifted-window-count space via `_sequence_split_idx()`.
-- Wired `window_shift=config.data.window_shift` into all 13 `DataProcessor(...)` construction call sites across the codebase (`main.py`, `pretrain_and_plot.py`, `compare_train_test_events.py`, `sample_insample.py`, `sample_outsample.py`, `explore/import_data.py`, and every script in `diffusion_model_analysis/` and `evaluation/`) — previously the field existed on the config but was never actually passed to `DataProcessor`, so it had zero effect regardless of its value.
+**`weight_decay` exposed for `DiffusionModel.train()`** (`config.diffusion.weight_decay`, default 0.0) — previously AdamW's own default (0.01) was silently applied with no way to disable it.
 
-**`weight_decay` exposed for `DiffusionModel.train()`:** previously `AdamW(self.model.parameters(), lr=learning_rate)` was called with no `weight_decay` argument, silently applying `AdamW`'s own default (`0.01`) with no way to control it. Added `config.diffusion.weight_decay` (default `0.0`), threaded through `train()`'s signature (default `0.01`, so any other caller not passing it explicitly sees no behavior change) and the `main.py` call site, so it's now possible to deliberately zero out this regularization (e.g. when testing whether a larger architecture can fit the training covariance structure at all, before worrying about generalization).
-
-**`cov.py` made resilient to a missing conditional-generation pipeline:** `generated_samples_{train,test}.pt` loading (needed only for the "Conditional Generated" panel, which requires a trained h-function) is now optional — checks `os.path.exists` first and falls back to 3 panels with a printed note instead of crashing on `torch.load` if those files don't exist. `plot_matrices()`'s subplot grid now sizes itself to the actual panel count instead of assuming a fixed 2×2 layout.
+**`cov.py` made resilient to a missing conditional-generation pipeline:** `generated_samples_*.pt` loading optional; subplot grid sizes itself to the actual panel count.
 
 ### 2026-07-08 — Event-mask bug fixes, h-function architecture pass, data-scarcity diagnosis, percentage-based event_threshold
 
-**Bug fixes (real correctness issues):**
-- **Event mask source bug:** `main.py`/`conditional_gen.py`/etc. were reading `X[:, :, event_asset_idx]` assuming the macro series was a channel of `X`. It isn't — `X` is stock-returns-only (macro `tickers[0]` is excluded, see Data section). Fixed by sourcing all masks/labels from `Z_start`/`Z_end` via the new `get_z_windows_train_aligned()`/`get_z_windows_test()` methods.
-- **Off-by-one window indexing:** `get_z_windows()`'s window-count convention (aligned with `get_diffusion_data()`) had one more window than `X_train`/`X_test` (aligned with `make_sequences()`). Added `_sequence_split_idx()` + `get_z_windows_train_aligned()`/`get_z_windows_test()`, which align exactly with `X_train`/`X_test` sizes.
-- **`b_max`/schedule mismatch** between training and sampling — reconciled.
-- **`losses.py` `KeyError: 'accuracy'`** — root cause was a stale `h_losses.csv` from an older code version; fixed by retraining to regenerate a fresh CSV.
-- **`compare_train_test_events.py`** had a broken `event_threshold_raw`/`tsla_ticker`/`sigma_tsla` reference (dead code from an earlier ticker set) — replaced with the percentage-conversion pattern (see below); also added a missing `import torch`.
-- **Missing `.eval()` calls** in `ConditionalGenerator._sample_batch()` before sampling — added.
+**Bug fixes:**
+- **Event mask source bug:** masks were read from `X[:, :, event_asset_idx]`, but `X` is stock-returns-only. Fixed by sourcing all masks/labels from `Z_start`/`Z_end` via the new `get_z_windows_train_aligned()`/`get_z_windows_test()`.
+- **Off-by-one window indexing:** `get_z_windows()` (aligned with `get_diffusion_data()`) had one more window than `X_train`/`X_test`; added `_sequence_split_idx()` + the aligned variants.
+- `b_max`/schedule mismatch between training and sampling reconciled; missing `.eval()` calls added in `ConditionalGenerator._sample_batch()`; stale `h_losses.csv` KeyError fixed by retraining.
 
-**H-function (`models/hfunction_direct.py`) changes:**
-- Sinusoidal positional embedding (`GaussianFourierFeatures` + MLP over normalized day index) replacing a fully-learned random `(1,1,T,D)` tensor.
-- Pooling changed from mean-over-all-64-days to explicit `[h_start, h_end, h_end-h_start]` concatenation, since the label only depends on window start/end.
-- `BCEWithLogitsLoss(pos_weight=n_neg/n_pos)` reintroduced (was briefly removed to follow the paper's Lemma 1 exactly — population minimizer of *unweighted* BCE is the true propagated likelihood — then reintroduced to match a labmate's reference implementation's actual behavior, without a correction step at inference, per explicit instruction).
-- Real per-epoch shuffling (`torch.randperm`) replacing with-replacement sampling.
-- `h_t_max` cap added — both training τ range and sampling-time guidance cutoff — since near-pure-noise states carry no learnable event signal.
-- `_compute_labels()` now branches on `event_type` (`"change"`/`"absval"`; `"sum"` raises `NotImplementedError` since it needs the full window, not just endpoints) — previously hardcoded to `"change"` regardless of config.
-- Dropout was tried as an anti-over-concentration measure, then reverted to `0.0` — the h-function was underfitting, not overfitting, so dropout would have made things worse.
+**H-function (`hfunction_direct.py`) changes:** sinusoidal positional embedding; `[h_start, h_end, h_end-h_start]` pooling; `BCEWithLogitsLoss(pos_weight=n_neg/n_pos)`; real per-epoch shuffling; `h_t_max` cap; `_compute_labels()` branches on `event_type`; dropout tried and reverted (underfitting, not overfitting).
 
-**Root-cause diagnosis — conditional generation over-concentration:**
-Confirmed via a controlled experiment that the long-standing "conditional generation is much narrower than real event-window data" problem is primarily **data scarcity**, not an architecture or guidance-formula bug. At the original rare `event_threshold`, only ~138 positive training examples exist (from ~12 distinct historical episodes). Setting the threshold to give a 50/50 balanced split (~1658 positive examples) improved conditional-generation std ratios from ~30-50% of real to ~54-87% of real — converging toward the baseline unconditional generation's own (accepted) under-dispersion rather than being dramatically worse. See Known Issues §5.
+**Root-cause diagnosis — conditional generation over-concentration is data scarcity,** not architecture: at the rare threshold only ~138 positive train windows from ~12 episodes; a top-50% control experiment (~1658 positives) closed most of the std-ratio gap. Untried: soft labels; training `h` on synthetic trajectories.
 
-**`event_threshold` semantics changed from raw standardized units to percentage/quantile:**
-Raw-unit thresholds were misleading because `Z_start`/`Z_end` are highly correlated (points 64 days apart on a slow-moving macro series), so `Var(Z_end-Z_start) << 1` and naive single-normal-variable percentile intuition doesn't apply. `config.hfunction.event_threshold` is now specified as "top X% of `|Z_end-Z_start|`" (e.g. `0.10` = top 10%), converted once to the equivalent raw numeric cutoff via `data_processor.get_event_threshold_from_percentile()` (computed from train windows only, no leakage) right after `process_all()`. Implemented in `data/data_processor.py`, `main.py`, `diffusion_model_analysis/conditional_gen.py`, `diffusion_model_analysis/h_function_eval.py`, `sample_insample.py`, `sample_outsample.py`, `compare_train_test_events.py`, and `config/config.py`.
+**`event_threshold` semantics changed to percentage/quantile** ("top X%"), converted once to a raw cutoff from train windows only.
 
-**Sampling-time changes:**
-- `n_gen_samples` (default 2000) decouples the number of generated samples from the real event count, reducing Monte Carlo noise in the generated-side KDE comparison.
-- `stop_early_steps` (default 20) stops the reverse SDE before fully resolving to the sharp end state, preserving residual diversity.
-- `pos_weight`-based correction of `h`'s raw output at guidance time was implemented, then removed — guidance now uses `h`'s raw output directly, matching the reference implementation.
-
-**Still open / untried:** soft labels (`constraint_mode="soft"`, defined in config but unused by `hfunction_direct.py`) and training `h` on synthetic diffusion-generated trajectories instead of only the fixed set of real historical windows (the latter is the single biggest lever for the data-scarcity problem, since it would remove the ~138-real-positive-examples ceiling entirely — see Known Issues §5).
-
-### 2026-05-19
-**Issue:** Generated std ≈ 2× real std. `corr(score, x)` collapses to ~0 by t=0.59.  
-**Fix:** Switched to noise parameterization, fixed `adjust = (1+stoch²)/2`.
+**Sampling-time:** `n_gen_samples` (2000) decoupled from real event count; `stop_early_steps` (20); `pos_weight` guidance correction implemented then removed (matches reference implementation).
 
 ### 2026-06-17
-**Changes:**
-- `config/config.py`: added `start_date="2008-01-01"` to `DataConfig` to restrict training data to post-2008 era. Added `ct_csv_path`, `ct_start_date`, `ct_end_date` fields for cross-time generalization test. Changed `tickers[0]` from `"fedfunds"` to `"aaa"` (AAA corporate bond yield fits score function better than FEDFUNDS).
-- `explore/import_data.py`: added cross-time CSV generation section — downloads 1995-2008 era data and writes to `explore/cross_test_data.csv` using `ct_start_date`/`ct_end_date` from config.
-- `diffusion_model_analysis/cross_time.py`: new script for cross-time OOD generalization. Loads `ct_csv_path` data, generates 2000 unconditional + N_cond conditional samples using the trained checkpoint, plots correlation matrices and marginal KDEs (unconditional vs real all, conditional vs real event windows).
-- `diffusion_model_analysis/unconditional_gen.py`: removed joint pairwise distribution plots, keeping only marginal KDEs.
-- `.gitignore`: removed `*.csv` rule so data CSVs can be committed.
+- `config`: `start_date`, `ct_csv_path`/`ct_start_date`/`ct_end_date` added; conditioning ticker switched.
+- `import_data.py`: cross-time CSV generation added. `cross_time.py`: new OOD script.
 
 ### 2026-06-15
-**Changes:**
-- `import_data.py`: store unemployment LEVEL (not diff) interpolated to daily. Diagnostic uses train-only standardization.
-- `data_processor.py`: weekday effect removal disabled. Standardization now uses train-only `mu_seq`/`sigma_seq` (no data leakage).
-- `conditional_generator.py`: `_sample_batch` derives shape dynamically from `score_model.n_assets/seq_len`.
-- `sample_insample.py`, `sample_outsample.py`, `compare_train_test_events.py`: fixed hardcoded `sum` condition in pretrain masking — now respects `event_type`.
-- `portfolio.py`: removed stale `monthly=False` argument from `invert_samples()` calls.
-- `diffusion_model.py`, `hfunction.py`: now save loss CSVs to `ckpt_new/` after training.
-- `diffusion_model_analysis/`: all outputs to `results/`; batched sampling (2000 samples, 128 batch); dynamic `n_assets`.
+- Train-only standardization (no leakage); weekday removal disabled; dynamic shapes in `_sample_batch`; loss CSVs saved to `ckpt_new/`.
+
+### 2026-05-19
+**Issue:** Generated std ≈ 2× real std. `corr(score, x)` collapses to ~0 by t=0.59.
+**Fix:** Switched to noise parameterization, fixed `adjust = (1+stoch²)/2`.

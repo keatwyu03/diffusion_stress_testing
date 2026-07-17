@@ -53,7 +53,7 @@ class DataConfig:
     # Outlier handling -> winsorize upper and lower = % bounds to remove
     csv_path: str = os.path.join(_ROOT, "explore", "macro_data_new.csv")
     ct_csv_path: str = os.path.join(_ROOT, "explore", "cross_test_data.csv")
-    latent_method: Optional[str] = "state_space"    # Choose between state space, tracking regression, or None
+    latent_method: Optional[str] = "tracking_regression"    # Choose between state space, tracking regression, or None
 
     start_date : str = "2000-01-01"
     end_date: str = "2026-07-08"      # data window end (None = use all)
