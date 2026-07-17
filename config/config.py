@@ -53,7 +53,7 @@ class DataConfig:
     # Outlier handling -> winsorize upper and lower = % bounds to remove
     csv_path: str = os.path.join(_ROOT, "explore", "macro_data_new.csv")
     ct_csv_path: str = os.path.join(_ROOT, "explore", "cross_test_data.csv")
-    latent_method: Optional[str] = "tracking_regression"    # Choose between state space, tracking regression, or None
+    latent_method: Optional[str] = "state_space"    # Choose between state space, tracking regression, or None
 
     start_date : str = "2000-01-01"
     end_date: str = "2026-07-08"      # data window end (None = use all)
@@ -144,7 +144,7 @@ class HFunctionConfig:
     event_type: str = "upper_change"         # "absval", "abs_change", "upper_change", or "lower_change"
     event_asset_idx: int = 0           # which asset to watch for the shock
     event_window: int = 10             # lookback period
-    event_threshold: float = 0.1       # top X% of |Z_end - Z_start| counts as an event
+    event_threshold: float = 0.05       # top X% of |Z_end - Z_start| counts as an event
                                         # (e.g. 0.10 = top 10%), converted to a raw
                                         # numeric cutoff from train data at startup —
                                         # see get_event_threshold_from_percentile()
