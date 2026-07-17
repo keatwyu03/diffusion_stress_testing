@@ -42,17 +42,4 @@ for t in tickers:
 df_out = df_out.dropna(subset=tickers)
 df_out.to_csv(csv_path, index_label="Date")
 
-
-df_ct = yf.download(tickers, start = _cfg.data.ct_start_date, end = _cfg.data.ct_end_date ,auto_adjust=True)["Close"]
-log_ret_ct = np.log(df_ct / df_ct.shift(1)).dropna()
-
-df_ct[cond_event] = cond_series.reindex(df_ct.index).interpolate(method='time')
-
-df_out_ct = pd.DataFrame({cond_event: df_ct[cond_event]})
-for t in tickers:
-    df_out_ct[t] = log_ret_ct[t]
-
-df_out_ct = df_out_ct.dropna()
-df_out_ct.to_csv(_cfg.data.ct_csv_path, index_label="Date")
-
 print(f"total rows: {len(df_out)}")

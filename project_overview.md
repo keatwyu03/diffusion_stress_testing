@@ -52,7 +52,6 @@ CDG_Finance/Code/
 │   ├── unconditional_gen.py                 # Diagnostics table, marginal KDEs
 │   ├── conditional_gen.py                   # Conditional vs real event window marginal KDEs + diagnostics table
 │   ├── cov.py                               # Correlation/covariance matrix comparison (real vs uncond vs cond)
-│   ├── cross_time.py                        # Cross-time OOD generalization check
 │   ├── h_function_eval.py                   # H-function calibration check — bypasses sampling/guidance entirely
 │   └── losses.py                            # Score + H-function loss/accuracy curves (auto-discovers CSVs)
 ├── evaluation/
@@ -61,8 +60,7 @@ CDG_Finance/Code/
 ├── explore/
 │   ├── import_data.py                       # Builds macro_data_new.csv + cross_test_data.csv; runs LatentStateEstimator
 │   ├── diagnosis.py                         # Event/correlation/stationarity diagnostics → explore/diagnosis_plots/
-│   ├── macro_data_new.csv                   # conditioning series (col 0) + AAPL/ORCL/MSFT/IBM log-returns
-│   └── cross_test_data.csv                  # cross-period test window dataset
+│   └── macro_data_new.csv                   # conditioning series (col 0) + AAPL/ORCL/MSFT/IBM log-returns
 └── ckpt_new/                                # Active checkpoint directory (created by training)
     ├── diffusion_model.pt
     ├── hfunction.pt                         # h-function checkpoint (one-step or two-step, same path)
@@ -152,11 +150,6 @@ switching `latent_method` (or dates/tickers) takes effect by simply rerunning
 |---|---|---|
 | `T10YFF` (name = `tickers[0]`) | Conditioning series | **Content depends on `latent_method` at build time**: latent state (default) or the raw FRED series. NaN on days with no observation; no interpolation. Column *name* stays `tickers[0]` regardless of content. |
 | `AAPL`, `ORCL`, `MSFT`, `IBM` | Log return | Daily stock log-returns from yfinance |
-
-`cross_test_data.csv` (cross-period window, `ct_start_date`–`ct_end_date`) gets the
-same conditioning series. Caveat: the latent state only starts 2000-09 (macro panel
-coverage), so with a latent method the pre-2000-09 portion of the cross-test window
-drops out via `dropna()`.
 
 ### Tickers
 
@@ -317,12 +310,10 @@ Step 6: PortfolioAnalyzer → results/
 ```python
 # Data
 csv_path        = <ROOT>/explore/macro_data_new.csv    # root-anchored absolute path
-ct_csv_path     = <ROOT>/explore/cross_test_data.csv
 latent_method   = "state_space"    # "state_space" | "tracking_regression" | None
 tickers         = ["T10YFF", "AAPL", "ORCL", "MSFT", "IBM"]  # tickers[0] = conditioning series, excluded from X
 start_date      = "2000-01-01"
 end_date        = "2026-07-08"
-ct_start_date   = "1998-01-01"; ct_end_date = "2007-12-31"
 window_shift    = 1
 seq_len         = 10
 test_days       = 2000             # used only when train_end_date is None
@@ -382,12 +373,11 @@ All scripts run from the **project root**. All outputs save to `diffusion_model_
 - **`conditional_gen.py`** — conditional vs real event window KDEs + diagnostics table. Loads pre-generated `.pt` files from root.
 - **`cov.py`** — correlation/covariance heatmaps (real all / real events / uncond generated / cond generated). Event mask rebuilt this session (see Experiments 2026-07-17): now sourced from the conditioning series via `get_z_windows_*` with the percentile-converted threshold, matching main.py/diagnosis.py exactly (421 train / 226 test events). "Conditional Generated" panel (needs `generated_samples_*.pt`) remains optional.
 - **`h_function_eval.py`** — forward-noises real windows at fixed τ and reports `h_model` output split by true label (calibration check, no sampling).
-- **`cross_time.py`** — cross-time OOD generalization check on `ct_csv_path`.
 - **`losses.py`** — auto-discovers `ckpt_new/*.csv` loss curves.
 
 **Warning:** the other analysis scripts may still contain the old `X`-based event-mask
-pattern that was fixed in `cov.py` this session — audit `h_function_eval.py`,
-`conditional_gen.py`, `cross_time.py` before trusting their event splits.
+pattern that was fixed in `cov.py` this session — audit `h_function_eval.py` and
+`conditional_gen.py` before trusting their event splits.
 
 ---
 
@@ -420,7 +410,7 @@ pattern that was fixed in `cov.py` this session — audit `h_function_eval.py`,
 
 8. **Config `latent_method` vs. CSV content can drift:** the dataset's conditioning column is whatever `import_data.py` last baked in; scripts *label* plots from the config value. After changing `latent_method`, rerun `import_data.py` to keep them in sync.
 
-9. **Latent state coverage starts 2000-09** — the cross-test window (1998-01-01 start) loses its pre-2000-09 rows when a latent method is active.
+9. **yfinance downloads are flaky:** Yahoo intermittently rate-limits and returns an empty column for a random ticker ("possibly delisted; no price data found"), and `import_data.py`'s `dropna(subset=tickers)` then silently writes a 0-row CSV. Always check the printed `total rows` (~6673) after a rebuild; wait a few minutes and rerun if a ticker failed.
 
 ---
 

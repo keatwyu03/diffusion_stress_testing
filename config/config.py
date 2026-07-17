@@ -52,14 +52,10 @@ class DataConfig:
     # Where to load the data. Training/Testing split
     # Outlier handling -> winsorize upper and lower = % bounds to remove
     csv_path: str = os.path.join(_ROOT, "explore", "macro_data_new.csv")
-    ct_csv_path: str = os.path.join(_ROOT, "explore", "cross_test_data.csv")
     latent_method: Optional[str] = "state_space"    # Choose between state space, tracking regression, or None
 
     start_date : str = "2000-01-01"
     end_date: str = "2026-07-08"      # data window end (None = use all)
-
-    ct_start_date : str = "1998-01-01"   #Cross-period test window
-    ct_end_date : str = "2007-12-31"
 
     window_shift : int = 1
     tickers: List[str] = None
@@ -130,7 +126,7 @@ class HFunctionConfig:
     train_batch_size: int = 126        # number of noisy trajectories for unconditional diffusion
     train_stoch: float = 0.5           # stochasticity for generating training paths (0=ODE, 1=full SDE)
     h_mini_batch_size: int = 512       # mini-batch size per gradient step
-    n_epochs: int = 50              # number of times to go through the data
+    n_epochs: int = 200              # number of times to go through the data
     learning_rate: float = 1e-4        # step size for SGD
     weight_decay: float = 5e-4         # penalty to prevent overfitting
     scheduler_patience: int = 75
