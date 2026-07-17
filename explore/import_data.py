@@ -53,6 +53,6 @@ for t in tickers:
     df_out_ct[t] = log_ret_ct[t]
 
 df_out_ct = df_out_ct.dropna()
-df_out_ct.to_csv("explore/cross_test_data.csv", index_label="Date")
+df_out_ct.to_csv(_cfg.data.ct_csv_path, index_label="Date")
 
 print(f"total rows: {len(df_out)}")

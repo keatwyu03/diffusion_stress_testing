@@ -183,26 +183,35 @@ for ax, dates, changes, event_mask, title, n_total_win in [
 plt.tight_layout()
 plt.savefig(os.path.join(save_dir, "event_detection.png"), dpi=150, bbox_inches="tight")
 
-# ── Correlation matrices — last-day returns (Train vs Test) ───────────────────
+# ── Correlation matrices — last-day returns, unconditional vs conditional ─────
 plot_tickers = tickers  # _cfg.data.tickers[1:], the stock columns
+
+# event masks aligned 1:1 with X_train / X_test
+Zs_tr, Ze_tr, vidx_tr = dp.get_z_windows_train_aligned()
+Zs_te, Ze_te, vidx_te = dp.get_z_windows_test()
+_, mask_tr = _event_metric_and_mask(Zs_tr, Ze_tr, event_type, h_threshold)
+_, mask_te = _event_metric_and_mask(Zs_te, Ze_te, event_type, h_threshold)
 
 train_last_day = dp.X_train[:, -1, :].numpy()
 test_last_day  = dp.X_test[:, -1, :].numpy()
+cond_train_last_day = dp.X_train[vidx_tr][mask_tr][:, -1, :].numpy()
+cond_test_last_day  = dp.X_test[vidx_te][mask_te][:, -1, :].numpy()
 
-train_corr = np.corrcoef(train_last_day.T)
-test_corr  = np.corrcoef(test_last_day.T)
-
-fig_corr, (ax_corr_train, ax_corr_test) = plt.subplots(1, 2, figsize=(12, 5))
+fig_corr, axes_corr = plt.subplots(2, 2, figsize=(12, 10))
 tick_lbl = [t.upper() for t in plot_tickers]
 
-for ax, corr, title, n in [
-    (ax_corr_train, train_corr, "Train", train_last_day.shape[0]),
-    (ax_corr_test,  test_corr,  "Test",  test_last_day.shape[0]),
+for ax, data, title in [
+    (axes_corr[0, 0], train_last_day,      "Train — unconditional"),
+    (axes_corr[0, 1], cond_train_last_day, "Train — conditional (events)"),
+    (axes_corr[1, 0], test_last_day,       "Test — unconditional"),
+    (axes_corr[1, 1], cond_test_last_day,  "Test — conditional (events)"),
 ]:
+    corr = np.corrcoef(data.T)
     im = ax.imshow(corr, vmin=-1, vmax=1, cmap="RdBu_r")
     ax.set_xticks(range(len(plot_tickers))); ax.set_xticklabels(tick_lbl)
     ax.set_yticks(range(len(plot_tickers))); ax.set_yticklabels(tick_lbl)
-    ax.set_title(f"{title} — Last-Day Return Correlation (n={n})", fontsize=10, fontweight="bold")
+    ax.set_title(f"{title} — Last-Day Return Correlation (n={data.shape[0]})",
+                 fontsize=10, fontweight="bold")
     for r in range(len(plot_tickers)):
         for c in range(len(plot_tickers)):
             ax.text(c, r, f"{corr[r, c]:.2f}", ha="center", va="center",
