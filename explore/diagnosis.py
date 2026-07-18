@@ -107,6 +107,23 @@ def _event_metric_and_mask(z_start, z_end, event_type, threshold):
         raise NotImplementedError(f"event_type={event_type!r} not supported here.")
 
 
+soft_mode = _cfg.hfunction.constraint_mode == "soft"
+sharpness = _cfg.hfunction.reward_sharpness
+
+
+def _soft_weight(metric, event_type, threshold, sharpness):
+    """Graded event label in [0,1] — mirrors HFunctionDirectTrainer._compute_labels
+    (soft branch). metric is the signed output of _event_metric_and_mask, so
+    lower_change flips sign; weight >= 0.5 <=> the hard event condition."""
+    if event_type in ("abs_change", "absval", "upper_change"):
+        m = metric
+    elif event_type == "lower_change":
+        m = -metric
+    else:
+        raise NotImplementedError(f"event_type={event_type!r} not supported here.")
+    return 1.0 / (1.0 + np.exp(-sharpness * (m - threshold)))
+
+
 n_train_windows = len(dp.X_train)
 n_valid         = len(valid_idx)
 train_metric_t, train_event_mask_t = _event_metric_and_mask(Z_start, Z_end, event_type, h_threshold)
@@ -153,6 +170,13 @@ test_event_mask  = np.array(test_event_list)
 train_end_dates  = [dp.df.index[int(i) + dp.seq_len - 1] for i in valid_idx.numpy()]
 train_event_mask = train_event_mask_t.numpy()
 
+if soft_mode:
+    w_tr = _soft_weight(train_metric, event_type, h_threshold, sharpness)
+    w_te = _soft_weight(test_metric,  event_type, h_threshold, sharpness)
+    print(f"\nSoft labels (sharpness={sharpness:g}):")
+    print(f"  train soft mass: {w_tr.sum():.1f} / {len(w_tr)} windows  (mean weight {w_tr.mean():.3f})")
+    print(f"  test  soft mass: {w_te.sum():.1f} / {len(w_te)} windows  (mean weight {w_te.mean():.3f})")
+
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
 metric_label = {"abs_change": "|ΔZ|", "absval": "|Z_end|",
@@ -164,22 +188,27 @@ for ax, dates, changes, event_mask, title, n_total_win in [
 ]:
     n_ev = int(event_mask.sum())
     n_v  = len(changes)
-    ax.scatter(dates, changes, s=10, color="steelblue", label="valid window")
-    ax.scatter(
-        [d for d, e in zip(dates, event_mask) if e],
-        changes[event_mask],
-        s=15, color="red", label=f"event ({event_type})"
-    )
+    if soft_mode:
+        w = _soft_weight(changes, event_type, h_threshold, sharpness)
+        sc = ax.scatter(dates, changes, s=12, c=w, cmap="coolwarm", vmin=0, vmax=1)
+        plt.colorbar(sc, ax=ax, fraction=0.046, pad=0.04, label="soft label")
+    else:
+        ax.scatter(dates, changes, s=10, color="steelblue", label="valid window")
+        ax.scatter(
+            [d for d, e in zip(dates, event_mask) if e],
+            changes[event_mask],
+            s=15, color="red", label=f"event ({event_type})"
+        )
+        ax.legend()
     ax.axhline(h_threshold, color="red", linestyle="--")
     if event_type == "lower_change":
         ax.axhline(-h_threshold, color="red", linestyle="--")
-    ax.legend()
     ax.set_title(f"{metric_label} — {title} windows")
-    ax.annotate(
-        f"Valid: {n_v} / {n_total_win}  ({100*n_v/max(n_total_win,1):.1f}%)\n"
-        f"Events: {n_ev} / {n_v}  ({100*n_ev/max(n_v,1):.1f}%)",
-        xy=(0.5, -0.12), xycoords='axes fraction', ha='center'
-    )
+    note = (f"Valid: {n_v} / {n_total_win}  ({100*n_v/max(n_total_win,1):.1f}%)\n"
+            f"Events: {n_ev} / {n_v}  ({100*n_ev/max(n_v,1):.1f}%)")
+    if soft_mode:
+        note += f"\nSoft mass: {_soft_weight(changes, event_type, h_threshold, sharpness).sum():.1f}"
+    ax.annotate(note, xy=(0.5, -0.12), xycoords='axes fraction', ha='center')
 
 plt.tight_layout()
 plt.savefig(os.path.join(save_dir, "event_detection.png"), dpi=150, bbox_inches="tight")

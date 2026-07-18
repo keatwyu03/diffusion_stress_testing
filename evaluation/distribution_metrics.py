@@ -16,6 +16,9 @@ data_processor = DataProcessor(
     weekday_col=config.data.weekday_col,
     seq_len=config.data.seq_len,
     test_days=config.data.test_days,
+    start_date=config.data.start_date,
+    end_date=config.data.end_date,
+    train_end_date=config.data.train_end_date,
     window_shift=config.data.window_shift,
     winsorize_lower=config.data.winsorize_lower,
     winsorize_upper=config.data.winsorize_upper,
@@ -35,37 +38,46 @@ _root = os.path.dirname(_dir)
 gen_train = torch.load(os.path.join(_root, 'generated_samples_train.pt'), map_location='cpu')
 gen_test  = torch.load(os.path.join(_root, 'generated_samples_test.pt'),  map_location='cpu')
 
-def get_mask(X):
-    last_window = X[:, -config.hfunction.event_window:, config.hfunction.event_asset_idx]
-    if config.hfunction.event_type == "sum":
-        return last_window.sum(dim=1) <= config.hfunction.event_threshold
-    elif config.hfunction.event_type == "abs_change":
-        return (last_window[:, -1] - last_window[:, 0]).abs() >= config.hfunction.event_threshold
-    elif config.hfunction.event_type == "absval":
-        return last_window[:, -1].abs() >= config.hfunction.event_threshold
-    elif config.hfunction.event_type == "upper_change":
-        return (last_window[:, -1] - last_window[:, 0]) >= config.hfunction.event_threshold
-    elif config.hfunction.event_type == "lower_change":
-        return (last_window[:, -1] - last_window[:, 0]) <= -config.hfunction.event_threshold
+# Event masks from the real conditioning series (X has no macro channel), same as
+# main.py; the "top X%" fraction is converted to a raw cutoff first. Evaluation
+# always uses the HARD event definition regardless of constraint_mode — "soft"
+# only changes the h-function's training labels, not what an event is.
+event_type  = config.hfunction.event_type
+h_threshold = data_processor.get_event_threshold_from_percentile(
+    config.hfunction.event_threshold, event_type)
+print(f"Event threshold: top {config.hfunction.event_threshold:.1%} -> "
+      f"{h_threshold:.4f} std ({event_type})")
+
+def event_mask(Z_start, Z_end):
+    if event_type == "abs_change":
+        return (Z_end - Z_start).abs() >= h_threshold
+    elif event_type == "absval":
+        return Z_end.abs() >= h_threshold
+    elif event_type == "upper_change":
+        return Z_end - Z_start >= h_threshold
+    elif event_type == "lower_change":
+        return Z_end - Z_start <= -h_threshold
+    raise NotImplementedError(f"event_type={event_type!r}")
+
+Zs_tr, Ze_tr, vidx_tr = data_processor.get_z_windows_train_aligned()
+Zs_te, Ze_te, vidx_te = data_processor.get_z_windows_test()
+X_train_events = X_train[vidx_tr][event_mask(Zs_tr, Ze_tr)]
+X_test_events  = X_test[vidx_te][event_mask(Zs_te, Ze_te)]
+
+print(f"Train event windows: {len(X_train_events)} / {len(X_train)}")
+print(f"Test  event windows: {len(X_test_events)}  / {len(X_test)}")
 
 
-mask_train = get_mask(X_train)
-mask_test  = get_mask(X_test)
-
-print(f"Train event windows: {mask_train.sum().item()} / {len(mask_train)}")
-print(f"Test  event windows: {mask_test.sum().item()}  / {len(mask_test)}")
-
-
-def wasserstein_lastday(X, mask, gen):
+def wasserstein_lastday(X_events, gen):
     results = {}
     for ch, ticker in enumerate(tickers[1:]):
-        real = X[mask, -1, ch].numpy()
+        real = X_events[:, -1, ch].numpy()
         g = gen[:, ch, -1].numpy()
         results[ticker] = wasserstein_distance(real, g)
     return results
 
-w_train = wasserstein_lastday(X_train, mask_train, gen_train)
-w_test = wasserstein_lastday(X_test, mask_test, gen_test)
+w_train = wasserstein_lastday(X_train_events, gen_train)
+w_test = wasserstein_lastday(X_test_events, gen_test)
 
 print("\nWasserstein Distance — Last-Day Marginals")
 print(f"{'Asset':<10} {'Train':>10} {'Test':>10}")

@@ -132,19 +132,47 @@ class HFunctionDirectTrainer:
         return alpha * x + sigma * eps
 
     def _compute_labels(self, Z_start: torch.Tensor, Z_end: torch.Tensor) -> torch.Tensor:
-        if self.cfg.event_type == "abs_change":
-            return (torch.abs(Z_end - Z_start) >= self.cfg.event_threshold).float()
-        elif self.cfg.event_type == "absval":
-            return (Z_end.abs() >= self.cfg.event_threshold).float()
-        elif self.cfg.event_type == "upper_change":
-            return ((Z_end - Z_start) >= self.cfg.event_threshold).float()
-        elif self.cfg.event_type == "lower_change":
-            return ((Z_end - Z_start) <= -self.cfg.event_threshold).float()
+        thr = self.cfg.event_threshold
+
+        if self.cfg.constraint_mode == "hard":
+            if self.cfg.event_type == "abs_change":
+                return (torch.abs(Z_end - Z_start) >= thr).float()
+            elif self.cfg.event_type == "absval":
+                return (Z_end.abs() >= thr).float()
+            elif self.cfg.event_type == "upper_change":
+                return ((Z_end - Z_start) >= thr).float()
+            elif self.cfg.event_type == "lower_change":
+                return ((Z_end - Z_start) <= -thr).float()
+            else:
+                raise NotImplementedError(
+                    f"event_type={self.cfg.event_type!r} not supported here; only 'abs_change', "
+                    "'absval', 'upper_change', and 'lower_change' are computable from Z_start/Z_end "
+                    "alone ('sum' needs the full window, which get_z_windows() does not provide)."
+                )
+
+        elif self.cfg.constraint_mode == "soft":
+            # graded sigmoid labels centered at the threshold, so every window carries
+            # signal about how event-like it is instead of a hard 0/1 edge learned only
+            # from the rare positives; label >= 0.5 <=> the hard event condition
+            s = self.cfg.reward_sharpness
+            if self.cfg.event_type == "abs_change":
+                return torch.sigmoid(s * (torch.abs(Z_end - Z_start) - thr))
+            elif self.cfg.event_type == "absval":
+                return torch.sigmoid(s * (Z_end.abs() - thr))
+            elif self.cfg.event_type == "upper_change":
+                return torch.sigmoid(s * ((Z_end - Z_start) - thr))
+            elif self.cfg.event_type == "lower_change":
+                return torch.sigmoid(s * (-(Z_end - Z_start) - thr))
+            else:
+                raise NotImplementedError(
+                    f"event_type={self.cfg.event_type!r} not supported here; only 'abs_change', "
+                    "'absval', 'upper_change', and 'lower_change' are computable from Z_start/Z_end "
+                    "alone ('sum' needs the full window, which get_z_windows() does not provide)."
+                )
+
         else:
             raise NotImplementedError(
-                f"event_type={self.cfg.event_type!r} not supported here; only 'abs_change', "
-                "'absval', 'upper_change', and 'lower_change' are computable from Z_start/Z_end "
-                "alone ('sum' needs the full window, which get_z_windows() does not provide)."
+                f"constraint_mode={self.cfg.constraint_mode!r} not supported; use 'hard' or 'soft'."
             )
     
     def train(

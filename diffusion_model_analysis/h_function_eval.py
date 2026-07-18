@@ -66,8 +66,10 @@ def h_by_tau(X: torch.Tensor, labels: torch.Tensor):
     """X: (N, A, T) channels-first. labels: (N,) in {0,1}. Returns dict tau -> (pos_mean, neg_mean, pos_std, neg_std)."""
     X = X.to(device)
     labels = labels.to(device)
-    pos_mask = labels == 1
-    neg_mask = labels == 0
+    # >= 0.5 recovers the exact hard event condition when labels are soft
+    # (sigmoid is centered at the threshold), and is 1/0 when labels are hard
+    pos_mask = labels >= 0.5
+    neg_mask = labels < 0.5
 
     out = {}
     for tau_val in tau_values:

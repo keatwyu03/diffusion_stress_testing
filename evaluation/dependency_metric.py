@@ -37,6 +37,9 @@ data_processor = DataProcessor(
     weekday_col=config.data.weekday_col,
     seq_len=config.data.seq_len,
     test_days=config.data.test_days,
+    start_date=config.data.start_date,
+    end_date=config.data.end_date,
+    train_end_date=config.data.train_end_date,
     window_shift=config.data.window_shift,
     winsorize_lower=config.data.winsorize_lower,
     winsorize_upper=config.data.winsorize_upper,
@@ -57,27 +60,9 @@ os.makedirs(os.path.join(_dir, "results"), exist_ok=True)
 gen_train = torch.load(os.path.join(_root, 'generated_samples_train.pt'), map_location='cpu')
 gen_test  = torch.load(os.path.join(_root, 'generated_samples_test.pt'),  map_location='cpu')
 
-def get_mask(X):
-    last_window = X[:, -config.hfunction.event_window:, config.hfunction.event_asset_idx]
-    if config.hfunction.event_type == "sum":
-        return last_window.sum(dim=1) <= config.hfunction.event_threshold
-    elif config.hfunction.event_type == "abs_change":
-        return (last_window[:, -1] - last_window[:, 0]).abs() >= config.hfunction.event_threshold
-    elif config.hfunction.event_type == "absval":
-        return last_window[:, -1].abs() >= config.hfunction.event_threshold
-    elif config.hfunction.event_type == "upper_change":
-        return (last_window[:, -1] - last_window[:, 0]) >= config.hfunction.event_threshold
-    elif config.hfunction.event_type == "lower_change":
-        return (last_window[:, -1] - last_window[:, 0]) <= -config.hfunction.event_threshold
-
-
-mask_train = get_mask(X_train)
-mask_test  = get_mask(X_test)
-
-
 splits = [
-    (X_train, mask_train, gen_train, "Train"),
-    (X_test,  mask_test,  gen_test,  "Test"),
+    (X_train, gen_train, "Train"),
+    (X_test,  gen_test,  "Test"),
 ]
 
 seq_len = config.data.seq_len
@@ -88,7 +73,7 @@ fig_real, axes_real = plt.subplots(n_assets, 2, figsize = (14, 4 * n_assets))
 if n_assets == 1:
     axes_real = axes_real[np.newaxis, :]
 
-for col, (X, mask, gen, split_label) in enumerate(splits):
+for col, (X, gen, split_label) in enumerate(splits):
     for ch, ticker in enumerate(tickers[1:]):
         non_overlap_r = np.arange(0, X.shape[0], seq_len)
         acf_seq_real = []
@@ -108,7 +93,7 @@ for col, (X, mask, gen, split_label) in enumerate(splits):
         ax.plot(lags[1:], ci_upper_real[1:], color="black", linestyle=":", linewidth=1, label="95% band")
         ax.plot(lags[1:], ci_lower_real[1:], color="black", linestyle=":", linewidth=1)
         ax.axhline(0, color="black", linewidth=0.8, linestyle="--")
-        ax.set_ylim(-0.05, 0.2)
+        ax.set_ylim(-0.5, 0.2)
         ax.set_title(f"{ticker.upper()} — Real ({split_label})", fontsize=10, fontweight="bold")
         ax.set_xlabel("Lag"); ax.set_ylabel("ACF")
         ax.legend(fontsize=8); ax.grid(True, alpha=0.3)
@@ -126,7 +111,7 @@ fig_gen, axes_gen = plt.subplots(n_assets, 2, figsize = (14, 4 * n_assets))
 if n_assets == 1:
     axes_gen = axes_gen[np.newaxis, :]
 
-for col, (X, mask, gen, split_label) in enumerate(splits):
+for col, (X, gen, split_label) in enumerate(splits):
     for ch, ticker in enumerate(tickers[1:]):
         acf_seq_gen = []
         for j in range(len(gen)):
@@ -145,7 +130,7 @@ for col, (X, mask, gen, split_label) in enumerate(splits):
         ax.plot(lags[1:], ci_upper_gen[1:], color="black", linestyle=":", linewidth=1, label="95% band")
         ax.plot(lags[1:], ci_lower_gen[1:], color="black", linestyle=":", linewidth=1)
         ax.axhline(0, color="black", linewidth=0.8, linestyle="--")
-        ax.set_ylim(-0.05, 0.2)
+        ax.set_ylim(-0.5, 0.2)
         ax.set_title(f"{ticker.upper()} — Generated ({split_label})", fontsize=10, fontweight="bold")
         ax.set_xlabel("Lag"); ax.set_ylabel("ACF")
         ax.legend(fontsize=8); ax.grid(True, alpha=0.3)
@@ -163,7 +148,7 @@ fig_2, axes_2 = plt.subplots(n_assets, 2, figsize=(14, 4 * n_assets))
 if n_assets == 1:
     axes_2 = axes_2[np.newaxis, :]
 
-for col, (X, mask, gen, split_label) in enumerate(splits):
+for col, (X, gen, split_label) in enumerate(splits):
     for ch, ticker in enumerate(tickers[1:]):
         sq_acf_rl = []
         non_overlap = np.arange(0, X.shape[0], seq_len)

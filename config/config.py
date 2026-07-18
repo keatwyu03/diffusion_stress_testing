@@ -126,7 +126,7 @@ class HFunctionConfig:
     train_batch_size: int = 126        # number of noisy trajectories for unconditional diffusion
     train_stoch: float = 0.5           # stochasticity for generating training paths (0=ODE, 1=full SDE)
     h_mini_batch_size: int = 256       # mini-batch size per gradient step (smaller = more steps/epoch)
-    n_epochs: int = 2000             # number of times to go through the data
+    n_epochs: int = 1400               # number of times to go through the data
     learning_rate: float = 1e-4        # step size for SGD
     weight_decay: float = 5e-4         # penalty to prevent overfitting
     scheduler_patience: int = 75
@@ -146,8 +146,13 @@ class HFunctionConfig:
                                         # see get_event_threshold_from_percentile()
 
     # Constraint mode
-    constraint_mode: str = "hard"      # "hard" or "soft" (exponential)
-    reward_sharpness: float = 50.0     # multiplier for sigmoid in soft mode
+    constraint_mode: str = "soft"      # "hard": 0/1 labels at the threshold
+                                        # "soft": sigmoid(sharpness*(metric - threshold)) labels —
+                                        #   every window gets a graded event-likeness label
+    reward_sharpness: float = 5.0      # sigmoid steepness in soft mode; metric/threshold are in
+                                        # standardized units (threshold ~1.2-1.5 std), so ~5 spreads
+                                        # the ramp over a meaningful band of windows (50 would be
+                                        # nearly indistinguishable from hard labels)
 
     # Architecture: "transformer" or "cnn"
     arch: str = "transformer"
