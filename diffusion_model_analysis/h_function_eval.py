@@ -28,6 +28,9 @@ data_processor = DataProcessor(
     weekday_col=config.data.weekday_col,
     seq_len=config.data.seq_len,
     test_days=config.data.test_days,
+    start_date=config.data.start_date,
+    end_date=config.data.end_date,
+    train_end_date=config.data.train_end_date,
     window_shift=config.data.window_shift,
     winsorize_lower=config.data.winsorize_lower,
     winsorize_upper=config.data.winsorize_upper,
@@ -91,20 +94,10 @@ print(f"Train: N={len(B_train)}  pos={int(B_train.sum().item())}  pos_ratio={B_t
 train_results = h_by_tau(X_train_direct, B_train)
 
 # ── Test split: same event definition, applied to held-out windows ───────────
-X_test = data_processor.X_test  # (N, T, A) channels-last
-X_test_direct = X_test.permute(0, 2, 1)  # -> (N, A, T)
-
-last_window_test = X_test[:, -config.hfunction.event_window:, config.hfunction.event_asset_idx]
-if config.hfunction.event_type == "sum":
-    B_test = (last_window_test.sum(dim=1) <= config.hfunction.event_threshold).float()
-elif config.hfunction.event_type == "abs_change":
-    B_test = ((last_window_test[:, -1] - last_window_test[:, 0]).abs() >= config.hfunction.event_threshold).float()
-elif config.hfunction.event_type == "absval":
-    B_test = (last_window_test[:, -1].abs() >= config.hfunction.event_threshold).float()
-elif config.hfunction.event_type == "upper_change":
-    B_test = ((last_window_test[:, -1] - last_window_test[:, 0]) >= config.hfunction.event_threshold).float()
-elif config.hfunction.event_type == "lower_change":
-    B_test = ((last_window_test[:, -1] - last_window_test[:, 0]) <= -config.hfunction.event_threshold).float()
+# labels must come from the real conditioning series (X has no macro channel)
+Zs_te, Ze_te, vidx_te = data_processor.get_z_windows_test()
+X_test_direct = data_processor.X_test[vidx_te].permute(0, 2, 1)  # (N, T, A) -> (N, A, T)
+B_test = h_trainer._compute_labels(Zs_te, Ze_te)
 
 print(f"Test:  N={len(B_test)}  pos={int(B_test.sum().item())}  pos_ratio={B_test.mean().item():.4f}")
 test_results = h_by_tau(X_test_direct, B_test)
