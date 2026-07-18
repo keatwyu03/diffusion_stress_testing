@@ -257,13 +257,26 @@ class ConditionalGenerator:
                 if use_q_model and self.q_model is not None:
                     h_val = self.h_model(x, batch_time_step)
                     grad_h = self.q_model(x, batch_time_step)
-                    ratio = grad_h / (h_val.view(-1, 1, 1) + 1e-3)
+
+                    denom = self.pos_weight * (1.0 - h_val) + h_val
+                    ratio = (
+                        self.pos_weight * grad_h
+                        / (h_val * denom + 1e-6).view(-1, 1, 1)
+                    )
                 else:
                     with torch.enable_grad():
                         x.requires_grad_(True)
-                        h_val_autograd = self.h_model(x, batch_time_step)
-                        grad_h = torch.autograd.grad(h_val_autograd.sum(), x)[0]
-                    ratio = grad_h / (h_val_autograd.view(-1, 1, 1) + 1e-3)
+
+                        h_hat = self.h_model(x, batch_time_step)
+                        h_val = h_hat / (
+                            self.pos_weight * (1.0 - h_hat) + h_hat
+                        )
+
+                        grad_h = torch.autograd.grad(h_val.sum(), x)[0]
+
+                    ratio = grad_h / (
+                            h_val.view(-1, 1, 1) + 1e-6
+)
                     x = x.detach()
                     del h_val_autograd, grad_h
 
