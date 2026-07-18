@@ -61,7 +61,7 @@ class DataConfig:
     tickers: List[str] = None
     weekday_col: str = "weekday"
     seq_len: int = 10
-    test_days: int = 2000             # used only when train_end_date is None
+    test_days: int = 1200             # used only when train_end_date is None
     train_end_date: str = None        # last day of train set (None = use test_days)
     winsorize_lower: float = 0.005
     winsorize_upper: float = 0.995
