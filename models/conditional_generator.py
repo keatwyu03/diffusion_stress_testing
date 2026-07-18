@@ -278,7 +278,7 @@ class ConditionalGenerator:
                             h_val.view(-1, 1, 1) + 1e-6
 )
                     x = x.detach()
-                    del h_val_autograd, grad_h
+                    del h_hat, h_val, grad_h
 
                 drift = drift + (1 + eta) * (g_expanded**2) * ratio
 
