@@ -60,8 +60,8 @@ for start in range(0, N_samples, batch_size):
     bs = min(batch_size, N_samples - start)
     chunks.append(diffusion_model.sample(
         batch_size=bs,
-        num_steps=config.diffusion.num_steps,
-        stoch=0,
+        num_steps=config.conditional.num_steps,
+        stoch=config.conditional.stoch,
     ).cpu())
 uncond = torch.cat(chunks, dim=0)  # (N_samples, A, T)
 
