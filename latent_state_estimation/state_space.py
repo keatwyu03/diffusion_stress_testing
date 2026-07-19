@@ -101,7 +101,7 @@ class StateSpace():
                       np.zeros(self.n)]                 # log_var_y
         obj = lambda p : -self.filter(p)[0]
         res = minimize(obj, start, method="Nelder-Mead",
-                       options={"maxiter": 5000, "maxfev": 10000})
+                       options={"maxiter": 20000, "maxfev": 40000})
         self.params = res.x
         self.res = res
         return self
