@@ -27,39 +27,40 @@ dp = DataProcessor(
     window_shift    = _cfg.data.window_shift,
     winsorize_lower = _cfg.data.winsorize_lower,
     winsorize_upper = _cfg.data.winsorize_upper,
+    ema_span        = _cfg.data.ema_span,
 )
 
-dp.load_returns()
-# tickers[0] is already the chosen conditioning series (latent state or raw
-# macro variable) — import_data.py bakes it into the csv at build time
-dp.r_dw = dp.df[_cfg.data.tickers[1:]]  # standardize/sequence on stock cols only
-dp.standardize()
-dp.winsorize()
-dp.make_sequences()
-dp.train_test_split()
+# process_all() runs the real pipeline (EMA stats -> per-row z for diagnostics
+# -> per-window entry-day standardized sequences -> train/test split), same as
+# every other caller (main.py, conditional_gen.py, ...). No winsorizing: local-
+# vol standardization already tames outliers, per the reference pipeline.
+dp.process_all()
 
 save_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "diagnosis_plots")
 os.makedirs(save_dir, exist_ok=True)
 
-# ── Winsorized standardized log returns (time series, one panel per asset) ────
+# ── Per-row EMA-standardized log returns (time series, one panel per asset) ───
+# dp.df_z: (r - EMA_mean) / EMA_vol per row, for visualizing the diagnostic
+# series only — actual window tensors use per-window ENTRY-day stats instead
+# (see make_sequences()).
 test_start_date = dp.y_dates_test[0]
-n_wins_assets = len(dp.df_z_wins.columns)
+n_wins_assets = len(dp.df_z.columns)
 fig_wins, axes_wins = plt.subplots(n_wins_assets, 1, figsize=(14, 3 * n_wins_assets), sharex=True)
 if n_wins_assets == 1:
     axes_wins = [axes_wins]
-for ax, col in zip(axes_wins, dp.df_z_wins.columns):
-    ax.plot(dp.df_z_wins.index, dp.df_z_wins[col], linewidth=0.8)
+for ax, col in zip(axes_wins, dp.df_z.columns):
+    ax.plot(dp.df_z.index, dp.df_z[col], linewidth=0.8)
     ax.axhline(0, color="black", linewidth=0.8, linestyle="--")
     ax.axvline(test_start_date, color="red", linestyle="--", linewidth=1.2, label="Test start")
     ax.set_title(col.upper(), fontsize=10, fontweight="bold")
     ax.set_ylabel("Standardized Return")
     ax.legend(fontsize=8)
 axes_wins[-1].set_xlabel("Date")
-fig_wins.suptitle("Winsorized Standardized Log Returns", fontsize=13, fontweight="bold")
+fig_wins.suptitle("EMA-Standardized Log Returns", fontsize=13, fontweight="bold")
 plt.tight_layout()
-plt.savefig(os.path.join(save_dir, "winsorized_standardized_returns.png"), dpi=150, bbox_inches="tight")
+plt.savefig(os.path.join(save_dir, "ema_standardized_returns.png"), dpi=150, bbox_inches="tight")
 
-sq_resid = dp.df_z_wins ** 2
+sq_resid = dp.df_z ** 2
 n_sq_assets = len(sq_resid.columns)
 
 # ── ACF of squared residuals (one panel per asset) — volatility clustering ────

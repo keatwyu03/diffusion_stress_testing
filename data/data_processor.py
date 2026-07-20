@@ -285,7 +285,6 @@ class DataProcessor:
         self.weekday_mean = None
         self.sigma_seq = None
         self.df_z = None
-        self.df_z_wins = None
 
         # Per-window EMA standardization (causal, entry-day) — see _compute_ema_stats()
         self.MU = None            # (T, A) trailing EMA mean per row (shifted 1 day)
@@ -334,6 +333,26 @@ class DataProcessor:
         self.weekday_mean = weekday_mean
         return r_dw, weekday_mean
 
+    def _winsorize_raw_returns(self) -> None:
+        """Clip each stock's raw log-return to its [winsorize_lower,
+        winsorize_upper] quantile range, computed from TRAIN rows only (no
+        leakage) and applied to the full self.df (train+test) in place. Runs
+        BEFORE _compute_ema_stats(), so the EMA mean/vol themselves are
+        computed on the clipped series — outliers are tamed before anything
+        downstream (including the trailing vol estimate) sees them."""
+        stock_cols = self.tickers[1:]
+        r = self.df[stock_cols]
+        if self.train_end_date is not None:
+            cutoff = pd.to_datetime(self.train_end_date)
+            train_r = r[r.index <= cutoff]
+        else:
+            train_r = r.iloc[:-self.test_days]
+        q_low = train_r.quantile(self.winsorize_lower)
+        q_high = train_r.quantile(self.winsorize_upper)
+        self.df[stock_cols] = r.clip(lower=q_low, upper=q_high, axis=1)
+        print(f"Winsorized raw returns to train-only [{self.winsorize_lower:.1%}, "
+              f"{self.winsorize_upper:.1%}] quantiles per stock")
+
     def _compute_ema_stats(self) -> None:
         """Causal per-stock EMA mean/vol for per-window standardization
         (replicates rare_event_CDG): stats at row t use data through t-1 only
@@ -360,16 +379,6 @@ class DataProcessor:
             index=self.df.index, columns=r.columns,
         )
         return self.df_z
-
-    def winsorize(self) -> pd.DataFrame:
-        """Winsorize the standardized returns"""
-        df_wins = self.df_z.copy()
-        for col in df_wins.columns:
-            q_low = df_wins[col].quantile(self.winsorize_lower)
-            q_high = df_wins[col].quantile(self.winsorize_upper)
-            df_wins[col] = df_wins[col].clip(lower=q_low, upper=q_high)
-        self.df_z_wins = df_wins
-        return df_wins
 
     def make_sequences(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Create sequences with PER-WINDOW EMA standardization: each window's
@@ -450,15 +459,16 @@ class DataProcessor:
         self.load_returns()
         print(f"Loaded data shape: {self.df.shape}")
 
+        print("Winsorizing raw returns (train-only quantiles)...")
+        self._winsorize_raw_returns()
+
         print("Computing causal EMA standardizer...")
         self._compute_ema_stats()
-        self.r_dw = self.df[self.tickers[1:]]  # raw stock returns (post warm-up trim)
+        self.r_dw = self.df[self.tickers[1:]]  # raw stock returns (winsorized, post warm-up trim)
 
         print("Standardizing (per-row EMA z, diagnostics only)...")
         self.standardize()
         print(f"Standardized data shape: {self.df_z.shape}")
-        # No winsorizing: local-vol standardization already tames outliers,
-        # matching the reference (rare_event_CDG) pipeline.
 
         print("Creating sequences (per-window entry-day EMA standardization)...")
         self.make_sequences()
