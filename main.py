@@ -376,6 +376,7 @@ def main(args):
         diffusion_coeff_fn=diffusion_model.diffusion_coeff_fn,
         drift_coeff_fn=diffusion_model.drift_coeff_fn,
         make_vp_std_grid_fn=DiffusionModel.make_vp_std_grid,
+        marginal_prob_std_fn=diffusion_model.marginal_prob_std_fn,
         b_min=config.diffusion.b_min,
         b_max=config.diffusion.b_max,
         device=config.conditional.device,

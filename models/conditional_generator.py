@@ -49,6 +49,7 @@ class ConditionalGenerator:
         diffusion_coeff_fn: Callable,
         drift_coeff_fn: Callable,
         make_vp_std_grid_fn: Callable,
+        marginal_prob_std_fn: Callable,
         b_min: float = 0.1,
         b_max: float = 3.25,
         device: str = "cuda",
@@ -60,6 +61,10 @@ class ConditionalGenerator:
         self.diffusion_coeff_fn = diffusion_coeff_fn
         self.drift_coeff_fn = drift_coeff_fn
         self.make_vp_std_grid_fn = make_vp_std_grid_fn
+        # score_model predicts eps (unit-variance target at every t), not the
+        # score directly — convert via score = -eps_hat / sigma(t) wherever the
+        # reverse-SDE drift needs the score.
+        self.marginal_prob_std_fn = marginal_prob_std_fn
         self.b_min = b_min
         self.b_max = b_max
         self.device = device
@@ -243,8 +248,10 @@ class ConditionalGenerator:
             f = self.drift_coeff_fn(batch_time_step)
             f_expanded = f[:, None, None]
 
-            # Base drift from score model
-            score = self.score_model(x, time_step).sample
+            # Base drift from score model (network predicts eps; convert to score)
+            eps_hat = self.score_model(x, time_step).sample
+            std = self.marginal_prob_std_fn(batch_time_step)[:, None, None]
+            score = -eps_hat / std
             drift = (g_expanded**2) * score
 
             # Guidance only applied for tau <= h_t_max — beyond that, Y_tau is near-pure

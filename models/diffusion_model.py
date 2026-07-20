@@ -109,6 +109,14 @@ class DiffusionModel:
         t = torch.as_tensor(t)
         return -0.5 * (b_min + (b_max - b_min) * t)
 
+    def score_from_eps(self, eps_hat: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        """Convert the network's eps-prediction to the score: score = -eps_hat / sigma(t).
+        The network always predicts eps (unit-variance target at every t); every
+        caller that needs the score (loss, reverse-SDE drift, Doob guidance) goes
+        through this single conversion so the parameterization only lives here."""
+        std = self.marginal_prob_std_fn(t)[:, None, None]
+        return -eps_hat / std
+
     def loss_fn(
         self,
         x: torch.Tensor,
@@ -141,7 +149,12 @@ class DiffusionModel:
 
         perturbed_x = x * mean_expanded + z * std_expanded
 
-        score = self.model(perturbed_x, random_t).sample
+        # Network predicts eps (the noise added above), not the score directly.
+        # eps has unit variance at every t by construction, unlike the score
+        # (-z/std), which diverges as t -> 0 — a much easier, uniformly-scaled
+        # target to regress on across all noise levels.
+        eps_hat = self.model(perturbed_x, random_t).sample
+        score = self.score_from_eps(eps_hat, random_t)
         # One-step (Tweedie's formula) estimate of x0 from the current noisy input
         x0_hat = (perturbed_x + std_expanded ** 2 * score) / mean_expanded
 
@@ -149,7 +162,7 @@ class DiffusionModel:
         low_t_mask = random_t < self.cov_t_max
         n_low_t = int(low_t_mask.sum())
 
-        if n_low_t >= 2: 
+        if n_low_t >= 2:
             # Correlation matrix of this batch's reconstruction — same last-day-return
             gen_corr = torch.corrcoef(x0_hat[low_t_mask][:, :, -1].T)
             n_assets = gen_corr.shape[0]
@@ -159,7 +172,7 @@ class DiffusionModel:
         else:
             cov_penalty = torch.zeros((), device = self.device)
 
-        loss = torch.mean(torch.sum((score * std_expanded + z) ** 2, dim=(1, 2))) + self.cov_weight * cov_penalty
+        loss = torch.mean(torch.sum((eps_hat - z) ** 2, dim=(1, 2))) + self.cov_weight * cov_penalty
 
         return loss
 
@@ -332,7 +345,8 @@ class DiffusionModel:
                 f = self.drift_coeff_fn(batch_time_step)
                 f_expanded = f[:, None, None]
 
-                score = self.model(x, batch_time_step).sample
+                eps_hat = self.model(x, batch_time_step).sample
+                score = self.score_from_eps(eps_hat, batch_time_step)
                 adjust = (1 + stoch**2) / 2
                 mean_x = (
                     x + (-f_expanded * x + adjust * (g_expanded**2) * score) * step_size
