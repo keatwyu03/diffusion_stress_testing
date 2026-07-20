@@ -162,11 +162,11 @@ class HFunctionConfig:
     device: str = field(default_factory=_default_device)
     asset_dim: int = 4
     time_steps: int = 10
-    embed_dim: int = 64
+    embed_dim: int = 256
 
-    n_heads: int = 4
-    n_layers: int = 2
-    cond_dim: int = 64
+    n_heads: int = 8
+    n_layers: int = 6
+    cond_dim: int = 256
     dropout: float = 0.0
 
 
