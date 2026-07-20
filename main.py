@@ -82,6 +82,7 @@ def main(args):
         window_shift=config.data.window_shift,
         winsorize_lower=config.data.winsorize_lower,
         winsorize_upper=config.data.winsorize_upper,
+        ema_span=config.data.ema_span,
     )
 
     data_processor.process_all()

@@ -262,6 +262,8 @@ class DataProcessor:
         window_shift: int = 1,
         winsorize_lower: float = 0.005,
         winsorize_upper: float = 0.995,
+        ema_span: int = 60,
+        ema_min_periods: int = 20,
     ):
         self.csv_path = csv_path
         self.tickers = tickers
@@ -274,6 +276,8 @@ class DataProcessor:
         self.window_shift = window_shift
         self.winsorize_lower = winsorize_lower
         self.winsorize_upper = winsorize_upper
+        self.ema_span = ema_span
+        self.ema_min_periods = ema_min_periods
 
         # Data containers
         self.df = None
@@ -282,6 +286,12 @@ class DataProcessor:
         self.sigma_seq = None
         self.df_z = None
         self.df_z_wins = None
+
+        # Per-window EMA standardization (causal, entry-day) — see _compute_ema_stats()
+        self.MU = None            # (T, A) trailing EMA mean per row (shifted 1 day)
+        self.SG = None            # (T, A) trailing EMA vol per row (shifted 1 day)
+        self.mu_entry = None      # (Nw, A) entry-day EMA mean per window (invertibility)
+        self.sig_entry = None     # (Nw, A) entry-day EMA vol per window
 
         # Sequence data
         self.X = None
@@ -324,17 +334,31 @@ class DataProcessor:
         self.weekday_mean = weekday_mean
         return r_dw, weekday_mean
 
+    def _compute_ema_stats(self) -> None:
+        """Causal per-stock EMA mean/vol for per-window standardization
+        (replicates rare_event_CDG): stats at row t use data through t-1 only
+        (shift(1)), so the entry-day standardizer never sees the window itself.
+        Rows before the EMA warm-up are trimmed from self.df, so windows and
+        the macro series keep sharing one row base."""
+        r = self.df[self.tickers[1:]]
+        MU = r.ewm(span=self.ema_span, min_periods=self.ema_min_periods).mean().shift(1)
+        SG = r.ewm(span=self.ema_span, min_periods=self.ema_min_periods).std().shift(1)
+        valid = MU.notna().all(axis=1) & SG.notna().all(axis=1) & (SG > 0).all(axis=1)
+        first = int(valid.to_numpy().argmax())
+        self.df = self.df.iloc[first:]
+        self.MU = MU.iloc[first:].to_numpy(np.float64)
+        self.SG = SG.iloc[first:].to_numpy(np.float64)
+        print(f"EMA standardizer: span={self.ema_span}, warm-up cut {first} rows, {len(self.df)} remain")
+
     def standardize(self) -> pd.DataFrame:
-        """Standardize using train-set std only to avoid data leakage"""
-        if self.train_end_date is not None:
-            cutoff = pd.to_datetime(self.train_end_date)
-            train_data = self.r_dw[self.r_dw.index <= cutoff]
-        else:
-            train_data = self.r_dw.iloc[:-self.test_days]
-        self.mu_seq = train_data.mean()
-        self.sigma_seq = train_data.std()
-        z = (self.r_dw - self.mu_seq) / self.sigma_seq
-        self.df_z = z.dropna(how="any")
+        """Per-row EMA z-scores, kept for diagnostics (diagnosis.py). The actual
+        window tensors are standardized with ENTRY-day stats in make_sequences()
+        / get_diffusion_data(), not with this frame."""
+        r = self.df[self.tickers[1:]]
+        self.df_z = pd.DataFrame(
+            (r.to_numpy(np.float64) - self.MU) / self.SG,
+            index=self.df.index, columns=r.columns,
+        )
         return self.df_z
 
     def winsorize(self) -> pd.DataFrame:
@@ -348,27 +372,36 @@ class DataProcessor:
         return df_wins
 
     def make_sequences(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Create sequences from standardized returns"""
-        z_values = self.df_z.values
-        dates = self.df_z.index.to_numpy()
-        weekday_arr = self.df_z.index.dayofweek.values
-        T, D = z_values.shape
-        X_list, y_list, idx_list, sw_list = [], [], [], []
+        """Create sequences with PER-WINDOW EMA standardization: each window's
+        returns are standardized by the EMA mean/vol at its ENTRY day (causal,
+        one vector per stock), z = (r - mu_entry) / sig_entry, broadcast over
+        the window's days. Invertible via (mu_entry, sig_entry), stored per
+        window."""
+        r_values = self.df[self.tickers[1:]].to_numpy(np.float64)
+        dates = self.df.index.to_numpy()
+        weekday_arr = self.df.index.dayofweek.values
+        T, D = r_values.shape
+        X_list, y_list, idx_list, sw_list, mu_list, sig_list = [], [], [], [], [], []
 
         for t in range(self.seq_len, T, self.window_shift):
-            X_list.append(z_values[t - self.seq_len : t, :])
-            y_list.append(z_values[t, :])
+            s = t - self.seq_len                      # window entry row
+            X_list.append((r_values[s:t, :] - self.MU[s]) / self.SG[s])
+            y_list.append((r_values[t, :] - self.MU[t]) / self.SG[t])
             idx_list.append(dates[t])
-            sw_list.append(int(weekday_arr[t - self.seq_len]))  # weekday of window start
+            sw_list.append(int(weekday_arr[s]))       # weekday of window start
+            mu_list.append(self.MU[s])
+            sig_list.append(self.SG[s])
 
-        X = np.stack(X_list, axis=0)
-        y = np.stack(y_list, axis=0)
+        X = np.stack(X_list, axis=0).astype(np.float32)
+        y = np.stack(y_list, axis=0).astype(np.float32)
         idx = np.array(idx_list)
 
         self.X = X
         self.y = y
         self.y_dates = idx
         self.start_weekdays = np.array(sw_list, dtype=np.int8)
+        self.mu_entry = np.stack(mu_list).astype(np.float32)    # (Nw, A)
+        self.sig_entry = np.stack(sig_list).astype(np.float32)  # (Nw, A)
         return X, y, idx
 
     def train_test_split(self) -> None:
@@ -397,6 +430,10 @@ class DataProcessor:
         self.start_weekdays_train = self.start_weekdays[:split_idx]
         self.start_weekdays_test  = self.start_weekdays[split_idx:]
 
+        # entry-day EMA stats per window, for de-standardizing back to raw returns
+        self.mu_entry_train,  self.mu_entry_test  = self.mu_entry[:split_idx],  self.mu_entry[split_idx:]
+        self.sig_entry_train, self.sig_entry_test = self.sig_entry[:split_idx], self.sig_entry[split_idx:]
+
         # Convert to torch tensors
         self.X = torch.tensor(self.X, dtype=torch.float32)
         self.y = torch.tensor(self.y, dtype=torch.float32)
@@ -413,18 +450,17 @@ class DataProcessor:
         self.load_returns()
         print(f"Loaded data shape: {self.df.shape}")
 
-        # print("Removing weekday effect...")
-        # self.remove_weekday_effect()
-        self.r_dw = self.df[self.tickers[1:]]  # skip weekday removal, use raw data
+        print("Computing causal EMA standardizer...")
+        self._compute_ema_stats()
+        self.r_dw = self.df[self.tickers[1:]]  # raw stock returns (post warm-up trim)
 
-        print("Standardizing...")
+        print("Standardizing (per-row EMA z, diagnostics only)...")
         self.standardize()
         print(f"Standardized data shape: {self.df_z.shape}")
+        # No winsorizing: local-vol standardization already tames outliers,
+        # matching the reference (rare_event_CDG) pipeline.
 
-        print("Winsorizing...")
-        self.winsorize()
-
-        print("Creating sequences...")
+        print("Creating sequences (per-window entry-day EMA standardization)...")
         self.make_sequences()
         print(f"X shape: {self.X.shape}, y shape: {self.y.shape}")
 
@@ -434,18 +470,20 @@ class DataProcessor:
         print(f"Train: {self.X_train.shape}, Test: {self.X_test.shape}")
 
     def get_diffusion_data(self) -> torch.Tensor:
-        """Get data for diffusion model training (winsorized windows)"""
-        data = torch.tensor(self.df_z_wins.values, dtype=torch.float32)
+        """Get data for diffusion model training: per-window EMA-standardized
+        windows (entry-day stats), same standardization as make_sequences()."""
+        r_values = self.df[self.tickers[1:]].to_numpy(np.float64)
         window_size = self.seq_len
         X_all = []
-        for i in range(0, len(data) - window_size + 1, self.window_shift):
-            X_all.append(data[i : i + window_size].T)
+        for i in range(0, len(r_values) - window_size + 1, self.window_shift):
+            z = (r_values[i : i + window_size, :] - self.MU[i]) / self.SG[i]
+            X_all.append(torch.tensor(z.T, dtype=torch.float32))
         X_all = torch.stack(X_all)
 
         # Return only training portion, consistent with train_test_split boundary
         if self.train_end_date is not None:
             cutoff = pd.to_datetime(self.train_end_date)
-            dates_all = self.df_z_wins.index
+            dates_all = self.df.index
             # Window j (start = j*window_shift) ends at dates_all[j*window_shift + window_size - 1];
             # step the slice by window_shift so end_dates lines up 1:1 with X_all's windows.
             end_dates = dates_all[window_size - 1 :: self.window_shift]
@@ -454,6 +492,37 @@ class DataProcessor:
         else:
             X_diffusion_train = X_all[: -self.test_days]
         return X_diffusion_train
+
+    def destandardize_windows(self, z: torch.Tensor, mu_entry: np.ndarray, sig_entry: np.ndarray) -> np.ndarray:
+        """Invert per-window EMA standardization back to raw log-returns.
+        z: (N, A, T) standardized windows; mu_entry/sig_entry: (N, A) entry stats.
+        For GENERATED samples pass entry stats drawn from the comparison set
+        (see sample_entry_stats) — that reinjects the vol regime."""
+        z = z.detach().cpu().numpy() if hasattr(z, "detach") else np.asarray(z)
+        return z * np.asarray(sig_entry)[:, :, None] + np.asarray(mu_entry)[:, :, None]
+
+    def sample_entry_stats(
+        self, n_draw: int, split: str = "train", mask: Optional[np.ndarray] = None, seed: int = 0
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Draw n_draw (mu_entry, sig_entry) vectors with replacement from a
+        split's entry-stat pool, to give generated windows realistic vol scales.
+
+        mask: optional boolean array over the split's windows restricting the
+        pool. For CONDITIONAL samples pass the event mask — events cluster in
+        particular vol regimes, and drawing from the full pool would erase the
+        empirical (macro event <-> entry volatility) relationship when
+        reconstructing raw returns. Unconditional samples use the full pool.
+        """
+        mu_pool = self.mu_entry_train if split == "train" else self.mu_entry_test
+        sig_pool = self.sig_entry_train if split == "train" else self.sig_entry_test
+        if mask is not None:
+            mask = np.asarray(mask, dtype=bool)
+            mu_pool, sig_pool = mu_pool[mask], sig_pool[mask]
+        if len(mu_pool) == 0:
+            raise ValueError("entry-stat pool is empty (empty mask or split)")
+        rng = np.random.default_rng(seed)
+        idx = rng.integers(0, len(mu_pool), size=n_draw)
+        return mu_pool[idx], sig_pool[idx]
 
     def _macro_std_values_and_n_train(self) -> Tuple[np.ndarray, int]:
         """Standardize the raw macro column (train-set stats only) and return
@@ -593,51 +662,8 @@ class DataProcessor:
         print(f"Event windows: {len(valid_idx)} valid out of {split_idx} train windows")
         return Z_start, Z_end, valid_idx
 
-    def invert_samples(
-        self,
-        samples: torch.Tensor,
-        start_weekday: Optional[int] = None,
-    ) -> Tuple[pd.DataFrame, pd.DataFrame, np.ndarray, pd.Series]:
-        """
-        Invert standardized samples back to returns
-
-        Args:
-            samples: (T, D) tensor of standardized samples
-            start_weekday: Starting weekday (0-4), if None will be random
-
-        Returns:
-            r_seq: Returns dataframe
-            r_dw_seq: De-weekday returns dataframe
-            sigma_path: Sigma path
-            port_seq: Portfolio returns series
-        """
-        z_seq = (
-            samples.detach().cpu().numpy()
-            if hasattr(samples, "detach")
-            else np.asarray(samples)
-        )
-        T, D = z_seq.shape
-
-        if start_weekday is None:
-            start_weekday = np.random.randint(0, 5)
-
-        r_seq = np.zeros((T, D))
-        r_dw_seq = np.zeros((T, D))
-        sigma_path = np.tile(self.sigma_seq.to_numpy(), (T + 1, 1))
-        port_seq = np.zeros(T)
-
-        for t in range(T):
-            r_dw_t = z_seq[t] * self.sigma_seq.to_numpy()
-            w_t = (start_weekday + t) % 5
-            r_t = r_dw_t + self.weekday_mean.loc[w_t, self.tickers].to_numpy()
-
-            r_dw_seq[t] = r_dw_t
-            r_seq[t] = r_t
-            port_seq[t] = r_t.mean()
-
-        return (
-            pd.DataFrame(r_seq, columns=self.tickers),
-            pd.DataFrame(r_dw_seq, columns=self.tickers),
-            sigma_path,
-            pd.Series(port_seq, name="Portfolio"),
-        )
+    # NOTE: the legacy invert_samples() (global sigma_seq + weekday_mean inversion)
+    # was removed with the switch to per-window EMA standardization — those
+    # attributes are no longer populated. Use destandardize_windows() with
+    # entry stats (own stats for real windows, sample_entry_stats() draws for
+    # generated windows) instead.

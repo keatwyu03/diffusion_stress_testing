@@ -65,6 +65,8 @@ class DataConfig:
     train_end_date: str = None        # last day of train set (None = use test_days)
     winsorize_lower: float = 0.005
     winsorize_upper: float = 0.995
+    ema_span: int = 60                # per-window causal EMA standardizer span
+                                       # (z = (r - EMA_mean)/EMA_vol at window entry)
 
     def __post_init__(self):
         if self.tickers is None:
@@ -88,7 +90,7 @@ class DiffusionConfig:
 
     # Variance Preserving diffusion parameters
     b_min: float = 0.1
-    b_max: float = 3.25
+    b_max: float = 10.0
 
     # Training parameters
     batch_size: int = 75               #Stochastic minibatch gradient descent
@@ -131,7 +133,7 @@ class HFunctionConfig:
     weight_decay: float = 5e-4         # penalty to prevent overfitting
     scheduler_patience: int = 75
     scheduler_factor: float = 0.5
-    h_t_max: float = 0.6               # cap on tau during training AND guidance application at
+    h_t_max: float = 0.9               # cap on tau during training AND guidance application at
                                         # sampling time — beyond this, Y_tau is near-pure noise and
                                         # the true P(Z in S | Y_tau) collapses to the base event rate,
                                         # so there is no learnable signal to train on or guide with
@@ -179,10 +181,10 @@ class ConditionalGenConfig:
     device: str = field(default_factory=_default_device)
     batch_size: int = 32
     num_steps: int = 500
-    stoch: float = 0.5
-    eta: float = 0
+    stoch: float = 1.0
+    eta: float = 1
     use_q_model: bool = False
-    stop_early_steps: int = 20          # stop this many steps before the reverse SDE
+    stop_early_steps: int = 5          # stop this many steps before the reverse SDE
                                         # reaches t=eps, leaving residual noise/diversity
                                         # instead of fully resolving to the sharp end state
     n_gen_samples: int = 2000          # number of samples to generate for train/test each,
