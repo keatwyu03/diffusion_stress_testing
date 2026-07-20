@@ -22,7 +22,6 @@ or VP: dXt = (-0.5 * beta Xt + beta(t) * s'(t,xt))dt + sqrt(beta(t))dBt
 3. in_out sample error (email)
 4. Buy&hold sp500
 5. Augment
-
 """
 
 
@@ -108,10 +107,10 @@ class DiffusionConfig:
     arch: str = "transformer"
 
     # Transformer-specific parameters (used when arch="transformer")
-    embed_dim: int = 128
+    embed_dim: int = 256
     n_heads: int = 16
     n_layers: int = 8
-    cond_dim: int = 128
+    cond_dim: int = 256
     
     cov_weight: float = 0.0
     cov_t_max: float = 0.3             # only low-t batch examples (one-step reconstruction

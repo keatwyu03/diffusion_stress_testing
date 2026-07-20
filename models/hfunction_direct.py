@@ -8,38 +8,8 @@ import torch.optim as optim
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from tqdm import tqdm
 
-from .transformer_score import AdaLN, GaussianFourierFeatures
+from .transformer_score import GaussianFourierFeatures, SpatioTemporalBlock
 from config import HFunctionConfig
-
-class SpatioTemporalBlock(nn.Module):
-    
-    def __init__(self, dim, n_heads, cond_dim, ff_mult = 4, dropout = 0.0):
-        super().__init__()
-        self.attn_norm = AdaLN(dim, cond_dim)
-        self.attn = nn.MultiheadAttention(dim, n_heads, dropout = dropout, batch_first = True)
-
-        self.ffn_norm = AdaLN(dim, cond_dim)
-        self.ffn = nn.Sequential(
-            nn.Linear(dim, dim * ff_mult),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(dim * ff_mult, dim),
-        )
-
-        self.attn_drop = nn.Dropout(dropout)
-        self.ffn_drop = nn.Dropout(dropout)
-    
-    def forward(self, x, t_emb):
-        normed = self.attn_norm(x, t_emb)
-        out, _ = self.attn(normed, normed, normed)
-        x = x + self.attn_drop(out)
-
-        normed = self.ffn_norm(x, t_emb)
-        x = x + self.ffn_drop(self.ffn(normed))
-        return x
-
-
-
 
 #Building the Transformer for the conditional HFunction
 class HFunctionTransformerDirect(nn.Module):

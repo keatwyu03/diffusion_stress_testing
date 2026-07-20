@@ -130,6 +130,46 @@ class DualAxisBlock(nn.Module):
         return x
 
 
+class SpatioTemporalBlock(nn.Module):
+    """One transformer block with JOINT attention over all (asset, day) tokens.
+
+    Unlike DualAxisBlock, which factorizes attention into a temporal pass and a
+    cross-asset pass (so cross-asset, cross-time information needs two hops),
+    every token here attends to every other token directly — "asset i on day 3
+    -> asset j on day 9" forms in a single hop. At A*T tokens (e.g. 40) the full
+    attention matrix is tiny, so factorization buys nothing.
+
+    Diffusion time conditions each sub-layer through AdaLN (t_emb sets the
+    scale/shift of the normalization), same mechanism as DualAxisBlock.
+    """
+
+    def __init__(self, dim, n_heads, cond_dim, ff_mult=4, dropout=0.0):
+        super().__init__()
+        self.attn_norm = AdaLN(dim, cond_dim)
+        self.attn = nn.MultiheadAttention(
+            dim, n_heads, dropout=dropout, batch_first=True
+        )
+        self.ffn_norm = AdaLN(dim, cond_dim)
+        self.ffn = nn.Sequential(
+            nn.Linear(dim, dim * ff_mult),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(dim * ff_mult, dim),
+        )
+        self.attn_drop = nn.Dropout(dropout)
+        self.ffn_drop = nn.Dropout(dropout)
+
+    def forward(self, x, t_emb):
+        # x: (B, N, D) flattened spatiotemporal tokens, t_emb: (B, cond_dim)
+        normed = self.attn_norm(x, t_emb)
+        out, _ = self.attn(normed, normed, normed)
+        x = x + self.attn_drop(out)
+
+        normed = self.ffn_norm(x, t_emb)
+        x = x + self.ffn_drop(self.ffn(normed))
+        return x
+
+
 class FinancialTransformerScore(nn.Module):
     """
     Full dual-axis Transformer score network.
@@ -156,9 +196,13 @@ class FinancialTransformerScore(nn.Module):
         # Each scalar return value → embed_dim
         self.input_proj = nn.Linear(1, embed_dim)
 
-        # Positional embeddings: temporal (over 64 steps) + asset identity (4 stocks)
-        self.temporal_pos = nn.Parameter(torch.randn(1, 1, seq_len, embed_dim) * 0.02)
-        self.asset_emb    = nn.Parameter(torch.randn(1, n_assets, 1, embed_dim) * 0.02)
+        # Learned positional tables: each of the seq_len days and each of the
+        # n_assets stocks gets its own trainable embedding vector, same
+        # tokenization style as HFunctionTransformerDirect.
+        self.day_emb = nn.Embedding(seq_len, embed_dim)      # temporal position
+        self.stock_emb = nn.Embedding(n_assets, embed_dim)   # cross-sectional identity
+        self.register_buffer("day_ids", torch.arange(seq_len), persistent=False)
+        self.register_buffer("stock_ids", torch.arange(n_assets), persistent=False)
 
         # Time conditioning: Fourier features → small MLP → cond_dim
         self.time_embed = nn.Sequential(
@@ -169,7 +213,7 @@ class FinancialTransformerScore(nn.Module):
         )
 
         self.blocks = nn.ModuleList([
-            DualAxisBlock(embed_dim, n_heads, cond_dim, ff_mult, dropout)
+            SpatioTemporalBlock(embed_dim, n_heads, cond_dim, ff_mult, dropout)
             for _ in range(n_layers)
         ])
 
@@ -184,10 +228,19 @@ class FinancialTransformerScore(nn.Module):
         t_emb = self.time_embed(t)               # (B, cond_dim)
 
         h = self.input_proj(x.unsqueeze(-1))      # (B, A, T, embed_dim)
-        h = h + self.temporal_pos + self.asset_emb
+        h = (h
+             + self.day_emb(self.day_ids)[None, None, :, :]      # (1, 1, T, D)
+             + self.stock_emb(self.stock_ids)[None, :, None, :]) # (1, A, 1, D)
+
+        # Flatten to joint spatiotemporal tokens, day-major: (B, A, T, D) -> (B, T*A, D)
+        B, A, T, D = h.shape
+        h = h.permute(0, 2, 1, 3).reshape(B, T * A, D)
 
         for block in self.blocks:
             h = block(h, t_emb)
+
+        # Back to (B, A, T, D) for the per-position output head
+        h = h.reshape(B, T, A, D).permute(0, 2, 1, 3)
 
         out = self.output_proj(self.output_norm(h)).squeeze(-1)  # (B, A, T)
         return ScoreOutput(sample=out)
