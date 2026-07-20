@@ -8,30 +8,49 @@ import torch.optim as optim
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from tqdm import tqdm
 
-from .transformer_score import GaussianFourierFeatures, DualAxisBlock
+from .transformer_score import AdaLN, GaussianFourierFeatures
 from config import HFunctionConfig
 
+class SpatioTemporalBlock(nn.Module):
+    
+    def __init__(self, dim, n_heads, cond_dim, ff_mult = 4, dropout = 0.0):
+        super().__init__()
+        self.attn_norm = AdaLN(dim, cond_dim)
+        self.attn = nn.MultiheadAttention(dim, n_heads, dropout = dropout, batch_first = True)
 
-#Building the Neural Network
+        self.ffn_norm = AdaLN(dim, cond_dim)
+        self.ffn = nn.Sequential(
+            nn.Linear(dim, dim * ff_mult),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(dim * ff_mult, dim),
+        )
+
+        self.attn_drop = nn.Dropout(dropout)
+        self.ffn_drop = nn.Dropout(dropout)
+    
+    def forward(self, x, t_emb):
+        normed = self.attn_norm(x, t_emb)
+        out, _ = self.attn(normed, normed, normed)
+        x = x + self.attn_drop(out)
+
+        normed = self.ffn_norm(x, t_emb)
+        x = x + self.ffn_drop(self.ffn(normed))
+        return x
+
+
+
+
+#Building the Transformer for the conditional HFunction
 class HFunctionTransformerDirect(nn.Module):
 
     def __init__(self, n_assets, seq_len, embed_dim, n_heads, n_layers, cond_dim, dropout=0.0):
         super().__init__()
-        self.input_proj = nn.Linear(1, embed_dim)   #Embedding the cross section vector
-        # Sinusoidal (not fully-random) positional embedding: nearby days get similar
-        # vectors, distant days get predictably different ones, same style as the
-        # time_embed below. A small MLP lets the network still adapt this smooth base,
-        # rather than needing to learn 64 independent random vectors from scratch.
-        self.temporal_pos_proj = nn.Sequential(
-            GaussianFourierFeatures(embed_dim),
-            nn.Linear(embed_dim, embed_dim),
-            nn.SiLU(),
-            nn.Linear(embed_dim, embed_dim),
-        )
-        day_idx = torch.arange(seq_len, dtype=torch.float32) / max(seq_len - 1, 1)
-        self.register_buffer("day_idx", day_idx)  # normalized day position in [0, 1]
-        
-        self.asset_emb = nn.Parameter(torch.randn(1, n_assets, 1, embed_dim) * 0.02)     #Setup the asset random vector to learn asset unique impact
+        self.input_proj = nn.Linear(1, embed_dim)   #Embedding each scalar return into a token vector
+        self.day_emb = nn.Embedding(seq_len, embed_dim)      # temporal position
+        self.stock_emb = nn.Embedding(n_assets, embed_dim)   # cross-sectional identity
+        self.register_buffer("day_ids", torch.arange(seq_len), persistent=False)
+        self.register_buffer("stock_ids", torch.arange(n_assets), persistent=False)
 
         self.time_embed = nn.Sequential(
             GaussianFourierFeatures(cond_dim), #Mapping the scalar into a cond_dim vector of sines and cosines (embedding the time into a vector fomr)
@@ -41,14 +60,16 @@ class HFunctionTransformerDirect(nn.Module):
         ) #Encoding the diffusion time into a vector the transformer can condition on.
 
         self.blocks = nn.ModuleList([
-            DualAxisBlock(embed_dim, n_heads, cond_dim, dropout=dropout) for _ in range(n_layers)
-        ])#Sets up n_layers dual axis blocks which are feed forward NN
+            SpatioTemporalBlock(embed_dim, n_heads, cond_dim, dropout=dropout) for _ in range(n_layers)
+        ])#n_layers blocks of joint attention over all (asset, day) tokens
 
         self.norm = nn.LayerNorm(embed_dim)  #Applies the layer norm to the last block
-        # Head takes [start_day, end_day, end-start] pooled features (3*embed_dim),
-        # not a mean over all timesteps — see forward().
+        # Head takes [global mean, start_day, end_day, end-start] pooled features
+        # (4*embed_dim) — the mean channel summarizes window-wide structure
+        # (vol level, co-movement), the start/end channels align with the
+        # event's start->end change definition — see forward().
         self.head = nn.Sequential(
-            nn.Linear(embed_dim * 3, embed_dim//2),
+            nn.Linear(embed_dim * 4, embed_dim//2),
             nn.SiLU(),
             nn.Linear(embed_dim // 2, 1),
         ) #Unembeds the vector representation back to a single raw logit (no Sigmoid here — see forward())
@@ -64,25 +85,28 @@ class HFunctionTransformerDirect(nn.Module):
         #Pass t through the initialized MLP
         t_emb = self.time_embed(t)
 
-        #Embedding the cross sectino
-        h = self.input_proj(x.unsqueeze(-1))
+        #Tokenize: each scalar return becomes a token vector
+        h = self.input_proj(x.unsqueeze(-1))                 # (B, A, T, D)
 
-        #Adds the temporal and asset based embeddings to the vectors
-        temporal_pos = self.temporal_pos_proj(self.day_idx)  # (seq_len, embed_dim)
-        h = h + temporal_pos[None, None, :, :] + self.asset_emb
+        h = (h
+             + self.day_emb(self.day_ids)[None, None, :, :]      # (1, 1, T, D)
+             + self.stock_emb(self.stock_ids)[None, :, None, :]) # (1, A, 1, D)
 
-        #Passes each vector throguh through each DualAxisBlock
+        #Flatten to joint spatiotemporal tokens, day-major: (B, A, T, D) -> (B, T*A, D)
+        B, A, T, D = h.shape
+        h = h.permute(0, 2, 1, 3).reshape(B, T * A, D)
+
         for block in self.blocks:
             h = block(h, t_emb)
 
-        #The label depends only on the window's start/end days (Z_start, Z_end) —
-        #pooling with a mean over all 64 timesteps blends that signal with 62
-        #irrelevant days. Instead, pull out the start/end day embeddings directly
-        #(averaged over assets) and feed the head their values plus their difference.
+        #Back to (B, A, T, D) for the start/end readout
+        h = h.reshape(B, T, A, D).permute(0, 2, 1, 3)
+
         h = self.norm(h)                                # (B, A, T, D)
+        h_mean  = h.mean(dim=(1, 2))                     # (B, D) global window summary
         h_start = h[:, :, 0, :].mean(dim=1)              # (B, D)
         h_end   = h[:, :, -1, :].mean(dim=1)             # (B, D)
-        h_pooled = torch.cat([h_start, h_end, h_end - h_start], dim=-1)  # (B, 3D)
+        h_pooled = torch.cat([h_mean, h_start, h_end, h_end - h_start], dim=-1)  # (B, 4D)
         logits = self.head(h_pooled)
         #return_logits=True feeds BCEWithLogitsLoss directly (numerically stable with pos_weight);
         #default keeps existing probability-output behavior for sampling/generation call sites.
