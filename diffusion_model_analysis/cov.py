@@ -146,8 +146,39 @@ for split_label, panels in [("TRAIN", panels_train), ("TEST", panels_test)]:
         print(pd.DataFrame(C, index=plot_tickers, columns=plot_tickers).round(4).to_string())
 
 
+# ── Off-diagonal correlation RMSE vs Real (event windows) ─────────────────────
+def off_diag_rmse(C_a: np.ndarray, C_b: np.ndarray) -> float:
+    """RMSE of the off-diagonal entries between two same-shaped correlation
+    matrices (diagonal is always 1 for both, so excluding it isolates the
+    actual cross-asset structure being compared)."""
+    mask = ~np.eye(C_a.shape[0], dtype=bool)
+    return float(np.sqrt(np.mean((C_a[mask] - C_b[mask]) ** 2)))
+
+
+def event_ref_corr(panels):
+    """Correlation matrix of this split's 'Real ... (event windows)' panel —
+    the target every generated panel's off-diagonal RMSE is measured against."""
+    for lbl, arr in panels:
+        if "event windows" in lbl:
+            return np.corrcoef(arr.T)
+    raise ValueError("no 'Real ... (event windows)' panel found")
+
+
+def print_corr_rmse(split_label, panels):
+    C_ref = event_ref_corr(panels)
+    print(f"\n── Off-Diagonal Corr RMSE vs Real {split_label} (event windows) ──")
+    rows = []
+    for lbl, arr in panels:
+        if "event windows" in lbl:
+            continue
+        rmse = off_diag_rmse(np.corrcoef(arr.T), C_ref)
+        print(f"  {lbl:<28} RMSE = {rmse:.4f}")
+        rows.append((lbl, rmse))
+    return rows
+
+
 # ── Plot helper ───────────────────────────────────────────────────────────────
-def plot_matrices(panels, title, fname, vmin, vmax, fmt):
+def plot_matrices(panels, title, fname, vmin, vmax, fmt, rmse_rows=None):
     tick_lbl  = [t.upper() for t in plot_tickers]
     font_size = max(8, min(13, 40 // n_plot))
 
@@ -180,6 +211,13 @@ def plot_matrices(panels, title, fname, vmin, vmax, fmt):
         fontsize=13, fontweight="bold"
     )
     fig.tight_layout()
+
+    if rmse_rows:
+        rmse_line = "  |  ".join(f"{lbl} off-diag RMSE = {rmse:.4f}" for lbl, rmse in rmse_rows)
+        fig.subplots_adjust(bottom=0.12)
+        fig.text(0.5, 0.02, rmse_line, ha="center", va="bottom",
+                  fontsize=10, fontweight="bold")
+
     os.makedirs(os.path.join(_dir, "results"), exist_ok=True)
     out = os.path.join(_dir, "results", fname)
     plt.savefig(out, dpi=150, bbox_inches="tight")
@@ -188,19 +226,23 @@ def plot_matrices(panels, title, fname, vmin, vmax, fmt):
 
 
 # ── Train figures ─────────────────────────────────────────────────────────────
+rmse_train = print_corr_rmse("Train", panels_train)
+
 all_cov = [np.cov(arr.T) for _, arr in panels_train]
 cov_lim = float(np.abs(np.concatenate([C.ravel() for C in all_cov])).max())
 
 plot_matrices(panels_train, "Correlation Matrices — Last-Day Returns (Train)",
-              "corr_matrices_train.png", vmin=-1, vmax=1, fmt="{:.2f}")
+              "corr_matrices_train.png", vmin=-1, vmax=1, fmt="{:.2f}", rmse_rows=rmse_train)
 plot_matrices(panels_train, "Covariance Matrices — Last-Day Returns (Train)",
               "cov_matrices_train.png", vmin=-cov_lim, vmax=cov_lim, fmt="{:.3f}")
 
 # ── Test figures ──────────────────────────────────────────────────────────────
+rmse_test = print_corr_rmse("Test", panels_test)
+
 all_cov_t = [np.cov(arr.T) for _, arr in panels_test]
 cov_lim_t = float(np.abs(np.concatenate([C.ravel() for C in all_cov_t])).max())
 
 plot_matrices(panels_test, "Correlation Matrices — Last-Day Returns (Test)",
-              "corr_matrices_test.png", vmin=-1, vmax=1, fmt="{:.2f}")
+              "corr_matrices_test.png", vmin=-1, vmax=1, fmt="{:.2f}", rmse_rows=rmse_test)
 plot_matrices(panels_test, "Covariance Matrices — Last-Day Returns (Test)",
               "cov_matrices_test.png", vmin=-cov_lim_t, vmax=cov_lim_t, fmt="{:.3f}")
