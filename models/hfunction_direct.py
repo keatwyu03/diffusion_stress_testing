@@ -170,6 +170,38 @@ class HFunctionDirectTrainer:
                 f"constraint_mode={self.cfg.constraint_mode!r} not supported; use 'hard' or 'soft'."
             )
     
+    @staticmethod
+    def _episode_weights(B_labels: torch.Tensor, end_dates) -> torch.Tensor:
+        """Per-window loss weight w_j for episode_reweight: 1/sqrt(m_j) for
+        positive-label windows inside a run of length m_j, 1.0 for negatives.
+
+        An "episode" is a maximal run of consecutive-DATE positive-label
+        windows (a gap in dates, e.g. missing macro data, breaks the run even
+        if array indices are adjacent). This downweights the loss contribution
+        of a single persistent macro event that spans many overlapping
+        windows, so the BCE isn't dominated by however many episodes happened
+        to occur rather than independent event evidence.
+        """
+        dates = pd.DatetimeIndex(end_dates)
+        is_pos = (B_labels >= 0.5).cpu().numpy()
+        # a new episode starts at index 0, or wherever the label flips to
+        # positive from negative, or wherever the date isn't the day
+        # immediately following the previous window's date (gap = broken run)
+        day_gap = np.ones(len(dates), dtype=bool)
+        if len(dates) > 1:
+            day_gap[1:] = (dates[1:] - dates[:-1]) != pd.Timedelta(days=1)
+        new_episode = is_pos & (~np.r_[False, is_pos[:-1]] | day_gap)
+        episode_id = np.cumsum(new_episode) - 1  # -1 for non-positive rows (unused)
+
+        w = np.ones(len(dates), dtype=np.float64)
+        if is_pos.any():
+            pos_episode_id = episode_id[is_pos]
+            # m_j per positive row: episode length, looked up via each row's episode id
+            _, inverse, counts = np.unique(pos_episode_id, return_inverse=True, return_counts=True)
+            w[is_pos] = 1.0 / np.sqrt(counts[inverse])
+
+        return torch.tensor(w, dtype=torch.float32)
+
     def train(
             self,
             X_train: torch.Tensor,
@@ -183,10 +215,12 @@ class HFunctionDirectTrainer:
         Z_start = Z_start.to(self.device)
         Z_end = Z_end.to(self.device)
 
-        if self.cfg.block_sampling and end_dates is None:
+        use_block_sampling = self.cfg.block_sampling
+        use_episode_reweight = self.cfg.episode_reweight
+        if (use_block_sampling or use_episode_reweight) and end_dates is None:
             raise ValueError(
-                "cfg.block_sampling=True requires end_dates (window end dates, "
-                "1:1 aligned with X_train) to build calendar-month blocks."
+                "cfg.block_sampling/cfg.episode_reweight require end_dates "
+                "(window end dates, 1:1 aligned with X_train)."
             )
 
         N = X_train.shape[0]
@@ -201,7 +235,18 @@ class HFunctionDirectTrainer:
         pos_weight = (n_neg / n_pos).to(self.device)
         self.pos_weight = pos_weight.item()
 
-        loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+        if use_episode_reweight:
+            episode_weight = self._episode_weights(B_labels, end_dates).to(self.device)
+            print(f"Episode reweighting: mean weight on positives = "
+                  f"{episode_weight[B_labels >= 0.5].mean().item():.3f}")
+        else:
+            episode_weight = None
+
+        # episode_weight multiplies the WHOLE per-element loss (1.0 on negatives,
+        # 1/sqrt(m_j) on positives); pos_weight still scales the positive term
+        # inside BCEWithLogitsLoss's own formula — the two stack, giving an
+        # effective positive weight of pos_weight/sqrt(m_j).
+        loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction="none")
         optimizer = optim.AdamW(self.model.parameters(), lr = self.cfg.learning_rate, weight_decay= self.cfg.weight_decay)
         scheduler = ReduceLROnPlateau(optimizer, mode = "min", factor = self.cfg.scheduler_factor, patience= self.cfg.scheduler_patience)
 
@@ -211,7 +256,7 @@ class HFunctionDirectTrainer:
         for epoch in tqdm(range(self.cfg.n_epochs), desc = "HFunction-Direct Training"):
             self.model.train()
 
-            if self.cfg.block_sampling:
+            if use_block_sampling:
                 perm = block_interleaved_epoch_order(end_dates, device=self.device)
             else:
                 perm = torch.randperm(N, device=self.device)
@@ -231,7 +276,10 @@ class HFunctionDirectTrainer:
                 y_tau = self._forward_noise(x_b, tau)
 
                 logits = self.model(y_tau, tau, return_logits=True)
-                loss = loss_fn(logits, b_b)
+                per_elem_loss = loss_fn(logits, b_b)
+                if episode_weight is not None:
+                    per_elem_loss = per_elem_loss * episode_weight[idx].unsqueeze(1)
+                loss = per_elem_loss.mean()
 
                 optimizer.zero_grad()
                 loss.backward()

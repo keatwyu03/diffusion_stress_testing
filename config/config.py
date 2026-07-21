@@ -128,8 +128,14 @@ class HFunctionConfig:
     train_batch_size: int = 126        # number of noisy trajectories for unconditional diffusion
     train_stoch: float = 0.5           # stochasticity for generating training paths (0=ODE, 1=full SDE)
     h_mini_batch_size: int = 256       # mini-batch size per gradient step (smaller = more steps/epoch)
-    block_sampling: bool = True       # EXPERIMENTAL: see DiffusionConfig.block_sampling —
-                                        # same round-robin block interleaving, independent toggle
+    block_sampling: bool = True        # EXPERIMENTAL: minibatches drawn round-robin across
+                                        # ~1-month blocks instead of a flat shuffle
+    episode_reweight: bool = True      # EXPERIMENTAL: BCE positive windows downweighted by
+                                        # 1/sqrt(episode length), episodes = maximal runs of
+                                        # consecutive-date positive-label windows; stacks with
+                                        # pos_weight. Independent of block_sampling — both
+                                        # can be on at once.
+
     n_epochs: int = 800               # number of times to go through the data
     learning_rate: float = 1e-4        # step size for SGD
     weight_decay: float = 5e-4         # penalty to prevent overfitting
