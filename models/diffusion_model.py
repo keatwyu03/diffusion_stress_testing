@@ -256,7 +256,9 @@ class DiffusionModel:
                 # as DataLoader's shuffle=True: every window seen once, order
                 # varies epoch to epoch) — batches drawn across many months
                 # instead of a locally-shuffled run of overlapping windows.
-                perm = block_interleaved_epoch_order(end_dates, device=self.device)
+                # perm indexes train_data, which stays on CPU here (each batch
+                # is moved to self.device below, same as the DataLoader path).
+                perm = block_interleaved_epoch_order(end_dates, device=train_data.device)
                 batches = (train_data[perm[i:i + batch_size]] for i in range(0, len(perm), batch_size))
             else:
                 batches = (x for (x,) in data_loader)
