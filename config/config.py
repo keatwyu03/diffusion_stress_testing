@@ -98,7 +98,7 @@ class DiffusionConfig:
     weight_decay: float = 0.0          #AdamW weight decay
     scheduler_patience: int = 50       #Check convergence every X number of loops through the data
     scheduler_factor: float = 0.5      #Multiplier for the Learning rate when plateau
-    block_sampling: bool = False       #Round Robin SGD sampling for batches 
+    block_sampling: bool = True       #Round Robin SGD sampling for batches 
 
     # Sampling parameters
     num_steps: int = 500               #Number of noisy elements to add (larger bmax necessitates larger num_steps)
@@ -128,7 +128,7 @@ class HFunctionConfig:
     train_batch_size: int = 126        # number of noisy trajectories for unconditional diffusion
     train_stoch: float = 0.5           # stochasticity for generating training paths (0=ODE, 1=full SDE)
     h_mini_batch_size: int = 256       # mini-batch size per gradient step (smaller = more steps/epoch)
-    block_sampling: bool = False       # EXPERIMENTAL: see DiffusionConfig.block_sampling —
+    block_sampling: bool = True       # EXPERIMENTAL: see DiffusionConfig.block_sampling —
                                         # same round-robin block interleaving, independent toggle
     n_epochs: int = 800               # number of times to go through the data
     learning_rate: float = 1e-4        # step size for SGD
