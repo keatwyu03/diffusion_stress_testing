@@ -187,7 +187,7 @@ class ConditionalGenConfig:
     stop_early_steps: int = 5          # stop this many steps before the reverse SDE
                                         # reaches t=eps, leaving residual noise/diversity
                                         # instead of fully resolving to the sharp end state
-    n_gen_samples: int = 2000          # number of samples to generate for train/test each,
+    n_gen_samples: int = 10000          # number of samples to generate for train/test each,
                                         # independent of the real event count — reduces
                                         # Monte Carlo noise in the generated-side KDE estimate
 
