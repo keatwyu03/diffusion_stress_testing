@@ -481,7 +481,10 @@ class DataProcessor:
 
     def get_diffusion_data(self) -> torch.Tensor:
         """Get data for diffusion model training: per-window EMA-standardized
-        windows (entry-day stats), same standardization as make_sequences()."""
+        windows (entry-day stats), same standardization as make_sequences().
+        Also stores self.diffusion_end_dates_train, 1:1 aligned with the
+        returned tensor's window order (window j ends on this date) — used by
+        block sampling to group windows into calendar-month blocks."""
         r_values = self.df[self.tickers[1:]].to_numpy(np.float64)
         window_size = self.seq_len
         X_all = []
@@ -490,17 +493,21 @@ class DataProcessor:
             X_all.append(torch.tensor(z.T, dtype=torch.float32))
         X_all = torch.stack(X_all)
 
+        # Window j (start = j*window_shift) ends at dates_all[j*window_shift + window_size - 1];
+        # step the slice by window_shift so end_dates lines up 1:1 with X_all's windows.
+        dates_all = self.df.index
+        end_dates = dates_all[window_size - 1 :: self.window_shift]
+
         # Return only training portion, consistent with train_test_split boundary
         if self.train_end_date is not None:
             cutoff = pd.to_datetime(self.train_end_date)
-            dates_all = self.df.index
-            # Window j (start = j*window_shift) ends at dates_all[j*window_shift + window_size - 1];
-            # step the slice by window_shift so end_dates lines up 1:1 with X_all's windows.
-            end_dates = dates_all[window_size - 1 :: self.window_shift]
             n_train = int((end_dates <= cutoff).sum())
             X_diffusion_train = X_all[:n_train]
         else:
-            X_diffusion_train = X_all[: -self.test_days]
+            n_train = len(X_all) - self.test_days
+            X_diffusion_train = X_all[:n_train]
+
+        self.diffusion_end_dates_train = end_dates[:n_train]
         return X_diffusion_train
 
     def destandardize_windows(self, z: torch.Tensor, mu_entry: np.ndarray, sig_entry: np.ndarray) -> np.ndarray:

@@ -13,6 +13,7 @@ from typing import Tuple, Optional, Callable
 from tqdm import tqdm
 
 from .transformer_score import FinancialTransformerScore
+from utils import block_interleaved_epoch_order
 
 
 class DiffusionModel:
@@ -187,6 +188,8 @@ class DiffusionModel:
         scheduler_factor: float = 0.5,
         num_workers: int = 0,
         use_wandb: bool = False,
+        block_sampling: bool = False,
+        end_dates=None,
     ) -> None:
         """
         Train the diffusion model
@@ -202,20 +205,32 @@ class DiffusionModel:
             scheduler_factor: Factor for learning rate reduction
             num_workers: Number of data loader workers
             use_wandb: Whether to log metrics to wandb
+            block_sampling: EXPERIMENTAL — if True, each epoch's minibatches are
+                drawn round-robin across ~1-month blocks (by end_dates) instead
+                of DataLoader's flat shuffle. Requires end_dates.
+            end_dates: window end dates, 1:1 aligned with train_data's rows,
+                required when block_sampling=True.
         """
         if use_wandb:
             import wandb
+
+        if block_sampling and end_dates is None:
+            raise ValueError(
+                "block_sampling=True requires end_dates (window end dates, "
+                "1:1 aligned with train_data) to build calendar-month blocks."
+            )
 
         print(f"[DEBUG] Train data shape: {train_data.shape}", flush=True)
         print(f"[DEBUG] Device: {self.device}", flush=True)
         print(f"[DEBUG] CUDA available: {torch.cuda.is_available()}", flush=True)
         print(f"[DEBUG] GPU count: {torch.cuda.device_count()}", flush=True)
 
-        dataset = TensorDataset(train_data)
-        data_loader = DataLoader(
-            dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers
-        )
-        print(f"[DEBUG] DataLoader created, batches: {len(data_loader)}", flush=True)
+        if not block_sampling:
+            dataset = TensorDataset(train_data)
+            data_loader = DataLoader(
+                dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers
+            )
+            print(f"[DEBUG] DataLoader created, batches: {len(data_loader)}", flush=True)
 
         real_last_day = train_data[:, :, -1]  # (N, A) — last day of each window, per asset
         self.real_corr_target = torch.corrcoef(real_last_day.T).to(self.device)  # (A, A)
@@ -235,7 +250,18 @@ class DiffusionModel:
         for epoch in tqdm(range(n_epochs), desc="Diffusion Training"):
             avg_loss = 0.0
             num_items = 0
-            for (x,) in data_loader:
+
+            if block_sampling:
+                # Fresh round-robin block interleaving each epoch (same contract
+                # as DataLoader's shuffle=True: every window seen once, order
+                # varies epoch to epoch) — batches drawn across many months
+                # instead of a locally-shuffled run of overlapping windows.
+                perm = block_interleaved_epoch_order(end_dates, device=self.device)
+                batches = (train_data[perm[i:i + batch_size]] for i in range(0, len(perm), batch_size))
+            else:
+                batches = (x for (x,) in data_loader)
+
+            for x in batches:
                 x = x.to(self.device)
 
                 loss = self.loss_fn(

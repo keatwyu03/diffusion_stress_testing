@@ -10,6 +10,7 @@ from tqdm import tqdm
 
 from .transformer_score import GaussianFourierFeatures, SpatioTemporalBlock
 from config import HFunctionConfig
+from utils import block_interleaved_epoch_order
 
 #Building the Transformer for the conditional HFunction
 class HFunctionTransformerDirect(nn.Module):
@@ -175,11 +176,18 @@ class HFunctionDirectTrainer:
             Z_start: torch.Tensor,
             Z_end: torch.Tensor,
             use_wandb: bool = False,
+            end_dates=None,
     ) -> None:
-        
+
         X_train = X_train.to(self.device)
         Z_start = Z_start.to(self.device)
         Z_end = Z_end.to(self.device)
+
+        if self.cfg.block_sampling and end_dates is None:
+            raise ValueError(
+                "cfg.block_sampling=True requires end_dates (window end dates, "
+                "1:1 aligned with X_train) to build calendar-month blocks."
+            )
 
         N = X_train.shape[0]
         B_labels = self._compute_labels(Z_start, Z_end)
@@ -203,9 +211,10 @@ class HFunctionDirectTrainer:
         for epoch in tqdm(range(self.cfg.n_epochs), desc = "HFunction-Direct Training"):
             self.model.train()
 
-            # Real epoch: shuffle once, then sweep through every window exactly once
-            # (instead of with-replacement resampling), so no example is over/under-seen.
-            perm = torch.randperm(N, device=self.device)
+            if self.cfg.block_sampling:
+                perm = block_interleaved_epoch_order(end_dates, device=self.device)
+            else:
+                perm = torch.randperm(N, device=self.device)
 
             loss_sum = acc_sum = pos_sum = 0.0
             n_batches = 0

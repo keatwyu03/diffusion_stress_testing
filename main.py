@@ -138,6 +138,8 @@ def main(args):
             scheduler_patience=config.diffusion.scheduler_patience,
             scheduler_factor=config.diffusion.scheduler_factor,
             use_wandb=use_wandb,
+            block_sampling=config.diffusion.block_sampling,
+            end_dates=data_processor.diffusion_end_dates_train,
         )
 
         # Save model
@@ -240,6 +242,7 @@ def main(args):
         X_train_direct = data_processor.get_diffusion_data()
         Z_start, Z_end, valid_idx = data_processor.get_z_windows_train_aligned()
         X_train_direct = X_train_direct[valid_idx]
+        end_dates_direct = data_processor.diffusion_end_dates_train[valid_idx.numpy()]
 
         print(f"Using HFunctionTraining with {config.hfunction.one_two_step} steps")
         if config.hfunction.one_two_step == "one":
@@ -254,6 +257,7 @@ def main(args):
                 Z_start=Z_start,
                 Z_end=Z_end,
                 use_wandb=use_wandb,
+                end_dates=end_dates_direct,
             )
             
         else:
