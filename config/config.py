@@ -129,7 +129,7 @@ class HFunctionConfig:
     train_stoch: float = 0.5           # stochasticity for generating training paths (0=ODE, 1=full SDE)
     h_mini_batch_size: int = 256       # mini-batch size per gradient step (smaller = more steps/epoch)
     block_sampling: bool = True        
-    episode_reweight: bool = False      
+    episode_reweight: bool = True      
 
     n_epochs: int = 800               # number of times to go through the data
     learning_rate: float = 1e-4        # step size for SGD
