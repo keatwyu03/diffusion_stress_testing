@@ -181,6 +181,7 @@ class ConditionalGenConfig:
     device: str = field(default_factory=_default_device)
     batch_size: int = 32
     num_steps: int = 500
+    n_gen_samples: int = 5000          # number of samples to draw from the conditional reverse SDE
     stoch: float = 1.0
     eta: float = 1
     use_q_model: bool = False

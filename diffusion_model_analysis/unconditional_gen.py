@@ -52,7 +52,7 @@ diffusion_model = DiffusionModel(
 )
 diffusion_model.load("ckpt_new/diffusion_model.pt")
 
-N_samples  = 2000
+N_samples  = config.conditional.n_gen_samples
 batch_size = 128
 print(f"Generating {N_samples} unconditional samples (batch={batch_size})...")
 chunks = []
