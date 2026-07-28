@@ -128,8 +128,8 @@ class HFunctionConfig:
     train_batch_size: int = 126        # number of noisy trajectories for unconditional diffusion
     train_stoch: float = 0.5           # stochasticity for generating training paths (0=ODE, 1=full SDE)
     h_mini_batch_size: int = 256       # mini-batch size per gradient step (smaller = more steps/epoch)
-    block_sampling: bool = True        
-    episode_reweight: bool = True      
+    block_sampling: bool = True         
+    episode_reweight: bool = False      
 
     n_epochs: int = 800               # number of times to go through the data
     learning_rate: float = 1e-4        # step size for SGD
@@ -142,7 +142,7 @@ class HFunctionConfig:
     event_type: str = "upper_change"         # "absval", "abs_change", "upper_change", or "lower_change"
     event_asset_idx: int = 0           # which asset to watch for the shock
     event_window: int = 10             # lookback period
-    event_threshold: float = 0.05       # top X% of |Z_end - Z_start| counts as an event
+    event_threshold: float = 0.1       # top X% of |Z_end - Z_start| counts as an event
                                         # (e.g. 0.10 = top 10%), converted to a raw
                                         # numeric cutoff from train data at startup —
                                         # see get_event_threshold_from_percentile()
@@ -187,7 +187,6 @@ class ConditionalGenConfig:
     stop_early_steps: int = 5          # stop this many steps before the reverse SDE
                                         # reaches t=eps, leaving residual noise/diversity
                                         # instead of fully resolving to the sharp end state
-    n_gen_samples: int = 5000          # number of samples to generate for train/test each,
                                         # independent of the real event count — reduces
                                         # Monte Carlo noise in the generated-side KDE estimate
 
