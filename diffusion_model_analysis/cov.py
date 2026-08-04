@@ -58,6 +58,8 @@ def event_mask(Z_start, Z_end):
         return Z_end - Z_start >= h_threshold
     elif event_type == "lower_change":
         return Z_end - Z_start <= -h_threshold
+    elif event_type == "start_upper":
+        return Z_start >= h_threshold
     raise NotImplementedError(f"event_type={event_type!r}")
 
 Zs_tr, Ze_tr, vidx_tr = data_processor.get_z_windows_train_aligned()

@@ -69,7 +69,8 @@ class DataConfig:
 
     def __post_init__(self):
         if self.tickers is None:
-            self.tickers = ["T10YFF", "AAPL", "ORCL", "MSFT", "IBM"]
+            self.tickers = ["T10YFF", "IBM", "CSCO", "AAPL", "MSFT", "ORCL",
+                             "INTC", "TXN", "QCOM", "AMAT", "ADBE"]
 
 
 @dataclass
@@ -93,7 +94,7 @@ class DiffusionConfig:
 
     # Training parameters
     batch_size: int = 75               #Stochastic minibatch gradient descent
-    n_epochs: int = 20                #Number of times to loop through the data
+    n_epochs: int = 100                #Number of times to loop through the data
     learning_rate: float = 1e-4        #Alpha Stepsize
     weight_decay: float = 0.0          #AdamW weight decay
     scheduler_patience: int = 50       #Check convergence every X number of loops through the data
@@ -139,10 +140,10 @@ class HFunctionConfig:
     h_t_max: float = 0.9               # cap on tau during training AND guidance application at
 
     # Event condition
-    event_type: str = "upper_change"         # "absval", "abs_change", "upper_change", or "lower_change"
+    event_type: str = "start_upper"          # "absval", "abs_change", "upper_change", "lower_change", or "start_upper"
     event_asset_idx: int = 0           # which asset to watch for the shock
     event_window: int = 10             # lookback period
-    event_threshold: float = 0.025       # top X% of |Z_end - Z_start| counts as an event
+    event_threshold: float = 0.05       # top X% of |Z_end - Z_start| counts as an event
                                         # (e.g. 0.10 = top 10%), converted to a raw
                                         # numeric cutoff from train data at startup —
                                         # see get_event_threshold_from_percentile()
@@ -218,7 +219,8 @@ class PortfolioConfig:
 
     def __post_init__(self):
         if self.portfolio_tickers is None:
-            self.portfolio_tickers = ["AAPL", "ORCL", "MSFT", "IBM"]
+            self.portfolio_tickers = ["IBM", "CSCO", "AAPL", "MSFT", "ORCL",
+                                       "INTC", "TXN", "QCOM", "AMAT", "ADBE"]
 
 
 @dataclass

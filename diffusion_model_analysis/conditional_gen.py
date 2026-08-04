@@ -55,10 +55,13 @@ def get_mask(X, Z_start, Z_end, valid_idx):
         event_valid = (Z_end - Z_start) >= config.hfunction.event_threshold
     elif config.hfunction.event_type == "lower_change":
         event_valid = (Z_end - Z_start) <= -config.hfunction.event_threshold
+    elif config.hfunction.event_type == "start_upper":
+        event_valid = Z_start >= config.hfunction.event_threshold
     else:
         raise NotImplementedError(
             f"event_type={config.hfunction.event_type!r} not supported by the "
-            "macro-based mask; only 'abs_change', 'absval', 'upper_change', and 'lower_change' are implemented."
+            "macro-based mask; only 'abs_change', 'absval', 'upper_change', 'lower_change', and "
+            "'start_upper' are implemented."
         )
     mask = torch.zeros(X.shape[0], dtype=torch.bool)
     mask[valid_idx] = event_valid
