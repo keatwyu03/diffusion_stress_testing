@@ -1,6 +1,58 @@
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
+from tqdm import tqdm
+from numba import njit
+
+
+@njit(cache=True)
+def _filter_numba(params, x, xlag, y, is_month_start, k, n, T):
+    """Numba-compiled core of StateSpace.filter(). Same recursion as the
+    pure-Python version — see filter() below — just compiled so the
+    per-day Python-loop overhead (dominant cost across ~6600 days x
+    thousands of objective evals during MLE) drops out."""
+    b0 = params[0]
+    b1 = params[1]
+    b2 = params[2 : 2 + k]
+    a0 = params[2 + k : 2 + k + n]
+    a1 = params[2 + k + n : 2 + k + 2 * n]
+    var_y = np.exp(params[2 + k + 2 * n : 2 + k + 3 * n])
+
+    a = np.zeros(2)
+    P = np.eye(2) * 1e4
+    RQR = np.ones((2, 2))
+
+    att = np.zeros((T, 2))
+    loglikelihood = 0.0
+
+    for t in range(T):
+        gamma = 0.0 if is_month_start[t] else 1.0
+
+        Tt = np.array([[b1, 0.0], [b1, gamma]])
+        const_val = b0 + b2 @ xlag[t]
+        const = np.array([const_val, const_val])
+
+        a = const + Tt @ a
+        P = Tt @ P @ Tt.T + RQR
+
+        obs = ~np.isnan(y[t])
+        m = int(obs.sum())
+        if m > 0:
+            a1_obs = a1[obs]
+            Z = np.zeros((m, 2))
+            Z[:, 1] = a1_obs
+            v = y[t][obs] - (a0[obs] + Z @ a)
+            F = Z @ P @ Z.T + np.diag(var_y[obs])
+            Finv_v = np.linalg.solve(F, v)
+            K = np.linalg.solve(F, Z @ P).T
+            a = a + K @ v
+            P = P - K @ Z @ P
+            sign, logdetF = np.linalg.slogdet(F)
+            loglikelihood -= 0.5 * (m * np.log(2 * np.pi) + logdetF + v @ Finv_v)
+
+        att[t] = a
+
+    return loglikelihood, att
 
 
 class StateSpace():
@@ -16,7 +68,7 @@ class StateSpace():
         self.T, self.k = self.x.shape
 
         months = self.dates.to_period("M")
-        self.is_month_start = ~months.duplicated()
+        self.is_month_start = np.asarray(~months.duplicated())
 
         self.xlag = np.r_[self.x[:1], self.x[:-1]]
 
@@ -56,43 +108,11 @@ class StateSpace():
         return b0, b1, b2, a0, a1, var_y
 
     def filter(self, params):
-        b0, b1, b2, a0, a1, var_y = self._unpack(params)
-
-        a = np.zeros(2)
-        P = np.eye(2) * 1e4
-        RQR = np.ones((2,2))
-
-        att = np.zeros((self.T, 2))   # filtered state [s, c] per day
-
-        loglikelihood = 0.0
-        for t in range(self.T):
-            if self.is_month_start[t]:
-                gamma = 0.0
-            else:
-                gamma = 1.0
-
-            Tt = np.array([[b1, 0.0], [b1, gamma]])
-            const = (b0 + b2 @ self.xlag[t]) * np.ones(2)
-
-            a = const + Tt @ a
-            P = Tt @ P @ Tt.T + RQR
-
-            obs = ~np.isnan(self.y[t])          # factors observed this day
-            if obs.any():
-                m = int(obs.sum())
-                Z = np.column_stack([np.zeros(m), a1[obs]])     # (m, 2)
-                v = self.y[t, obs] - (a0[obs] + Z @ a)
-                F = Z @ P @ Z.T + np.diag(var_y[obs])
-                Finv_v = np.linalg.solve(F, v)
-                K = np.linalg.solve(F, Z @ P).T                 # P Zᵀ F⁻¹
-                a = a + K @ v
-                P = P - K @ Z @ P
-                _, logdetF = np.linalg.slogdet(F)
-                loglikelihood -= 0.5 * (m * np.log(2 * np.pi) + logdetF + v @ Finv_v)
-
-            att[t] = a
-
-        return loglikelihood, att
+        params = np.asarray(params, dtype=np.float64)
+        return _filter_numba(
+            params, self.x, self.xlag, self.y, self.is_month_start,
+            self.k, self.n, self.T,
+        )
 
     def fit(self):
         start = np.r_[0.0, 0.9,
@@ -100,8 +120,25 @@ class StateSpace():
                       np.zeros(self.n), np.ones(self.n),  # a0, a1
                       np.zeros(self.n)]                 # log_var_y
         obj = lambda p : -self.filter(p)[0]
+
+        # Nelder-Mead: derivative-free, so it never takes the large exploratory
+        # steps that can drive log_var_y toward -inf and make F singular (this
+        # happened with L-BFGS-B's finite-difference-gradient steps). filter()
+        # is numba-compiled now, so NM's larger iteration budget is still fast
+        # in wall-clock time — the old slowness was the per-eval Python loop,
+        # not really the optimizer choice.
+        maxiter = 20000
+        pbar = tqdm(total=maxiter, desc="StateSpace MLE (Nelder-Mead)", unit="it")
+
+        def callback(xk):
+            pbar.update(1)
+            pbar.set_postfix(negloglik=f"{obj(xk):.2f}")
+
         res = minimize(obj, start, method="Nelder-Mead",
-                       options={"maxiter": 20000, "maxfev": 40000})
+                       options={"maxiter": maxiter, "maxfev": 40000},
+                       callback=callback)
+        pbar.close()
+
         self.params = res.x
         self.res = res
         return self

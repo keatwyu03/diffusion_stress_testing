@@ -104,6 +104,9 @@ def _event_metric_and_mask(z_start, z_end, event_type, threshold):
     elif event_type == "lower_change":
         metric = z_end - z_start
         return metric, metric <= -threshold
+    elif event_type == "start_upper":
+        metric = z_start
+        return metric, metric >= threshold
     else:
         raise NotImplementedError(f"event_type={event_type!r} not supported here.")
 
@@ -116,7 +119,7 @@ def _soft_weight(metric, event_type, threshold, sharpness):
     """Graded event label in [0,1] — mirrors HFunctionDirectTrainer._compute_labels
     (soft branch). metric is the signed output of _event_metric_and_mask, so
     lower_change flips sign; weight >= 0.5 <=> the hard event condition."""
-    if event_type in ("abs_change", "absval", "upper_change"):
+    if event_type in ("abs_change", "absval", "upper_change", "start_upper"):
         m = metric
     elif event_type == "lower_change":
         m = -metric
@@ -181,7 +184,8 @@ if soft_mode:
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
 metric_label = {"abs_change": "|ΔZ|", "absval": "|Z_end|",
-                "upper_change": "ΔZ", "lower_change": "ΔZ"}[event_type]
+                "upper_change": "ΔZ", "lower_change": "ΔZ",
+                "start_upper": "Z_start"}[event_type]
 
 for ax, dates, changes, event_mask, title, n_total_win in [
     (ax1, train_end_dates, train_metric, train_event_mask, "Train", n_train_windows),

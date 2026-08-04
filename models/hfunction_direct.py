@@ -138,11 +138,13 @@ class HFunctionDirectTrainer:
                 return ((Z_end - Z_start) >= thr).float()
             elif self.cfg.event_type == "lower_change":
                 return ((Z_end - Z_start) <= -thr).float()
+            elif self.cfg.event_type == "start_upper":
+                return (Z_start >= thr).float()
             else:
                 raise NotImplementedError(
                     f"event_type={self.cfg.event_type!r} not supported here; only 'abs_change', "
-                    "'absval', 'upper_change', and 'lower_change' are computable from Z_start/Z_end "
-                    "alone ('sum' needs the full window, which get_z_windows() does not provide)."
+                    "'absval', 'upper_change', 'lower_change', and 'start_upper' are computable from "
+                    "Z_start/Z_end alone ('sum' needs the full window, which get_z_windows() does not provide)."
                 )
 
         elif self.cfg.constraint_mode == "soft":
@@ -158,11 +160,13 @@ class HFunctionDirectTrainer:
                 return torch.sigmoid(s * ((Z_end - Z_start) - thr))
             elif self.cfg.event_type == "lower_change":
                 return torch.sigmoid(s * (-(Z_end - Z_start) - thr))
+            elif self.cfg.event_type == "start_upper":
+                return torch.sigmoid(s * (Z_start - thr))
             else:
                 raise NotImplementedError(
                     f"event_type={self.cfg.event_type!r} not supported here; only 'abs_change', "
-                    "'absval', 'upper_change', and 'lower_change' are computable from Z_start/Z_end "
-                    "alone ('sum' needs the full window, which get_z_windows() does not provide)."
+                    "'absval', 'upper_change', 'lower_change', and 'start_upper' are computable from "
+                    "Z_start/Z_end alone ('sum' needs the full window, which get_z_windows() does not provide)."
                 )
 
         else:

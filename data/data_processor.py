@@ -630,6 +630,8 @@ class DataProcessor:
           - "absval":     top X% of |Z_end|
           - "upper_change": top X% largest (most positive) Z_end - Z_start
           - "lower_change": top X% smallest (most negative) Z_end - Z_start
+          - "start_upper":  top X% largest Z_start (causal — known at window
+            entry, unlike the others which all depend on Z_end)
         """
         Z_start, Z_end, _ = self.get_z_windows()
         diffs = Z_end - Z_start
@@ -641,10 +643,12 @@ class DataProcessor:
             return torch.quantile(diffs, 1.0 - top_fraction).item()
         elif event_type == "lower_change":
             return -torch.quantile(diffs, top_fraction).item()
+        elif event_type == "start_upper":
+            return torch.quantile(Z_start, 1.0 - top_fraction).item()
         else:
             raise NotImplementedError(
                 f"event_type={event_type!r} not supported by get_event_threshold_from_percentile; "
-                "only 'abs_change', 'absval', 'upper_change', and 'lower_change' are implemented."
+                "only 'abs_change', 'absval', 'upper_change', 'lower_change', and 'start_upper' are implemented."
             )
 
     def _sequence_split_idx(self) -> int:

@@ -310,10 +310,14 @@ def main(args):
     elif config.hfunction.event_type == "lower_change":
         metric_train = Z_end_train - Z_start_train
         event_valid_train = metric_train <= -config.hfunction.event_threshold
+    elif config.hfunction.event_type == "start_upper":
+        metric_train = Z_start_train
+        event_valid_train = metric_train >= config.hfunction.event_threshold
     else:
         raise NotImplementedError(
             f"event_type={config.hfunction.event_type!r} not supported by the "
-            "macro-based mask; only 'abs_change', 'absval', 'upper_change', and 'lower_change' are implemented."
+            "macro-based mask; only 'abs_change', 'absval', 'upper_change', 'lower_change', and "
+            "'start_upper' are implemented."
         )
     mask_train = torch.zeros(X_train.shape[0], dtype=torch.bool)
     mask_train[valid_idx_train] = event_valid_train
@@ -348,10 +352,14 @@ def main(args):
     elif config.hfunction.event_type == "lower_change":
         metric_test = Z_end_test - Z_start_test
         event_valid_test = metric_test <= -config.hfunction.event_threshold
+    elif config.hfunction.event_type == "start_upper":
+        metric_test = Z_start_test
+        event_valid_test = metric_test >= config.hfunction.event_threshold
     else:
         raise NotImplementedError(
             f"event_type={config.hfunction.event_type!r} not supported by the "
-            "macro-based mask; only 'abs_change', 'absval', 'upper_change', and 'lower_change' are implemented."
+            "macro-based mask; only 'abs_change', 'absval', 'upper_change', 'lower_change', and "
+            "'start_upper' are implemented."
         )
     mask_test = torch.zeros(X_test.shape[0], dtype=torch.bool)
     mask_test[valid_idx_test] = event_valid_test
