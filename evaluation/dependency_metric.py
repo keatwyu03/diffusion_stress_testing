@@ -43,11 +43,13 @@ data_processor = DataProcessor(
     window_shift=config.data.window_shift,
     winsorize_lower=config.data.winsorize_lower,
     winsorize_upper=config.data.winsorize_upper,
+    event_causal=config.data.event_causal,
+    event_lag_gap=config.data.event_lag_gap,
 )
 data_processor.process_all()
 
-tickers = config.data.tickers          # all assets, e.g. ["unemp", "sp500", "baa"]
-n_assets = len(tickers) - 1 
+tickers = config.data.tickers          # assets only, e.g. ["sp500", "baa"]
+n_assets = len(tickers)
 
 # X shape: (N, T, A)   gen shape: (N, A, T)
 X_train = data_processor.X_train
@@ -74,7 +76,7 @@ if n_assets == 1:
     axes_real = axes_real[np.newaxis, :]
 
 for col, (X, gen, split_label) in enumerate(splits):
-    for ch, ticker in enumerate(tickers[1:]):
+    for ch, ticker in enumerate(tickers):
         non_overlap_r = np.arange(0, X.shape[0], seq_len)
         acf_seq_real = []
         for i in non_overlap_r:
@@ -112,7 +114,7 @@ if n_assets == 1:
     axes_gen = axes_gen[np.newaxis, :]
 
 for col, (X, gen, split_label) in enumerate(splits):
-    for ch, ticker in enumerate(tickers[1:]):
+    for ch, ticker in enumerate(tickers):
         acf_seq_gen = []
         for j in range(len(gen)):
             residuals_g = get_residuals(gen[j, ch, :], method)
@@ -149,7 +151,7 @@ if n_assets == 1:
     axes_2 = axes_2[np.newaxis, :]
 
 for col, (X, gen, split_label) in enumerate(splits):
-    for ch, ticker in enumerate(tickers[1:]):
+    for ch, ticker in enumerate(tickers):
         sq_acf_rl = []
         non_overlap = np.arange(0, X.shape[0], seq_len)
         for i in non_overlap:

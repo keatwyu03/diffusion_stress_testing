@@ -361,7 +361,7 @@ class DiffusionModel:
         path_t, path_x = [], []
 
         with torch.no_grad():
-            for i in range(len(time_steps) - 1):
+            for i in tqdm(range(len(time_steps) - 1), desc="Sampling", leave=False):
                 time_step = time_steps[i]
                 next_t = time_steps[i + 1]
                 step_size = (time_step - next_t).abs()

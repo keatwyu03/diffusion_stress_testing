@@ -8,7 +8,7 @@ from dataclasses import asdict
 
 from config import get_default_config
 from data import DataProcessor
-from models import DiffusionModel, HFunctionTrainer, HFunctionDirectTrainer, ConditionalGenerator, EllTrainer, HFunctionTwoStepTrainer
+from models import DiffusionModel, HFunctionDirectTrainer, ConditionalGenerator, EllTrainer, HFunctionTwoStepTrainer
 from utils import PortfolioAnalyzer, set_seed
 
 
@@ -83,6 +83,8 @@ def main(args):
         winsorize_lower=config.data.winsorize_lower,
         winsorize_upper=config.data.winsorize_upper,
         ema_span=config.data.ema_span,
+        event_causal=config.data.event_causal,
+        event_lag_gap=config.data.event_lag_gap,
     )
 
     data_processor.process_all()
@@ -96,7 +98,7 @@ def main(args):
           f"({config.hfunction.event_type})")
 
     # Derive asset count from tickers so model dims always match data
-    n_assets = len(config.data.tickers) - 1
+    n_assets = len(config.data.tickers)
     config.diffusion.in_channels  = n_assets
     config.diffusion.out_channels = n_assets
     config.hfunction.asset_dim    = n_assets
@@ -167,73 +169,6 @@ def main(args):
         diffusion_model.load("ckpt_new/diffusion_model.pt")
 
     # ==================== H-Function Training ====================
-    # if not args.skip_hfunction_training:
-    #     print("\n" + "=" * 60)
-    #     print("STEP 3: H-Function Training")
-    #     print("=" * 60)
-
-    #     h_trainer = HFunctionTrainer(
-    #         asset_dim=config.hfunction.asset_dim,
-    #         time_steps=config.hfunction.time_steps,
-    #         embed_dim=config.hfunction.embed_dim,
-    #         event_asset_idx=config.hfunction.event_asset_idx,
-    #         event_window=config.hfunction.event_window,
-    #         event_threshold=config.hfunction.event_threshold,
-    #         device=config.hfunction.device,
-    #         event_type=config.hfunction.event_type,
-    #         constraint_mode=config.hfunction.constraint_mode,
-    #         reward_sharpness=config.hfunction.reward_sharpness,
-    #         arch=config.hfunction.arch,
-    #         n_heads=config.hfunction.n_heads,
-    #         n_layers=config.hfunction.n_layers,
-    #         cond_dim=config.hfunction.cond_dim,
-    #     )
-
-    #     # Generate training paths
-    #     print("Generating training paths...")
-    #     t_grid, y_grid, Y_T = diffusion_model.sample(
-    #         batch_size=config.hfunction.train_batch_size,
-    #         num_steps=config.diffusion.num_steps,
-    #         stoch=config.hfunction.train_stoch,
-    #         return_path=True,
-    #     )
-
-    #     # Train
-    #     h_trainer.train(
-    #         t_grid=t_grid,
-    #         y_grid=y_grid,
-    #         Y_T=Y_T,
-    #         n_epochs=config.hfunction.n_epochs,
-    #         batch_size=config.hfunction.h_mini_batch_size,
-    #         learning_rate=config.hfunction.learning_rate,
-    #         weight_decay=config.hfunction.weight_decay,
-    #         scheduler_patience=config.hfunction.scheduler_patience,
-    #         scheduler_factor=config.hfunction.scheduler_factor,
-    #         use_wandb=use_wandb,
-    #     )
-
-    #     # Save model
-    #     h_trainer.save("ckpt_new/hfunction.pt")
-    # else:
-    #     print("\nSkipping H-function training, loading from checkpoint...")
-    #     h_trainer = HFunctionTrainer(
-    #         asset_dim=config.hfunction.asset_dim,
-    #         time_steps=config.hfunction.time_steps,
-    #         embed_dim=config.hfunction.embed_dim,
-    #         event_asset_idx=config.hfunction.event_asset_idx,
-    #         event_window=config.hfunction.event_window,
-    #         event_threshold=config.hfunction.event_threshold,
-    #         device=config.hfunction.device,
-    #         event_type=config.hfunction.event_type,
-    #         constraint_mode=config.hfunction.constraint_mode,
-    #         reward_sharpness=config.hfunction.reward_sharpness,
-    #         arch=config.hfunction.arch,
-    #         n_heads=config.hfunction.n_heads,
-    #         n_layers=config.hfunction.n_layers,
-    #         cond_dim=config.hfunction.cond_dim,
-    #     )
-    #     h_trainer.load("ckpt_new/hfunction.pt")
-
     if not args.skip_hfunction_training:
         print("\n" + "=" * 60)
         print("STEP 3: H-Function Training (Direct BCE)")

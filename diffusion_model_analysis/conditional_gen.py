@@ -16,9 +16,14 @@ data_processor = DataProcessor(
     weekday_col=config.data.weekday_col,
     seq_len=config.data.seq_len,
     test_days=config.data.test_days,
+    start_date=config.data.start_date,
+    end_date=config.data.end_date,
+    train_end_date=config.data.train_end_date,
     window_shift=config.data.window_shift,
     winsorize_lower=config.data.winsorize_lower,
     winsorize_upper=config.data.winsorize_upper,
+    event_causal=config.data.event_causal,
+    event_lag_gap=config.data.event_lag_gap,
 )
 data_processor.process_all()
 
@@ -28,9 +33,9 @@ event_top_fraction = config.hfunction.event_threshold
 config.hfunction.event_threshold = data_processor.get_event_threshold_from_percentile(event_top_fraction, config.hfunction.event_type)
 print(f"Event threshold: top {event_top_fraction:.1%} -> {config.hfunction.event_threshold:.4f} std")
 
-tickers = config.data.tickers          # all assets, e.g. ["unemp", "sp500", "baa"]
-n_assets = len(tickers) - 1
-plot_tickers = tickers[1:]
+tickers = config.data.tickers          # assets only; conditioning series is separate
+n_assets = len(tickers)
+plot_tickers = tickers
 n_plot       = len(plot_tickers)
 
 # X shape: (N, T, A)   gen shape: (N, A, T)
@@ -147,7 +152,7 @@ make_figure(
         f"[event={config.hfunction.event_type}, thr={config.hfunction.event_threshold}]"
     ),
     filename="conditional_lastday.png",
-    xlabel="Standardized Return (day 64)",
+    xlabel=f"Standardized Return (day {config.data.seq_len})",
 )
 
 # ── Figure 2: Cumulative returns (sum over full window) ────────────────────────
@@ -159,7 +164,7 @@ def extract_cumsum(X, mask, gen, ch):
 make_figure(
     extract_fn=extract_cumsum,
     suptitle=(
-        f"Conditional vs Real — Cumulative Return (64-day sum)  "
+        f"Conditional vs Real — Cumulative Return ({config.data.seq_len}-day sum)  "
         f"[event={config.hfunction.event_type}, thr={config.hfunction.event_threshold}]"
     ),
     filename="conditional_cumulative.png",
@@ -195,7 +200,7 @@ for i, ticker in zip(range(n_assets), plot_tickers):
 
 col_labels = ["Asset", "Split", "Kind",
               "Mean (last)", "Std (last)", "q[1,5,50,95,99] last day",
-              "Mean (cum)",  "Std (cum)",  "q[1,5,50,95,99] 64-day sum"]
+              "Mean (cum)",  "Std (cum)",  f"q[1,5,50,95,99] {config.data.seq_len}-day sum"]
 fig_d, ax_d = plt.subplots(figsize=(24, 0.45 * len(rows) + 1.5))
 ax_d.axis("off")
 tbl = ax_d.table(cellText=rows, colLabels=col_labels, loc="center", cellLoc="left")

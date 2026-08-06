@@ -264,6 +264,8 @@ class DataProcessor:
         winsorize_upper: float = 0.995,
         ema_span: int = 60,
         ema_min_periods: int = 20,
+        event_causal: bool = False,
+        event_lag_gap: int = 0,
     ):
         self.csv_path = csv_path
         self.tickers = tickers
@@ -278,9 +280,12 @@ class DataProcessor:
         self.winsorize_upper = winsorize_upper
         self.ema_span = ema_span
         self.ema_min_periods = ema_min_periods
+        self.event_causal = event_causal
+        self.event_lag_gap = event_lag_gap
 
         # Data containers
         self.df = None
+        self.macro_col = None     # conditioning column name, resolved in load_returns()
         self.r_dw = None
         self.weekday_mean = None
         self.sigma_seq = None
@@ -306,14 +311,19 @@ class DataProcessor:
         self.y_dates_test = None
 
     def load_returns(self) -> pd.DataFrame:
-        """Load returns from CSV, optionally filtered to [start_date, end of data]"""
+        """Load returns from CSV, optionally filtered to [start_date, end of data].
+
+        self.tickers holds the ASSET columns only; the conditioning series is
+        whatever column comes first after Date (import_data.py writes it there,
+        named after the latent/macro variable in use), so it's picked up
+        positionally rather than by a hard-coded name."""
         df = pd.read_csv(self.csv_path)
         if "Date" in df.columns:
             df["Date"] = pd.to_datetime(df["Date"])
             df = df.sort_values("Date").set_index("Date")
-        df = df[self.tickers]
-        stock_cols = self.tickers[1:]  # tickers[0] is the sparse macro series
-        df = df.dropna(subset=stock_cols)
+        self.macro_col = df.columns[0]
+        df = df[[self.macro_col] + list(self.tickers)]
+        df = df.dropna(subset=self.tickers)  # macro series is sparse; assets must be complete
         if self.start_date is not None:
             df = df[df.index >= pd.to_datetime(self.start_date)]
         if self.end_date is not None:
@@ -322,7 +332,7 @@ class DataProcessor:
         return df
 
     def remove_weekday_effect(self) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """Remove weekday effect from returns"""
+        """Remove weekday effect from returns (assets only)"""
         weekday_series = pd.Series(self.df.index.dayofweek, index=self.df.index)
         weekday_mean = self.df.groupby(weekday_series)[self.tickers].mean()
         aligned = weekday_series.map(weekday_mean.to_dict("index"))
@@ -340,7 +350,7 @@ class DataProcessor:
         BEFORE _compute_ema_stats(), so the EMA mean/vol themselves are
         computed on the clipped series — outliers are tamed before anything
         downstream (including the trailing vol estimate) sees them."""
-        stock_cols = self.tickers[1:]
+        stock_cols = self.tickers
         r = self.df[stock_cols]
         if self.train_end_date is not None:
             cutoff = pd.to_datetime(self.train_end_date)
@@ -359,7 +369,7 @@ class DataProcessor:
         (shift(1)), so the entry-day standardizer never sees the window itself.
         Rows before the EMA warm-up are trimmed from self.df, so windows and
         the macro series keep sharing one row base."""
-        r = self.df[self.tickers[1:]]
+        r = self.df[self.tickers]
         MU = r.ewm(span=self.ema_span, min_periods=self.ema_min_periods).mean().shift(1)
         SG = r.ewm(span=self.ema_span, min_periods=self.ema_min_periods).std().shift(1)
         valid = MU.notna().all(axis=1) & SG.notna().all(axis=1) & (SG > 0).all(axis=1)
@@ -373,7 +383,7 @@ class DataProcessor:
         """Per-row EMA z-scores, kept for diagnostics (diagnosis.py). The actual
         window tensors are standardized with ENTRY-day stats in make_sequences()
         / get_diffusion_data(), not with this frame."""
-        r = self.df[self.tickers[1:]]
+        r = self.df[self.tickers]
         self.df_z = pd.DataFrame(
             (r.to_numpy(np.float64) - self.MU) / self.SG,
             index=self.df.index, columns=r.columns,
@@ -386,7 +396,7 @@ class DataProcessor:
         one vector per stock), z = (r - mu_entry) / sig_entry, broadcast over
         the window's days. Invertible via (mu_entry, sig_entry), stored per
         window."""
-        r_values = self.df[self.tickers[1:]].to_numpy(np.float64)
+        r_values = self.df[self.tickers].to_numpy(np.float64)
         dates = self.df.index.to_numpy()
         weekday_arr = self.df.index.dayofweek.values
         T, D = r_values.shape
@@ -464,7 +474,7 @@ class DataProcessor:
 
         print("Computing causal EMA standardizer...")
         self._compute_ema_stats()
-        self.r_dw = self.df[self.tickers[1:]]  # raw stock returns (winsorized, post warm-up trim)
+        self.r_dw = self.df[self.tickers]  # raw stock returns (winsorized, post warm-up trim)
 
         print("Standardizing (per-row EMA z, diagnostics only)...")
         self.standardize()
@@ -485,7 +495,7 @@ class DataProcessor:
         Also stores self.diffusion_end_dates_train, 1:1 aligned with the
         returned tensor's window order (window j ends on this date) — used by
         block sampling to group windows into calendar-month blocks."""
-        r_values = self.df[self.tickers[1:]].to_numpy(np.float64)
+        r_values = self.df[self.tickers].to_numpy(np.float64)
         window_size = self.seq_len
         X_all = []
         for i in range(0, len(r_values) - window_size + 1, self.window_shift):
@@ -544,8 +554,7 @@ class DataProcessor:
     def _macro_std_values_and_n_train(self) -> Tuple[np.ndarray, int]:
         """Standardize the raw macro column (train-set stats only) and return
         the full standardized array plus the row count belonging to train."""
-        macro_col = self.tickers[0]
-        macro_raw = self.df[macro_col]
+        macro_raw = self.df[self.macro_col]
 
         if self.train_end_date is not None:
             cutoff     = pd.to_datetime(self.train_end_date)
@@ -574,6 +583,16 @@ class DataProcessor:
         j*self.window_shift — keeping windows with a macro observation at both
         window endpoints.
 
+        Two alignment modes (self.event_causal):
+          False (default, ORIGINAL/non-causal): Z_start/Z_end are read from
+            the SAME seq_len days as the return window itself — Z_end can
+            depend on the last day of the window being generated.
+          True (causal): Z_start/Z_end are read from the seq_len-day macro
+            window ending self.event_lag_gap days BEFORE the return window
+            starts — the event is fully known before generation begins.
+            event_lag_gap=0 means the macro window ends the day immediately
+            before returns start (no buffer).
+
         valid_idx is 0-indexed relative to this range (i.e. directly indexes
         get_diffusion_data() for the train range, or X_test for the test range).
         """
@@ -581,8 +600,17 @@ class DataProcessor:
 
         for pos, w_idx in enumerate(range(start_i, end_i)):
             i = w_idx * self.window_shift
-            z_start = macro_values[i]
-            z_end   = macro_values[i + self.seq_len - 1]
+
+            if self.event_causal:
+                end_row = i - self.event_lag_gap - 1
+                start_row = end_row - self.seq_len + 1
+                if start_row < 0:
+                    continue
+                z_start = macro_values[start_row]
+                z_end   = macro_values[end_row]
+            else:
+                z_start = macro_values[i]
+                z_end   = macro_values[i + self.seq_len - 1]
 
             if np.isnan(z_start) or np.isnan(z_end):
                 continue
@@ -598,9 +626,10 @@ class DataProcessor:
 
     def get_z_windows(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Extract Z_start and Z_end from the first ticker column (macro series)
-        for the TRAINING windows. Only keeps windows where an actual macro
-        observation exists at both the start and end of the window.
+        Extract Z_start and Z_end from the conditioning column (self.macro_col,
+        the CSV's first column) for the TRAINING windows. Only keeps windows
+        where an actual macro observation exists at both the start and end of
+        the window.
 
         Returns:
             Z_start   : (M,) standardized macro value near window start

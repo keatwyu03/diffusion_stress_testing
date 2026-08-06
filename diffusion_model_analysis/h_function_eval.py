@@ -34,6 +34,8 @@ data_processor = DataProcessor(
     window_shift=config.data.window_shift,
     winsorize_lower=config.data.winsorize_lower,
     winsorize_upper=config.data.winsorize_upper,
+    event_causal=config.data.event_causal,
+    event_lag_gap=config.data.event_lag_gap,
 )
 data_processor.process_all()
 
@@ -43,7 +45,7 @@ event_top_fraction = config.hfunction.event_threshold
 config.hfunction.event_threshold = data_processor.get_event_threshold_from_percentile(event_top_fraction, config.hfunction.event_type)
 print(f"Event threshold: top {event_top_fraction:.1%} -> {config.hfunction.event_threshold:.4f} std")
 
-n_assets = len(config.data.tickers) - 1
+n_assets = len(config.data.tickers)
 config.diffusion.in_channels  = n_assets
 config.diffusion.out_channels = n_assets
 config.hfunction.asset_dim    = n_assets
