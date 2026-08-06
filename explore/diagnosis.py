@@ -28,6 +28,8 @@ dp = DataProcessor(
     winsorize_lower = _cfg.data.winsorize_lower,
     winsorize_upper = _cfg.data.winsorize_upper,
     ema_span        = _cfg.data.ema_span,
+    event_causal    = _cfg.data.event_causal,
+    event_lag_gap   = _cfg.data.event_lag_gap,
 )
 
 # process_all() runs the real pipeline (EMA stats -> per-row z for diagnostics

@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 import os
 import sys
 
@@ -25,12 +26,14 @@ data_processor = DataProcessor(
     window_shift=config.data.window_shift,
     winsorize_lower=config.data.winsorize_lower,
     winsorize_upper=config.data.winsorize_upper,
+    event_causal=config.data.event_causal,
+    event_lag_gap=config.data.event_lag_gap,
 )
 data_processor.process_all()
 
 tickers      = config.data.tickers
-n_assets     = len(tickers) - 1
-plot_tickers = tickers[1:]
+n_assets     = len(tickers)
+plot_tickers = tickers
 n_plot       = len(plot_tickers)
 
 X_train = data_processor.X_train  # (N_train, T, A)
@@ -101,9 +104,10 @@ diffusion_model.load("ckpt_new/diffusion_model.pt")
 
 N_uncond   = config.conditional.n_gen_samples
 batch_size = 128
-print(f"Generating {N_uncond} unconditional samples (batch={batch_size})...")
+n_batches  = -(-N_uncond // batch_size)  # ceil
+print(f"Generating {N_uncond} unconditional samples (batch={batch_size}, {n_batches} batches)...")
 chunks = []
-for start in range(0, N_uncond, batch_size):
+for start in tqdm(range(0, N_uncond, batch_size), total=n_batches, desc="Unconditional batches"):
     bs = min(batch_size, N_uncond - start)
     chunks.append(diffusion_model.sample(
         batch_size=bs,
@@ -204,7 +208,7 @@ def plot_matrices(panels, title, fname, vmin, vmax, fmt, rmse_rows=None):
                         fontweight="bold", color="white" if abs(v) > 0.6 * abs(vmax) else "black")
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
-    event_lbl = (tickers[config.hfunction.event_asset_idx].upper()
+    event_lbl = (data_processor.macro_col.upper()
                  if config.data.latent_method is None
                  else f"latent ({config.data.latent_method})")
     fig.suptitle(

@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import gaussian_kde
+from tqdm import tqdm
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -24,8 +25,8 @@ data_processor = DataProcessor(
 data_processor.process_all()
 
 tickers      = config.data.tickers   # all assets
-n_assets     = len(tickers) - 1
-plot_tickers = tickers[1:]
+n_assets     = len(tickers)
+plot_tickers = tickers
 n_plot       = len(plot_tickers)
 
 X_train = data_processor.X_train  # (N_train, T, A)
@@ -54,9 +55,10 @@ diffusion_model.load("ckpt_new/diffusion_model.pt")
 
 N_samples  = config.conditional.n_gen_samples
 batch_size = 128
-print(f"Generating {N_samples} unconditional samples (batch={batch_size})...")
+n_batches = -(-N_samples // batch_size)  # ceil
+print(f"Generating {N_samples} unconditional samples (batch={batch_size}, {n_batches} batches)...")
 chunks = []
-for start in range(0, N_samples, batch_size):
+for start in tqdm(range(0, N_samples, batch_size), total=n_batches, desc="Unconditional batches"):
     bs = min(batch_size, N_samples - start)
     chunks.append(diffusion_model.sample(
         batch_size=bs,

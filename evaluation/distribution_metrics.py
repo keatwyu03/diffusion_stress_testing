@@ -22,11 +22,13 @@ data_processor = DataProcessor(
     window_shift=config.data.window_shift,
     winsorize_lower=config.data.winsorize_lower,
     winsorize_upper=config.data.winsorize_upper,
+    event_causal=config.data.event_causal,
+    event_lag_gap=config.data.event_lag_gap,
 )
 data_processor.process_all()
 
-tickers = config.data.tickers          # all assets, e.g. ["unemp", "sp500", "baa"]
-n_assets = len(tickers) - 1
+tickers = config.data.tickers          # assets only, e.g. ["sp500", "baa"]
+n_assets = len(tickers)
 
 # X shape: (N, T, A)   gen shape: (N, A, T)
 X_train = data_processor.X_train
@@ -72,7 +74,7 @@ print(f"Test  event windows: {len(X_test_events)}  / {len(X_test)}")
 
 def wasserstein_lastday(X_events, gen):
     results = {}
-    for ch, ticker in enumerate(tickers[1:]):
+    for ch, ticker in enumerate(tickers):
         real = X_events[:, -1, ch].numpy()
         g = gen[:, ch, -1].numpy()
         results[ticker] = wasserstein_distance(real, g)
@@ -84,13 +86,13 @@ w_test = wasserstein_lastday(X_test_events, gen_test)
 print("\nWasserstein Distance — Last-Day Marginals")
 print(f"{'Asset':<10} {'Train':>10} {'Test':>10}")
 print("-" * 32)
-for ticker in tickers[1:]:
+for ticker in tickers:
     print(f"{ticker:<10} {w_train[ticker]:>10.4f} {w_test[ticker]:>10.4f}")
 
 
 fig, ax = plt.subplots(figsize=(6, 3))
 ax.axis('off')
-table_data = [[ticker, f"{w_train[ticker]:.4f}", f"{w_test[ticker]:.4f}"] for ticker in tickers[1:]]
+table_data = [[ticker, f"{w_train[ticker]:.4f}", f"{w_test[ticker]:.4f}"] for ticker in tickers]
 table = ax.table(
     cellText=table_data,
     colLabels=["Asset", "Train", "Test"],
@@ -129,7 +131,7 @@ def plot_tail_logs():
 
     for col, (X, mask, gen, split_label) in enumerate(splits):
 
-        for ch, ticker, in enumerate(tickers[1:]):
+        for ch, ticker, in enumerate(tickers):
             real = np.abs(X[mask, -1, ch].numpy())
             gen_vals = np.abs(gen[:, ch, -1].numpy())
 

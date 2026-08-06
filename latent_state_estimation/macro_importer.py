@@ -23,7 +23,6 @@ growth_macro_data = {
 
 inflation_macro_data = {
     'cpi': fred.get_series('CPIAUCSL'),                # earliest: 1947-01-01
-    'price_index': fred.get_series('PCEPI'),           # earliest: 1959-01-01
     'oil_price': fred.get_series('MCOILWTICO'),        # earliest: 1986-01-01
     'ppi': fred.get_series('PPIACO'),                  # earliest: 1913-01-01
     'hour_earnings' : fred.get_series('AHETPI'),       # earliest: 1964-01-01

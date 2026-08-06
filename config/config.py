@@ -53,24 +53,28 @@ class DataConfig:
     csv_path: str = os.path.join(_ROOT, "explore", "macro_data_new.csv")
     latent_method: Optional[str] = "state_space"    # Choose between state space, tracking regression, or None
 
+    growth_vars: Optional[List[str]] = None
+    inflation_vars: Optional[List[str]] = field(default_factory=lambda: ["ppi"])
+
     start_date : str = "2000-01-01"
     end_date: str = "2026-07-08"      # data window end (None = use all)
 
     window_shift : int = 1
-    tickers: List[str] = None
+    tickers: List[str] = field(default_factory=lambda: [
+        "IBM", "CSCO", "AAPL", "MSFT", "ORCL", "INTC", "TXN", "QCOM", "AMAT", "ADBE"
+    ])
     weekday_col: str = "weekday"
     seq_len: int = 10
+
+    event_causal: bool = True
+    event_lag_gap: int = 0
+
     test_days: int = 1200             # used only when train_end_date is None
     train_end_date: str = None        # last day of train set (None = use test_days)
     winsorize_lower: float = 0.005
     winsorize_upper: float = 0.995
     ema_span: int = 60                # per-window causal EMA standardizer span
                                        # (z = (r - EMA_mean)/EMA_vol at window entry)
-
-    def __post_init__(self):
-        if self.tickers is None:
-            self.tickers = ["T10YFF", "IBM", "CSCO", "AAPL", "MSFT", "ORCL",
-                             "INTC", "TXN", "QCOM", "AMAT", "ADBE"]
 
 
 @dataclass
@@ -132,7 +136,7 @@ class HFunctionConfig:
     block_sampling: bool = True         
     episode_reweight: bool = False      
 
-    n_epochs: int = 800               # number of times to go through the data
+    n_epochs: int = 500               # number of times to go through the data
     learning_rate: float = 1e-4        # step size for SGD
     weight_decay: float = 5e-4         # penalty to prevent overfitting
     scheduler_patience: int = 75
@@ -140,11 +144,10 @@ class HFunctionConfig:
     h_t_max: float = 0.9               # cap on tau during training AND guidance application at
 
     # Event condition
-    event_type: str = "start_upper"          # "absval", "abs_change", "upper_change", "lower_change", or "start_upper"
-    event_asset_idx: int = 0           # which asset to watch for the shock
+    event_type: str = "upper_change"          # "absval", "abs_change", "upper_change", "lower_change", or "start_upper"
     event_window: int = 10             # lookback period
     event_threshold: float = 0.05       # top X% of |Z_end - Z_start| counts as an event
-                                        # (e.g. 0.10 = top 10%), converted to a raw
+                                        # (e.g. 0.10 = top 10%), converted to a w
                                         # numeric cutoff from train data at startup —
                                         # see get_event_threshold_from_percentile()
 
@@ -182,7 +185,7 @@ class ConditionalGenConfig:
     device: str = field(default_factory=_default_device)
     batch_size: int = 32
     num_steps: int = 500
-    n_gen_samples: int = 5000          # number of samples to draw from the conditional reverse SDE
+    n_gen_samples: int = 2000          # number of samples to draw from the conditional reverse SDE
     stoch: float = 1.0
     eta: float = 1
     use_q_model: bool = False
