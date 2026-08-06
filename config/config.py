@@ -53,21 +53,23 @@ class DataConfig:
     csv_path: str = os.path.join(_ROOT, "explore", "macro_data_new.csv")
     latent_method: Optional[str] = "state_space"    # Choose between state space, tracking regression, or None
 
-    growth_vars: Optional[List[str]] = None
-    inflation_vars: Optional[List[str]] = field(default_factory=lambda: ["ppi"])
+    growth_vars: Optional[List[str]] = None #field(default_factory = lambda: ["indpro", "payems", "pi_transfer", "real_manf_trade", "personal_consump", "capacity_util"])
+    inflation_vars: Optional[List[str]] = field(default_factory=lambda: ["cpi"])#field(default_factory=lambda: ["cpi", "oil_price", "ppi", "hour_earnings"])
 
     start_date : str = "2000-01-01"
     end_date: str = "2026-07-08"      # data window end (None = use all)
 
     window_shift : int = 1
+
     tickers: List[str] = field(default_factory=lambda: [
         "IBM", "CSCO", "AAPL", "MSFT", "ORCL", "INTC", "TXN", "QCOM", "AMAT", "ADBE"
     ])
+
     weekday_col: str = "weekday"
     seq_len: int = 10
 
     event_causal: bool = True
-    event_lag_gap: int = 0
+    event_lag_gap: int = 1
 
     test_days: int = 1200             # used only when train_end_date is None
     train_end_date: str = None        # last day of train set (None = use test_days)
@@ -98,7 +100,7 @@ class DiffusionConfig:
 
     # Training parameters
     batch_size: int = 75               #Stochastic minibatch gradient descent
-    n_epochs: int = 100                #Number of times to loop through the data
+    n_epochs: int = 20                #Number of times to loop through the data
     learning_rate: float = 1e-4        #Alpha Stepsize
     weight_decay: float = 0.0          #AdamW weight decay
     scheduler_patience: int = 50       #Check convergence every X number of loops through the data
@@ -136,7 +138,7 @@ class HFunctionConfig:
     block_sampling: bool = True         
     episode_reweight: bool = False      
 
-    n_epochs: int = 500               # number of times to go through the data
+    n_epochs: int = 425               # number of times to go through the data
     learning_rate: float = 1e-4        # step size for SGD
     weight_decay: float = 5e-4         # penalty to prevent overfitting
     scheduler_patience: int = 75
@@ -146,7 +148,7 @@ class HFunctionConfig:
     # Event condition
     event_type: str = "upper_change"          # "absval", "abs_change", "upper_change", "lower_change", or "start_upper"
     event_window: int = 10             # lookback period
-    event_threshold: float = 0.05       # top X% of |Z_end - Z_start| counts as an event
+    event_threshold: float = 0.075       # top X% of |Z_end - Z_start| counts as an event
                                         # (e.g. 0.10 = top 10%), converted to a w
                                         # numeric cutoff from train data at startup —
                                         # see get_event_threshold_from_percentile()

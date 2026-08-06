@@ -7,6 +7,7 @@ import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import get_default_config
+from data import DataProcessor
 from latent_state_estimation.macro_main import LatentStateEstimator
 
 _cfg = get_default_config()
@@ -72,42 +73,72 @@ print("[4/4] done.")
 
 print(f"total rows: {len(df_out)}")
 
-# ── Upfront covariance/correlation check: real data vs. conditioning-event
-# bucket — lets us eyeball whether the selected event bucket actually shifts
-# cross-asset structure before spending time on a diffusion run. Event days
-# are picked straight off the raw conditioning series (same event_type
-# semantics as h_function_eval / cov.py), not the standardized window
-# Z_start/Z_end used downstream, since that requires the full DataProcessor
-# windowing pipeline this script doesn't build.
-event_type      = _cfg.hfunction.event_type
-event_threshold = _cfg.hfunction.event_threshold
-cond_vals       = df_out[cond_event]
+# ── Covariance/correlation check: real data vs. conditioning-event bucket —
+# lets us see whether the selected event bucket actually shifts cross-asset
+# structure before spending time on a diffusion run.
+#
+# This runs the REAL DataProcessor over the CSV just written, so the windows,
+# EMA standardization, train/test split and windowed Z_start/Z_end event mask
+# are identical to what diffusion_model_analysis/cov.py uses — the panels here
+# are directly comparable with that script's "Real" panels, and they respond to
+# event_causal / event_lag_gap / seq_len the same way.
+dp = DataProcessor(
+    csv_path        = csv_path,
+    tickers         = _cfg.data.tickers,
+    weekday_col     = _cfg.data.weekday_col,
+    seq_len         = _cfg.data.seq_len,
+    test_days       = _cfg.data.test_days,
+    start_date      = _cfg.data.start_date,
+    end_date        = _cfg.data.end_date,
+    train_end_date  = _cfg.data.train_end_date,
+    window_shift    = _cfg.data.window_shift,
+    winsorize_lower = _cfg.data.winsorize_lower,
+    winsorize_upper = _cfg.data.winsorize_upper,
+    ema_span        = _cfg.data.ema_span,
+    event_causal    = _cfg.data.event_causal,
+    event_lag_gap   = _cfg.data.event_lag_gap,
+)
+dp.process_all()
 
-if event_type == "absval":
-    event_days = cond_vals.abs() >= cond_vals.abs().quantile(1.0 - event_threshold)
-elif event_type in ("abs_change", "upper_change", "lower_change"):
-    delta = cond_vals.diff()
+event_type  = _cfg.hfunction.event_type
+h_threshold = dp.get_event_threshold_from_percentile(
+    _cfg.hfunction.event_threshold, event_type)
+print(f"Event threshold: top {_cfg.hfunction.event_threshold:.1%} -> "
+      f"{h_threshold:.4f} std ({event_type})")
+
+
+def event_mask(Z_start, Z_end):
     if event_type == "abs_change":
-        event_days = delta.abs() >= delta.abs().quantile(1.0 - event_threshold)
+        return (Z_end - Z_start).abs() >= h_threshold
+    elif event_type == "absval":
+        return Z_end.abs() >= h_threshold
     elif event_type == "upper_change":
-        event_days = delta >= delta.quantile(1.0 - event_threshold)
-    else:  # lower_change
-        event_days = delta <= delta.quantile(event_threshold)
-elif event_type == "start_upper":
-    event_days = cond_vals >= cond_vals.quantile(1.0 - event_threshold)
-else:
+        return Z_end - Z_start >= h_threshold
+    elif event_type == "lower_change":
+        return Z_end - Z_start <= -h_threshold
+    elif event_type == "start_upper":
+        return Z_start >= h_threshold
     raise NotImplementedError(f"event_type={event_type!r}")
 
-event_days = event_days.fillna(False)
 
+X_train, X_test = dp.X_train, dp.X_test
+Zs_tr, Ze_tr, vidx_tr = dp.get_z_windows_train_aligned()
+Zs_te, Ze_te, vidx_te = dp.get_z_windows_test()
+X_train_events = X_train[vidx_tr][event_mask(Zs_tr, Ze_tr)]
+X_test_events  = X_test[vidx_te][event_mask(Zs_te, Ze_te)]
+
+# Last-day returns of each window, shape (N, A) — same slice cov.py takes
 panels = [
-    ("Real (all)",          df_out[tickers].to_numpy()),
-    ("Real (event bucket)", df_out.loc[event_days, tickers].to_numpy()),
+    ("Real Train (all)",           X_train[:, -1, :].numpy()),
+    ("Real Train (event windows)", X_train_events[:, -1, :].numpy()),
+    ("Real Test (all)",            X_test[:, -1, :].numpy()),
+    ("Real Test (event windows)",  X_test_events[:, -1, :].numpy()),
 ]
 
 print(f"\n{'='*60}")
-print(f"Bucket check: {cond_event} {event_type}, top {event_threshold:.0%} "
-      f"-> {int(event_days.sum())} of {len(df_out)} days")
+print(f"Bucket check: {cond_event} {event_type}, top {_cfg.hfunction.event_threshold:.0%}")
+print(f"  train events: {len(X_train_events)} / {len(X_train)}")
+print(f"  test  events: {len(X_test_events)} / {len(X_test)}")
 
 print(f"\n── Correlation Matrices ──")
 for lbl, arr in panels:
@@ -121,8 +152,12 @@ tick_lbl  = [t.upper() for t in tickers]
 n_assets  = len(tickers)
 font_size = max(8, min(13, 40 // n_assets))
 
-fig, axes = plt.subplots(1, len(panels), figsize=(5.5 * len(panels), 4.8))
-axes = np.atleast_1d(axes)
+n_cols = 2
+n_rows = (len(panels) + n_cols - 1) // n_cols
+fig, axes = plt.subplots(n_rows, n_cols, figsize=(5.5 * n_cols, 4.8 * n_rows))
+axes = np.atleast_1d(axes).ravel()
+for ax in axes[len(panels):]:
+    ax.axis("off")
 for ax, (lbl, arr) in zip(axes, panels):
     C  = np.corrcoef(arr.T)
     im = ax.imshow(C, vmin=-1, vmax=1, cmap="RdBu_r")
@@ -137,9 +172,11 @@ for ax, (lbl, arr) in zip(axes, panels):
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
 fig.suptitle(
-    f"Correlation Matrices — {cond_event} {event_type} top {event_threshold:.0%}\n"
+    f"Correlation Matrices — Last-Day Returns\n"
+    f"(event: {cond_event} {event_type} ≥ {h_threshold:.3f} std "
+    f"[top {_cfg.hfunction.event_threshold:.0%}], causal={_cfg.data.event_causal})\n"
     f"method: {_cfg.data.latent_method},  conditioning bucket: {bucket_lbl}",
-    fontsize=13, fontweight="bold"
+    fontsize=12, fontweight="bold"
 )
 fig.tight_layout()
 
