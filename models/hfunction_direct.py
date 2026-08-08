@@ -179,9 +179,9 @@ class HFunctionDirectTrainer:
         """Per-window loss weight w_j for episode_reweight: 1/sqrt(m_j) for
         positive-label windows inside a run of length m_j, 1.0 for negatives.
 
-        An "episode" is a maximal run of consecutive-DATE positive-label
-        windows (a gap in dates, e.g. missing macro data, breaks the run even
-        if array indices are adjacent). This downweights the loss contribution
+        An "episode" is a maximal run of consecutive positive-label windows on
+        the TRADING calendar (a genuine multi-day gap in the rows, e.g. missing
+        macro data, breaks the run). This downweights the loss contribution
         of a single persistent macro event that spans many overlapping
         windows, so the BCE isn't dominated by however many episodes happened
         to occur rather than independent event evidence.
@@ -189,11 +189,14 @@ class HFunctionDirectTrainer:
         dates = pd.DatetimeIndex(end_dates)
         is_pos = (B_labels >= 0.5).cpu().numpy()
         # a new episode starts at index 0, or wherever the label flips to
-        # positive from negative, or wherever the date isn't the day
-        # immediately following the previous window's date (gap = broken run)
+        # positive from negative, or at a genuine gap in the rows. Adjacent
+        # rows are consecutive TRADING days, so the tolerance has to absorb
+        # weekends/holidays — requiring an exact 1-calendar-day step would
+        # break every run across a Friday->Monday boundary and collapse
+        # multi-day events into singletons.
         day_gap = np.ones(len(dates), dtype=bool)
         if len(dates) > 1:
-            day_gap[1:] = (dates[1:] - dates[:-1]) != pd.Timedelta(days=1)
+            day_gap[1:] = (dates[1:] - dates[:-1]).days > 5
         new_episode = is_pos & (~np.r_[False, is_pos[:-1]] | day_gap)
         episode_id = np.cumsum(new_episode) - 1  # -1 for non-positive rows (unused)
 
