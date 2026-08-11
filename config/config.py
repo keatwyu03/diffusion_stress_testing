@@ -54,7 +54,7 @@ class DataConfig:
     latent_method: Optional[str] = "state_space"    # Choose between state space, tracking regression, or None
 
     growth_vars: Optional[List[str]] = None #field(default_factory = lambda: ["indpro", "payems", "pi_transfer", "real_manf_trade", "personal_consump", "capacity_util"])
-    inflation_vars: Optional[List[str]] = field(default_factory=lambda: ["cpi"])#field(default_factory=lambda: ["cpi", "oil_price", "ppi", "hour_earnings"])
+    inflation_vars: Optional[List[str]] = field(default_factory=lambda: ["cpi"]) #field(default_factory=lambda: ["cpi", "oil_price", "ppi", "hour_earnings"])
 
     start_date : str = "2000-01-01"
     end_date: str = "2026-07-08"      # data window end (None = use all)
