@@ -1,0 +1,11 @@
+{
+  "asset": "QCOM",
+  "window": 512,
+  "n": 512,
+  "statistic": 5.324967730655333,
+  "global_p_value": 0.033466533466533464,
+  "marginal_p_value": 0.12337662337662338,
+  "autocopula_p_value": 0.039460539460539464,
+  "bandwidth": 3.0,
+  "reject": true
+}

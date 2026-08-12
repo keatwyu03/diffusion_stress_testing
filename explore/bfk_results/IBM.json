@@ -1,0 +1,11 @@
+{
+  "asset": "IBM",
+  "window": 512,
+  "n": 512,
+  "statistic": 3.087245781427906,
+  "global_p_value": 0.1823176823176823,
+  "marginal_p_value": 0.047452547452547456,
+  "autocopula_p_value": 0.9615384615384616,
+  "bandwidth": 2.0,
+  "reject": false
+}

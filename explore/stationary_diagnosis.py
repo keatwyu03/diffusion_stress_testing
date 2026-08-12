@@ -1,3 +1,4 @@
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -219,7 +220,7 @@ def load_data(csv_path=None, cond_col="cond"):
 def run_ticker(r, m, ticker, train_frac=0.7, hidden=64, n_layers=2,
                n_epochs=500, batch_size=128, delta=1e-3, lr=1e-3,
                n_bins=10, max_lag=10, n_time_blocks=10, seed=0,
-               print_split=False):
+               print_split=False, verbose=True):
 
     torch.manual_seed(seed)
     p = m.shape[1]
@@ -233,18 +234,18 @@ def run_ticker(r, m, ticker, train_frac=0.7, hidden=64, n_layers=2,
     model_full = NLL_Stationarity(MLP(p, hidden, n_layers), MLP(p, hidden, n_layers),
                                   delta=delta, lr=lr)
     model_full.fit(r, m_full, n_epochs=n_epochs, batch_size=batch_size,
-                   verbose=True, desc=f"fitting {ticker} (full)")
+                   verbose=verbose, desc=f"fitting {ticker} (full)")
     z_full = model_full.standardize(r, m_full)
 
     # Bins are cut on the RAW m so the printed ranges read in the conditioning
     # series' own units; m_full is only what the networks consume. Scaling is
     # monotone, so bin membership is identical either way.
     d_full = model_full.macro_bins(z_full, m, n_bins=n_bins)
-    model_full.print_macro_bins(d_full, label=f"{ticker} — FULL SERIES")
-
-    print()
     d_tb = model_full.time_blocks(z_full, max_lag=max_lag, n_blocks=n_time_blocks)
-    model_full.print_time_blocks(d_tb, label=f"{ticker} — FULL SERIES")
+    if verbose:
+        model_full.print_macro_bins(d_full, label=f"{ticker} — FULL SERIES")
+        print()
+        model_full.print_time_blocks(d_tb, label=f"{ticker} — FULL SERIES")
 
     # ---- TRAIN/TEST SPLIT: secondary, printed only on request -------------
     d_in = d_out = None
@@ -254,7 +255,7 @@ def run_ticker(r, m, ticker, train_frac=0.7, hidden=64, n_layers=2,
         model = NLL_Stationarity(MLP(p, hidden, n_layers), MLP(p, hidden, n_layers),
                                  delta=delta, lr=lr)
         model.fit(r[:cut], m_scaled[:cut], n_epochs=n_epochs, batch_size=batch_size,
-                  verbose=True, desc=f"fitting {ticker} (split)")
+                  verbose=verbose, desc=f"fitting {ticker} (split)")
 
         print()
         z_in = model.standardize(r[:cut], m_scaled[:cut])
@@ -267,6 +268,24 @@ def run_ticker(r, m, ticker, train_frac=0.7, hidden=64, n_layers=2,
         model.print_macro_bins(d_out, label=f"{ticker} — HELD-OUT (test)")
 
     return model_full, z_full, (d_full, d_tb, d_in, d_out)
+
+
+def save_standardized_residuals(residuals_by_ticker, dates, csv_path=None):
+    """Write full-series standardized residuals z_full to a CSV (Date + one
+    column per ticker), so downstream consumers (e.g. bfk_stationarity.py)
+    don't need to refit the models themselves. Always overwrites csv_path.
+    """
+    import os
+
+    if csv_path is None:
+        csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                 "nn_standardized_macro.csv")
+
+    out = pd.DataFrame({t: z.detach().cpu().numpy() for t, z in residuals_by_ticker.items()})
+    out.insert(0, "Date", dates.reset_index(drop=True))
+    out.to_csv(csv_path, index=False)
+    print(f"wrote {len(out)} rows x {len(residuals_by_ticker)} tickers to {csv_path}")
+    return out
 
 
 if __name__ == "__main__":
@@ -283,11 +302,16 @@ if __name__ == "__main__":
           f"{len(returns)} tickers\n")
 
     results = {}
+    z_by_ticker = {}
     for ticker, r in returns.items():
         print("=" * 72)
-        _, _, results[ticker] = run_ticker(r, m, ticker,
-                                           print_split=args.print_split_results)
+        _, z_full, results[ticker] = run_ticker(r, m, ticker,
+                                                 print_split=args.print_split_results)
+        z_by_ticker[ticker] = z_full
         print()
+
+    save_standardized_residuals(z_by_ticker, dates)
+    print()
 
     def summary_table(title, which):
         print("=" * 72)

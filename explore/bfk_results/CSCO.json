@@ -1,0 +1,11 @@
+{
+  "asset": "CSCO",
+  "window": 512,
+  "n": 512,
+  "statistic": 5.669570093359796,
+  "global_p_value": 0.02147852147852148,
+  "marginal_p_value": 0.017482517482517484,
+  "autocopula_p_value": 0.1973026973026973,
+  "bandwidth": 3.0,
+  "reject": true
+}
