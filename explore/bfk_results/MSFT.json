@@ -1,0 +1,11 @@
+{
+  "asset": "MSFT",
+  "window": 512,
+  "n": 512,
+  "statistic": 4.356780186449853,
+  "global_p_value": 0.07142857142857142,
+  "marginal_p_value": 0.14835164835164835,
+  "autocopula_p_value": 0.08641358641358642,
+  "bandwidth": 3.0,
+  "reject": false
+}

@@ -1,0 +1,11 @@
+{
+  "asset": "AAPL",
+  "window": 512,
+  "n": 512,
+  "statistic": 1.36212379165416,
+  "global_p_value": 0.5979020979020979,
+  "marginal_p_value": 0.486013986013986,
+  "autocopula_p_value": 0.526973026973027,
+  "bandwidth": 3.0,
+  "reject": false
+}
