@@ -270,36 +270,84 @@ def combine_asset_results(assets: list, alpha: float = 0.05, results_dir: str = 
     return table[[c for c in cols if c in table.columns]]
 
 
+def family_wise_conclusion(results: pd.DataFrame, alpha: float = 0.05) -> str:
+    """Family-wise conclusion for the joint hypothesis across all assets,
+    shown as Holm's actual step-down procedure: sort raw p-values ascending
+    p_(1) <= ... <= p_(m), and at rank i compare p_(i) to alpha/(m-i+1).
+    Reject H_(1),...,H_(k) where k is the largest index such that every step
+    up to k passes -- the procedure STOPS at the first step that fails, so
+    every rank after the first failure fails to reject regardless of its own
+    p-value.
+    """
+    m = len(results)
+    ordered = results.sort_values("global_p_value", kind="mergesort").reset_index(drop=True)
+
+    lines = [
+        "=" * 72,
+        f"HOLM STEP-DOWN PROCEDURE (m={m} assets, alpha={alpha})",
+        "=" * 72,
+        f"{'rank':<5}{'asset':<7}{'raw p-value':<14}{'threshold=alpha/(m-i+1)':<26}{'step':<8}{'conclusion'}",
+    ]
+
+    stopped = False
+    for i, row in enumerate(ordered.itertuples(), start=1):
+        threshold = alpha / (m - i + 1)
+        p = row.global_p_value
+        step_pass = (not stopped) and (p <= threshold)
+        if not step_pass:
+            stopped = True
+        conclusion = "REJECT" if step_pass else "fail to reject"
+        step_label = "pass" if step_pass else "STOP"
+        lines.append(
+            f"{i:<5}{row.asset:<7}{p:<14.6f}{threshold:<26.6f}{step_label:<8}{conclusion}"
+        )
+
+    rejected = [row.asset for i, row in enumerate(ordered.itertuples(), start=1)
+                if bool(ordered.loc[i - 1, "reject_holm"])]
+    not_rejected = [a for a in ordered["asset"] if a not in rejected]
+
+    lines.append("")
+    if rejected:
+        lines.append(
+            f"REJECT joint stationarity at alpha={alpha}: {len(rejected)} of {m} assets "
+            f"reject under Holm's procedure: {', '.join(rejected)}."
+        )
+    else:
+        lines.append(
+            f"FAIL TO REJECT joint stationarity at alpha={alpha}: no asset rejects "
+            f"under Holm's procedure."
+        )
+    lines.append(
+        f"Assets that fail to reject ({len(not_rejected)}): "
+        f"{', '.join(not_rejected) if not_rejected else 'none'}."
+    )
+
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="mode", required=True)
 
-    # NOTE: --n-bootstrap defaults to 500 here (not the paper's N=1000) for
-    # now, to balance speed and precision. Pass --n-bootstrap 1000 explicitly
-    # for a paper-faithful final run.
-    # --window defaults to 512 (the largest T in the paper's own Monte Carlo
-    # study) because npcp's C routines are cubic in series length -- the
-    # full ~6000+ observation history is impractically slow. Pass
-    # --window 0 to disable windowing and use the full series.
     p_asset = sub.add_parser("run-asset", help="run the test for one asset and save its result")
     p_asset.add_argument("asset")
     p_asset.add_argument("--lag", type=int, default=3)
-    p_asset.add_argument("--n-bootstrap", type=int, default=500)
+    p_asset.add_argument("--n-bootstrap", type=int, default=1000)
     p_asset.add_argument("--seed", type=int, default=123)
     p_asset.add_argument("--alpha", type=float, default=0.05)
-    p_asset.add_argument("--window", type=int, default=512)
+    p_asset.add_argument("--window", type=int, default=2048)
 
     p_combine = sub.add_parser("combine", help="combine saved per-asset results with Holm correction")
     p_combine.add_argument("--alpha", type=float, default=0.05)
 
     p_all = sub.add_parser("run-all", help="run every asset sequentially in this process (slow)")
     p_all.add_argument("--lag", type=int, default=3)
-    p_all.add_argument("--n-bootstrap", type=int, default=500)
+    p_all.add_argument("--n-bootstrap", type=int, default=1000)
     p_all.add_argument("--seed", type=int, default=123)
     p_all.add_argument("--alpha", type=float, default=0.05)
-    p_all.add_argument("--window", type=int, default=512)
+    p_all.add_argument("--window", type=int, default=2048)
 
     args = parser.parse_args()
 
@@ -317,6 +365,8 @@ if __name__ == "__main__":
         print("global_p_value >= 0.05: insufficient evidence to reject stationarity")
         print("(does not prove the residuals are stationary).")
         print("holm_p_value / reject_holm applies Holm's correction across assets.")
+        print()
+        print(family_wise_conclusion(results, alpha=args.alpha))
 
     elif args.mode == "run-all":
         print("=" * 72)

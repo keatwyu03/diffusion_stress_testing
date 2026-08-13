@@ -1,3 +1,4 @@
+import argparse
 import torch
 import numpy as np
 import pandas as pd
@@ -12,6 +13,18 @@ sys.path.insert(0, ROOT)
 from config import get_default_config
 from data import DataProcessor
 from models import DiffusionModel
+
+_parser = argparse.ArgumentParser()
+_parser.add_argument("--gan", action="store_true",
+                      help="compare Real vs. the cGAN baseline's generated samples "
+                           "(gan_baseline/gan_results/gan_generated_samples_{train,test}.pt), "
+                           "saving outputs to analysis/gan_results/. Skips loading the diffusion "
+                           "checkpoint and the 'Unconditional Generated' panel entirely -- this "
+                           "mode is GAN-only, with no diffusion dependency. Default (no --gan): "
+                           "diffusion model's generated_samples_{train,test}.pt plus an "
+                           "'Unconditional Generated' diffusion panel, saved to "
+                           "analysis/diffusion_results/.")
+_args = _parser.parse_args()
 
 config = get_default_config()
 data_processor = DataProcessor(
@@ -71,50 +84,62 @@ X_train_events = X_train[vidx_tr][event_mask(Zs_tr, Ze_tr)]
 X_test_events  = X_test[vidx_te][event_mask(Zs_te, Ze_te)]
 
 # ── Load generated samples (optional — only needed for the "Conditional
-# Generated" panel, which requires an h-function/ConditionalGenerator run) ─────
-_dir  = os.path.dirname(os.path.abspath(__file__))
-_root = os.path.dirname(_dir)
+# Generated" panel, which requires an h-function/ConditionalGenerator run,
+# or the cGAN baseline, run under --gan) ────────────────────────────────────
+_dir  = os.path.dirname(os.path.abspath(__file__))  # analysis/
+_root = os.path.dirname(_dir)                        # repo root
 
-_gen_train_path = os.path.join(_root, 'generated_samples_train.pt')
-_gen_test_path  = os.path.join(_root, 'generated_samples_test.pt')
+if _args.gan:
+    _gen_dir = os.path.join(_root, 'gan_baseline', 'gan_results')
+    _gen_train_path = os.path.join(_gen_dir, 'gan_generated_samples_train.pt')
+    _gen_test_path  = os.path.join(_gen_dir, 'gan_generated_samples_test.pt')
+    _cond_panel_label = "cGAN Generated"
+    _results_dir = os.path.join(_dir, "gan_results")
+else:
+    _gen_train_path = os.path.join(_root, 'generated_samples_train.pt')
+    _gen_test_path  = os.path.join(_root, 'generated_samples_test.pt')
+    _cond_panel_label = "Conditional Generated"
+    _results_dir = os.path.join(_dir, "diffusion_results")
 
 gen_train = torch.load(_gen_train_path, map_location='cpu') if os.path.exists(_gen_train_path) else None
 gen_test  = torch.load(_gen_test_path,  map_location='cpu') if os.path.exists(_gen_test_path)  else None
 
 if gen_train is None or gen_test is None:
-    print("No generated_samples_{train,test}.pt found — skipping 'Conditional Generated' panel.")
+    print(f"No {_gen_train_path} / {_gen_test_path} found — skipping '{_cond_panel_label}' panel.")
 
-# ── Generate unconditional samples ────────────────────────────────────────────
-diffusion_model = DiffusionModel(
-    in_channels=config.diffusion.in_channels,
-    out_channels=config.diffusion.out_channels,
-    sample_size=config.diffusion.sample_size,
-    layers_per_block=config.diffusion.layers_per_block,
-    block_out_channels=config.diffusion.block_out_channels,
-    b_min=config.diffusion.b_min,
-    b_max=config.diffusion.b_max,
-    device=config.diffusion.device,
-    arch=config.diffusion.arch,
-    embed_dim=config.diffusion.embed_dim,
-    n_heads=config.diffusion.n_heads,
-    n_layers=config.diffusion.n_layers,
-    cond_dim=config.diffusion.cond_dim,
-)
-diffusion_model.load("ckpt_new/diffusion_model.pt")
+# ── Generate unconditional samples (diffusion mode only -- --gan skips this
+# entirely: no diffusion checkpoint load, no sampling, GAN-only comparison) ──
+if not _args.gan:
+    diffusion_model = DiffusionModel(
+        in_channels=config.diffusion.in_channels,
+        out_channels=config.diffusion.out_channels,
+        sample_size=config.diffusion.sample_size,
+        layers_per_block=config.diffusion.layers_per_block,
+        block_out_channels=config.diffusion.block_out_channels,
+        b_min=config.diffusion.b_min,
+        b_max=config.diffusion.b_max,
+        device=config.diffusion.device,
+        arch=config.diffusion.arch,
+        embed_dim=config.diffusion.embed_dim,
+        n_heads=config.diffusion.n_heads,
+        n_layers=config.diffusion.n_layers,
+        cond_dim=config.diffusion.cond_dim,
+    )
+    diffusion_model.load("ckpt_new/diffusion_model.pt")
 
-N_uncond   = config.conditional.n_gen_samples
-batch_size = 128
-n_batches  = -(-N_uncond // batch_size)  # ceil
-print(f"Generating {N_uncond} unconditional samples (batch={batch_size}, {n_batches} batches)...")
-chunks = []
-for start in tqdm(range(0, N_uncond, batch_size), total=n_batches, desc="Unconditional batches"):
-    bs = min(batch_size, N_uncond - start)
-    chunks.append(diffusion_model.sample(
-        batch_size=bs,
-        num_steps=config.conditional.num_steps,
-        stoch=config.conditional.stoch,
-    ).cpu())
-uncond = torch.cat(chunks, dim=0)  # (N, A, T)
+    N_uncond   = config.conditional.n_gen_samples
+    batch_size = 128
+    n_batches  = -(-N_uncond // batch_size)  # ceil
+    print(f"Generating {N_uncond} unconditional samples (batch={batch_size}, {n_batches} batches)...")
+    chunks = []
+    for start in tqdm(range(0, N_uncond, batch_size), total=n_batches, desc="Unconditional batches"):
+        bs = min(batch_size, N_uncond - start)
+        chunks.append(diffusion_model.sample(
+            batch_size=bs,
+            num_steps=config.conditional.num_steps,
+            stoch=config.conditional.stoch,
+        ).cpu())
+    uncond = torch.cat(chunks, dim=0)  # (N, A, T)
 
 # ── Last-day return matrices: shape (N, A) ────────────────────────────────────
 # Real: X shape is (N, T, A) → last day = X[:, -1, :]
@@ -123,18 +148,20 @@ uncond = torch.cat(chunks, dim=0)  # (N, A, T)
 panels_train = [
     ("Real Train (all)",           X_train[:, -1, :].numpy()),
     ("Real Train (event windows)", X_train_events[:, -1, :].numpy()),
-    ("Unconditional Generated",    uncond[:, :, -1].numpy()),
 ]
+if not _args.gan:
+    panels_train.append(("Unconditional Generated", uncond[:, :, -1].numpy()))
 if gen_train is not None:
-    panels_train.append(("Conditional Generated", gen_train[:, :, -1].numpy()))
+    panels_train.append((_cond_panel_label, gen_train[:, :, -1].numpy()))
 
 panels_test = [
     ("Real Test (all)",            X_test[:, -1, :].numpy()),
     ("Real Test (event windows)",  X_test_events[:, -1, :].numpy()),
-    ("Unconditional Generated",    uncond[:, :, -1].numpy()),
 ]
+if not _args.gan:
+    panels_test.append(("Unconditional Generated", uncond[:, :, -1].numpy()))
 if gen_test is not None:
-    panels_test.append(("Conditional Generated", gen_test[:, :, -1].numpy()))
+    panels_test.append((_cond_panel_label, gen_test[:, :, -1].numpy()))
 
 # ── Print matrices ─────────────────────────────────────────────────────────────
 for split_label, panels in [("TRAIN", panels_train), ("TEST", panels_test)]:
@@ -224,8 +251,8 @@ def plot_matrices(panels, title, fname, vmin, vmax, fmt, rmse_rows=None):
         fig.text(0.5, 0.02, rmse_line, ha="center", va="bottom",
                   fontsize=10, fontweight="bold")
 
-    os.makedirs(os.path.join(_dir, "results"), exist_ok=True)
-    out = os.path.join(_dir, "results", fname)
+    os.makedirs(_results_dir, exist_ok=True)
+    out = os.path.join(_results_dir, fname)
     plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.show()
     print(f"Saved {out}")

@@ -1,0 +1,16 @@
+--- a/tsgm/models/cgan.py
++++ b/tsgm/models/cgan.py
+@@ -505,8 +505,12 @@
+         batch_size = ops.shape(real_ts)[0]
+         if not self._temporal:
+             rep_labels = labels[:, :, None]
++            # PATCHED (tsgm_compatibility.patch): keras.ops.repeat(x, repeats=[N])
++            # raises "ValueError: Invalid dtype: object" under the torch backend
++            # (works under the tensorflow backend, which is why this shipped
++            # unnoticed). repeats=N, axis=-1 is equivalent and works on both.
+             rep_labels = ops.repeat(
+-                rep_labels, repeats=[self._seq_len]
++                rep_labels, repeats=self._seq_len, axis=-1
+             )
+         else:
+             rep_labels = labels
