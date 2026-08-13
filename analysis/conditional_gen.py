@@ -1,3 +1,4 @@
+import argparse
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -8,6 +9,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import get_default_config
 from data import DataProcessor
+
+_parser = argparse.ArgumentParser()
+_parser.add_argument("--gan", action="store_true",
+                      help="load the cGAN baseline's generated samples "
+                           "(gan_baseline/gan_results/gan_generated_samples_{train,test}.pt) and "
+                           "save outputs to analysis/gan_results/, instead of the diffusion model's "
+                           "(generated_samples_{train,test}.pt, saved to analysis/diffusion_results/)")
+_args = _parser.parse_args()
 
 config = get_default_config()
 data_processor = DataProcessor(
@@ -42,10 +51,18 @@ n_plot       = len(plot_tickers)
 X_train = data_processor.X_train
 X_test  = data_processor.X_test
 
-_dir  = os.path.dirname(os.path.abspath(__file__))
-_root = os.path.dirname(_dir)
-gen_train = torch.load(os.path.join(_root, 'generated_samples_train.pt'), map_location='cpu')
-gen_test  = torch.load(os.path.join(_root, 'generated_samples_test.pt'),  map_location='cpu')
+_dir  = os.path.dirname(os.path.abspath(__file__))  # analysis/
+_root = os.path.dirname(_dir)                        # repo root
+if _args.gan:
+    _gen_dir = os.path.join(_root, 'gan_baseline', 'gan_results')
+    _train_name, _test_name = 'gan_generated_samples_train.pt', 'gan_generated_samples_test.pt'
+    _results_dir = os.path.join(_dir, "gan_results")
+else:
+    _gen_dir = _root
+    _train_name, _test_name = 'generated_samples_train.pt', 'generated_samples_test.pt'
+    _results_dir = os.path.join(_dir, "diffusion_results")
+gen_train = torch.load(os.path.join(_gen_dir, _train_name), map_location='cpu')
+gen_test  = torch.load(os.path.join(_gen_dir, _test_name),  map_location='cpu')
 
 
 def get_mask(X, Z_start, Z_end, valid_idx):
@@ -132,8 +149,8 @@ def make_figure(extract_fn, suptitle, filename, xlabel):
 
     fig.suptitle(suptitle, fontsize=13, fontweight="bold")
     fig.tight_layout()
-    os.makedirs(os.path.join(_dir, "results"), exist_ok=True)
-    out = os.path.join(_dir, "results", filename)
+    os.makedirs(_results_dir, exist_ok=True)
+    out = os.path.join(_results_dir, filename)
     plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.show()
     print(f"Saved {out}")
@@ -213,7 +230,8 @@ fig_d.suptitle(
     fontsize=12, fontweight="bold",
 )
 fig_d.tight_layout()
-out_diag = os.path.join(_dir, "results", "conditional_diagnostics.png")
+os.makedirs(_results_dir, exist_ok=True)
+out_diag = os.path.join(_results_dir, "conditional_diagnostics.png")
 plt.savefig(out_diag, dpi=150, bbox_inches="tight")
 plt.close()
 print(f"Saved {out_diag}")

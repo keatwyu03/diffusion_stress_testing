@@ -1,3 +1,4 @@
+import json
 import pandas as pd
 import matplotlib.pyplot as plt
 import argparse
@@ -7,13 +8,38 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+_dir = os.path.dirname(os.path.abspath(__file__))
 
 parser = argparse.ArgumentParser()
+parser.add_argument("--gan", action="store_true",
+                    help="plot the cGAN baseline's joint minimax value instead of the "
+                         "diffusion model's score/H-function losses.")
 parser.add_argument("--score_loss", type=str, default=None,
                     help="Path to score-function loss CSV. Auto-resolves to most recent if omitted.")
 parser.add_argument("--h_loss", type=str, default=None,
                     help="Path to H-function loss CSV. Auto-resolves to most recent if omitted.")
 args = parser.parse_args()
+
+if args.gan:
+    gan_losses_path = os.path.join(ROOT, "gan_baseline", "gan_results", "cgan_losses.json")
+    with open(gan_losses_path) as f:
+        gan_df = pd.DataFrame(json.load(f))
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    ax.plot(gan_df["epoch"], gan_df["minimax_value"], linewidth=1.5, color="seagreen")
+    ax.set_xlabel("Epoch", fontsize=12)
+    ax.set_ylabel("V(D,G)", fontsize=12)
+    ax.set_title("cGAN Joint Minimax Value  V(D,G) = -d_loss", fontsize=13, fontweight="bold")
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+
+    results_dir = os.path.join(_dir, "gan_results")
+    os.makedirs(results_dir, exist_ok=True)
+    out_path = os.path.join(results_dir, "cgan_losses.png")
+    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.show()
+    print(f"Saved to: {out_path}")
+    sys.exit(0)
 
 
 def _latest_csv(pattern):
@@ -79,9 +105,9 @@ if has_h_metrics:
 
 fig.tight_layout()
 
-_dir = os.path.dirname(os.path.abspath(__file__))
-os.makedirs(os.path.join(_dir, "results"), exist_ok=True)
-out_path = os.path.join(_dir, "results", "train_losses.png")
+results_dir = os.path.join(_dir, "diffusion_results")
+os.makedirs(results_dir, exist_ok=True)
+out_path = os.path.join(results_dir, "train_losses.png")
 plt.savefig(out_path, dpi=150, bbox_inches="tight")
 plt.show()
 print(f"Saved to: {out_path}")

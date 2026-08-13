@@ -60,6 +60,11 @@ outputs/
 logs/
 *.png
 *.pdf
+*_results/
+*.keras
+
+# Generated run artifacts (BFK batch job outputs)
+explore/bfk_results/
 
 # OS
 .DS_Store

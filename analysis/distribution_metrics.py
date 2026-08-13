@@ -1,3 +1,4 @@
+import argparse
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -8,6 +9,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import get_default_config
 from data import DataProcessor
+
+_parser = argparse.ArgumentParser()
+_parser.add_argument("--gan", action="store_true",
+                      help="load the cGAN baseline's generated samples "
+                           "(gan_baseline/gan_results/gan_generated_samples_{train,test}.pt) and "
+                           "save outputs to analysis/gan_results/, instead of the diffusion "
+                           "model's (generated_samples_{train,test}.pt, saved to "
+                           "analysis/diffusion_results/)")
+_args = _parser.parse_args()
 
 config = get_default_config()
 data_processor = DataProcessor(
@@ -34,11 +44,20 @@ n_assets = len(tickers)
 X_train = data_processor.X_train
 X_test  = data_processor.X_test
 
-_dir  = os.path.dirname(os.path.abspath(__file__))
-_root = os.path.dirname(_dir)
+_dir  = os.path.dirname(os.path.abspath(__file__))  # analysis/
+_root = os.path.dirname(_dir)                        # repo root
 
-gen_train = torch.load(os.path.join(_root, 'generated_samples_train.pt'), map_location='cpu')
-gen_test  = torch.load(os.path.join(_root, 'generated_samples_test.pt'),  map_location='cpu')
+if _args.gan:
+    _gen_dir = os.path.join(_root, 'gan_baseline', 'gan_results')
+    _train_name, _test_name = 'gan_generated_samples_train.pt', 'gan_generated_samples_test.pt'
+    _results_dir = os.path.join(_dir, "gan_results")
+else:
+    _gen_dir = _root
+    _train_name, _test_name = 'generated_samples_train.pt', 'generated_samples_test.pt'
+    _results_dir = os.path.join(_dir, "diffusion_results")
+
+gen_train = torch.load(os.path.join(_gen_dir, _train_name), map_location='cpu')
+gen_test  = torch.load(os.path.join(_gen_dir, _test_name),  map_location='cpu')
 
 # Event masks from the real conditioning series (X has no macro channel), same as
 # main.py; the "top X%" fraction is converted to a raw cutoff first. Evaluation
@@ -101,66 +120,74 @@ table = ax.table(
 )
 table.scale(1, 1.5)
 fig.suptitle("Wasserstein Distance — Last-Day Marginals", fontsize=12, fontweight="bold")
-os.makedirs(os.path.join(_dir, "results"), exist_ok=True)
-out = os.path.join(_dir, "results", "wasserstein_table.png")
+os.makedirs(os.path.join(_results_dir), exist_ok=True)
+out = os.path.join(_results_dir, "wasserstein_table.png")
 plt.savefig(out, dpi=150, bbox_inches="tight")
 plt.show()
 print(f"Saved {out}")
 
 
 
-def fraction(vals):
-    s = np.sort(vals)
-    n = len(s)
-    p = np.arange(n, 0, -1)/n
-    return s, p
-
-
-
-def plot_tail_logs():
-    os.makedirs(os.path.join(_dir, "results"), exist_ok=True)
-    splits = [
-        (X_train, mask_train, gen_train, "Train"),
-        (X_test,  mask_test,  gen_test,  "Test"),
-    ]
-    
-    fig, axes = plt.subplots(n_assets, 2, figsize=(12, 4 * n_assets))
-    if n_assets == 1:
-        axes = axes[np.newaxis, :]
-        
-
-    for col, (X, mask, gen, split_label) in enumerate(splits):
-
-        for ch, ticker, in enumerate(tickers):
-            real = np.abs(X[mask, -1, ch].numpy())
-            gen_vals = np.abs(gen[:, ch, -1].numpy())
-
-            ax = axes[ch, col]
-            for vals, color, label in [(real, "darkorange", "Real"), (gen_vals, "steelblue", "Generated")]:
-                s, p = fraction(vals)
-                ax.plot(s, p, color = color, linewidth = 1.5, label = label)
-            ax.set_xscale("log")
-            ax.set_yscale("log")
-            ax.set_title(f"{ticker.upper()} — {split_label}", fontsize=10, fontweight="bold")
-            ax.set_xlabel("log|return|")
-            ax.set_ylabel("log P(|R| > x)")
-            ax.legend(fontsize=8)
-            ax.grid(True, which="both", alpha=0.3)
-
-
-    fig.suptitle(f"Log-Log Tail Plot — Last-Day Returns ({split_label})", fontsize=13, fontweight="bold")
-    fig.tight_layout()
-    out = os.path.join(_dir, "results", f"tail_loglog_{split_label.lower()}.png")
-    plt.savefig(out, dpi=150, bbox_inches="tight")
-    plt.show()
-    print(f"Saved {out}")
-
-plot_tail_logs()
-
-def tail_index(vals):
-
-    s, p = fraction(np.abs(vals))
-    log_s = np.log(s[s > 0])
-    log_p = np.log(p[s > 0])
-    slope, _ = np.polyfit(log_s, log_p, 1)
-    return -1 * slope
+# NOTE: the tail-plot section below is disabled -- plot_tail_logs() references
+# mask_train/mask_test, which are never defined anywhere in this file (a
+# pre-existing bug, not introduced by --gan support). It always raised
+# NameError when plot_tail_logs() was called. Commented out rather than
+# fixed silently; re-enable once mask_train/mask_test are actually defined
+# (e.g. via the same event_mask()-based construction used in cov.py /
+# conditional_gen.py) and this has been re-tested.
+#
+# def fraction(vals):
+#     s = np.sort(vals)
+#     n = len(s)
+#     p = np.arange(n, 0, -1)/n
+#     return s, p
+#
+#
+#
+# def plot_tail_logs():
+#     os.makedirs(os.path.join(_results_dir), exist_ok=True)
+#     splits = [
+#         (X_train, mask_train, gen_train, "Train"),
+#         (X_test,  mask_test,  gen_test,  "Test"),
+#     ]
+#
+#     fig, axes = plt.subplots(n_assets, 2, figsize=(12, 4 * n_assets))
+#     if n_assets == 1:
+#         axes = axes[np.newaxis, :]
+#
+#
+#     for col, (X, mask, gen, split_label) in enumerate(splits):
+#
+#         for ch, ticker, in enumerate(tickers):
+#             real = np.abs(X[mask, -1, ch].numpy())
+#             gen_vals = np.abs(gen[:, ch, -1].numpy())
+#
+#             ax = axes[ch, col]
+#             for vals, color, label in [(real, "darkorange", "Real"), (gen_vals, "steelblue", "Generated")]:
+#                 s, p = fraction(vals)
+#                 ax.plot(s, p, color = color, linewidth = 1.5, label = label)
+#             ax.set_xscale("log")
+#             ax.set_yscale("log")
+#             ax.set_title(f"{ticker.upper()} — {split_label}", fontsize=10, fontweight="bold")
+#             ax.set_xlabel("log|return|")
+#             ax.set_ylabel("log P(|R| > x)")
+#             ax.legend(fontsize=8)
+#             ax.grid(True, which="both", alpha=0.3)
+#
+#
+#     fig.suptitle(f"Log-Log Tail Plot — Last-Day Returns ({split_label})", fontsize=13, fontweight="bold")
+#     fig.tight_layout()
+#     out = os.path.join(_results_dir, f"tail_loglog_{split_label.lower()}.png")
+#     plt.savefig(out, dpi=150, bbox_inches="tight")
+#     plt.show()
+#     print(f"Saved {out}")
+#
+# plot_tail_logs()
+#
+# def tail_index(vals):
+#
+#     s, p = fraction(np.abs(vals))
+#     log_s = np.log(s[s > 0])
+#     log_p = np.log(p[s > 0])
+#     slope, _ = np.polyfit(log_s, log_p, 1)
+#     return -1 * slope
