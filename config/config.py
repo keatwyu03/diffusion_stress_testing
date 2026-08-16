@@ -152,7 +152,7 @@ class HFunctionConfig:
     convergence_block_size: int = 35
     convergence_min_delta: float = 0.01
 
-    h_t_max: float = 0.9               # cap on tau during training AND guidance application at
+    h_t_max: float = 0.9               # maximum time on tau during training AND guidance application at
 
     # Event condition
     event_type: str = "upper_change"          # "absval", "abs_change", "upper_change", "lower_change", or "start_upper"
