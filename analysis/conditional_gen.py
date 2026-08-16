@@ -55,14 +55,21 @@ _dir  = os.path.dirname(os.path.abspath(__file__))  # analysis/
 _root = os.path.dirname(_dir)                        # repo root
 if _args.gan:
     _gen_dir = os.path.join(_root, 'gan_baseline', 'gan_results')
-    _train_name, _test_name = 'gan_generated_samples_train.pt', 'gan_generated_samples_test.pt'
+    _train_name = 'gan_generated_samples_train.pt'
     _results_dir = os.path.join(_dir, "gan_results")
 else:
     _gen_dir = _root
-    _train_name, _test_name = 'generated_samples_train.pt', 'generated_samples_test.pt'
+    _train_name = 'generated_samples_train.pt'
     _results_dir = os.path.join(_dir, "diffusion_results")
+
+# ONE conditional-generated batch is compared against both the train-event and
+# test-event panels below (gen_train reused as gen_test) -- generation has no
+# knowledge of which real split it's being compared to, so a second draw would
+# just be a fresh noisy sample from the same underlying distribution rather
+# than anything meaningfully different. Only the train path is read; the
+# _test.pt file main.py also writes is redundant (same tensor) and unused here.
 gen_train = torch.load(os.path.join(_gen_dir, _train_name), map_location='cpu')
-gen_test  = torch.load(os.path.join(_gen_dir, _test_name),  map_location='cpu')
+gen_test  = gen_train
 
 
 def get_mask(X, Z_start, Z_end, valid_idx):
@@ -117,23 +124,42 @@ def kde_plot(ax, real_vals, gen_vals, real_label, gen_label, xlabel):
     ax.grid(True, alpha=0.3)
 
 
-def make_figure(extract_fn, suptitle, filename, xlabel):
+def make_figure(extract_fn, suptitle, filename, xlabel, n_cols=5):
     """
     extract_fn(X, mask, gen, ch) -> (real_vals, gen_vals) as numpy arrays
-    Produces a (n_assets x 2) figure: left=train, right=test.
-    """
-    fig, axes = plt.subplots(n_plot, 2, figsize=(14, 4 * n_plot))
-    if n_plot == 1:
-        axes = axes[np.newaxis, :]
 
+    One image per split (train, test), each a grid of all n_assets marginals —
+    n_cols wide (default 5, so n_assets=10 gives a clean 2x5), row-major by
+    ticker order. Splitting by train/test into separate images (rather than
+    interleaving both per asset in one crowded grid) keeps each image at a
+    single, consistent scale and layout.
+
+    filename is used as a base name; per-split output is saved as
+    <stem>_train<ext>, <stem>_test<ext>.
+    """
     splits = [
-        (0, X_train, mask_train, gen_train, "In-Sample (Train)"),
-        (1, X_test,  mask_test,  gen_test,  "Out-of-Sample (Test)"),
+        ("train", X_train, mask_train, gen_train, "In-Sample (Train)"),
+        ("test",  X_test,  mask_test,  gen_test,  "Out-of-Sample (Test)"),
     ]
 
-    for row, (ch, ticker) in enumerate(zip(range(n_assets), plot_tickers)):
-        for col, X, mask, gen, split_label in splits:
+    stem, ext = os.path.splitext(filename)
+    os.makedirs(_results_dir, exist_ok=True)
+
+    n_rows = -(-n_assets // n_cols)  # ceil
+
+    for split_key, X, mask, gen, split_label in splits:
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(4.2 * n_cols, 3.6 * n_rows))
+        axes = np.atleast_2d(axes)
+        if n_rows == 1:
+            axes = axes.reshape(1, n_cols)
+
+        for ax in axes.ravel():
+            ax.axis("off")
+
+        for ch, ticker in enumerate(plot_tickers):
+            row, col = divmod(ch, n_cols)
             ax = axes[row, col]
+            ax.axis("on")
             real_vals, gen_vals = extract_fn(X, mask, gen, ch)
 
             kde_plot(
@@ -142,18 +168,15 @@ def make_figure(extract_fn, suptitle, filename, xlabel):
                 gen_label =f"Conditional generated (n={len(gen_vals)})",
                 xlabel=xlabel,
             )
-            ax.set_title(
-                f"{ticker.upper()} — {split_label}",
-                fontsize=11, fontweight="bold"
-            )
+            ax.set_title(ticker.upper(), fontsize=11, fontweight="bold")
 
-    fig.suptitle(suptitle, fontsize=13, fontweight="bold")
-    fig.tight_layout()
-    os.makedirs(_results_dir, exist_ok=True)
-    out = os.path.join(_results_dir, filename)
-    plt.savefig(out, dpi=150, bbox_inches="tight")
-    plt.show()
-    print(f"Saved {out}")
+        fig.suptitle(f"{suptitle} — {split_label}", fontsize=13, fontweight="bold")
+        fig.tight_layout()
+
+        out = os.path.join(_results_dir, f"{stem}_{split_key}{ext}")
+        plt.savefig(out, dpi=150, bbox_inches="tight")
+        plt.show()
+        print(f"Saved {out}")
 
 
 # ── Figure 1: Last-day returns ─────────────────────────────────────────────────
@@ -172,21 +195,12 @@ make_figure(
     xlabel=f"Standardized Return (day {config.data.seq_len})",
 )
 
-# ── Figure 2: Cumulative returns (sum over full window) ────────────────────────
+# Cumulative returns (sum over full window) -- data extraction kept for the
+# diagnostics table below, plot intentionally not produced.
 def extract_cumsum(X, mask, gen, ch):
     real = X[mask, :, ch].sum(dim=1).numpy()    # (N_event,)
     g    = gen[:, ch, :].sum(dim=1).numpy()     # (N_gen,)
     return real, g
-
-make_figure(
-    extract_fn=extract_cumsum,
-    suptitle=(
-        f"Conditional vs Real — Cumulative Return ({config.data.seq_len}-day sum)  "
-        f"[event={config.hfunction.event_type}, thr={config.hfunction.event_threshold}]"
-    ),
-    filename="conditional_cumulative.png",
-    xlabel="Cumulative Standardized Return",
-)
 
 # ── Diagnostics table ─────────────────────────────────────────────────────────
 rows = []

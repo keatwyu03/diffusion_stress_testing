@@ -23,15 +23,20 @@ from utils import set_seed
 
 @dataclass
 class CGANConfig:
+    # Symmetric optimizer settings, one update each per batch, no label
+    # smoothing -- follows TSGM's own tests/test_cgan.py example
+    # (learning_rate=0.0003 for both d_optimizer and g_optimizer) rather than
+    # the asymmetric d_lr/label-smoothing/discriminator-throttling combination
+    # tried earlier, which is harder to justify as a "vanilla" baseline.
     latent_dim: int = 32
     batch_size: int = 64
     n_epochs: int = 1000
-    g_learning_rate: float = 2e-4
-    d_learning_rate: float = 1e-4
+    g_learning_rate: float = 3e-4
+    d_learning_rate: float = 3e-4
     adam_beta_1: float = 0.5
     adam_beta_2: float = 0.999
-    label_smoothing: float = 0.1
-    disc_update_every: int = 3
+    label_smoothing: float = 0.0
+    disc_update_every: int = 1
     seed: int = 2025
     n_gen_samples: Optional[int] = None  # None -> reuse config.conditional.n_gen_samples
     architecture: str = "cgan_base_c4_l1"  # TSGM zoo key (convolutional cGAN)

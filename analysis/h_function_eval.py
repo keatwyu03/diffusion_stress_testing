@@ -17,7 +17,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import get_default_config
+from config import get_default_config, get_run_tag
 from data import DataProcessor
 from models import HFunctionDirectTrainer
 
@@ -59,7 +59,7 @@ h_trainer = HFunctionDirectTrainer(
     b_min=config.diffusion.b_min,
     b_max=config.diffusion.b_max,
 )
-h_trainer.load("ckpt_new/hfunction.pt")
+h_trainer.load(f"ckpt_new/hfunction_{get_run_tag(config)}.pt")
 h_trainer.model.eval()
 
 

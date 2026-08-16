@@ -6,7 +6,7 @@ import torch
 import os
 from dataclasses import asdict
 
-from config import get_default_config
+from config import get_default_config, get_run_tag
 from data import DataProcessor
 from models import DiffusionModel, HFunctionDirectTrainer, ConditionalGenerator, EllTrainer, HFunctionTwoStepTrainer
 from utils import PortfolioAnalyzer, set_seed
@@ -103,8 +103,20 @@ def main(args):
     config.diffusion.out_channels = n_assets
     config.hfunction.asset_dim    = n_assets
 
+    # Checkpoint filenames are derived from the data config (ticker group +
+    # causal/noncausal) so different configs never overwrite each other's
+    # checkpoints. If a matching checkpoint already exists, load it instead
+    # of retraining; otherwise train fresh and save under that name.
+    run_tag = get_run_tag(config)
+    os.makedirs("ckpt_new", exist_ok=True)
+    score_ckpt = f"ckpt_new/score_{run_tag}.pt"
+    hfunction_ckpt = f"ckpt_new/hfunction_{run_tag}.pt"
+    ell_ckpt = f"ckpt_new/ell_function_{run_tag}.pt"
+    score_losses_csv = f"ckpt_new/score_losses_{run_tag}.csv"
+    h_losses_csv = f"ckpt_new/h_losses_{run_tag}.csv"
+
     # ==================== Diffusion Model Training ====================
-    if not args.skip_diffusion_training:
+    if not os.path.exists(score_ckpt):
         print("\n" + "=" * 60)
         print("STEP 2: Diffusion Model Training")
         print("=" * 60)
@@ -142,13 +154,13 @@ def main(args):
             use_wandb=use_wandb,
             block_sampling=config.diffusion.block_sampling,
             end_dates=data_processor.diffusion_end_dates_train,
+            loss_csv_path=score_losses_csv,
         )
 
         # Save model
-        os.makedirs("ckpt_new", exist_ok=True)
-        diffusion_model.save("ckpt_new/diffusion_model.pt")
+        diffusion_model.save(score_ckpt)
     else:
-        print("\nSkipping diffusion training, loading from checkpoint...")
+        print(f"\nFound existing checkpoint {score_ckpt}, loading (skipping training)...")
         diffusion_model = DiffusionModel(
             in_channels=config.diffusion.in_channels,
             out_channels=config.diffusion.out_channels,
@@ -166,10 +178,10 @@ def main(args):
             cov_weight=config.diffusion.cov_weight,
             cov_t_max=config.diffusion.cov_t_max,
         )
-        diffusion_model.load("ckpt_new/diffusion_model.pt")
+        diffusion_model.load(score_ckpt)
 
     # ==================== H-Function Training ====================
-    if not args.skip_hfunction_training:
+    if not os.path.exists(hfunction_ckpt):
         print("\n" + "=" * 60)
         print("STEP 3: H-Function Training (Direct BCE)")
         print("=" * 60)
@@ -193,33 +205,34 @@ def main(args):
                 Z_end=Z_end,
                 use_wandb=use_wandb,
                 end_dates=end_dates_direct,
+                loss_csv_path=h_losses_csv,
             )
-            
+
         else:
             ell_trainer = EllTrainer(cfg=config.hfunction)
-            ell_trainer.train(X_train=X_train_direct, 
-                              Z_start=Z_start, 
-                              Z_end=Z_end, 
+            ell_trainer.train(X_train=X_train_direct,
+                              Z_start=Z_start,
+                              Z_end=Z_end,
                               use_wandb=use_wandb)
-            
-            ell_trainer.save("ckpt_new/ell_function.pt")
-            h_trainer = HFunctionTwoStepTrainer(cfg=config.hfunction, 
-                                                diffusion_model=diffusion_model, 
-                                                ell_model=ell_trainer.model)
-            h_trainer.train(use_wandb=use_wandb)
 
-        h_trainer.save("ckpt_new/hfunction.pt")
+            ell_trainer.save(ell_ckpt)
+            h_trainer = HFunctionTwoStepTrainer(cfg=config.hfunction,
+                                                diffusion_model=diffusion_model,
+                                                ell_model=ell_trainer.model)
+            h_trainer.train(use_wandb=use_wandb, loss_csv_path=h_losses_csv)
+
+        h_trainer.save(hfunction_ckpt)
     else:
-        print("\nSkipping H-function training, loading from checkpoint...")
+        print(f"\nFound existing checkpoint {hfunction_ckpt}, loading (skipping training)...")
         if config.hfunction.one_two_step == "one":
             h_trainer = HFunctionDirectTrainer(cfg=config.hfunction, b_min=config.diffusion.b_min, b_max=config.diffusion.b_max)
-            h_trainer.load("ckpt_new/hfunction.pt")
+            h_trainer.load(hfunction_ckpt)
         else:
             ell_trainer = EllTrainer(cfg=config.hfunction)
-            ell_trainer.load("ckpt_new/ell_function.pt")
+            ell_trainer.load(ell_ckpt)
             h_trainer = HFunctionTwoStepTrainer(cfg=config.hfunction, diffusion_model=diffusion_model, ell_model=ell_trainer.model)
-            h_trainer.load("ckpt_new/hfunction.pt")
-        
+            h_trainer.load(hfunction_ckpt)
+
 
     # ==================== Extract Events ====================
     print("\n" + "=" * 60)
@@ -356,24 +369,53 @@ def main(args):
     # Use Q-model if it was trained this run or already loaded via config
     use_q_model = config.conditional.use_q_model or args.train_q_model
 
-    # Generate conditional samples for TRAIN set events
-    print(f"Generating {config.conditional.n_gen_samples} conditional samples for in-sample (train) events "
-          f"(real event count: {N_event_train})...")
-    generated_samples_train = cond_generator.generate(
-        num_samples=config.conditional.n_gen_samples,
-        batch_size=config.conditional.batch_size,
-        num_steps=config.conditional.num_steps,
-        stoch=config.conditional.stoch,
-        eta=config.conditional.eta,
-        use_q_model=use_q_model,
-        stop_early_steps=config.conditional.stop_early_steps,
-    )
-    torch.save(generated_samples_train, 'generated_samples_train.pt')
+    # --- OLD: generated train and test independently (two separate draws from
+    # the same guided distribution). Commented out, not deleted, per request --
+    # left here in case we want to go back to independent draws later.
+    #
+    # print(f"Generating {config.conditional.n_gen_samples} conditional samples for in-sample (train) events "
+    #       f"(real event count: {N_event_train})...")
+    # generated_samples_train = cond_generator.generate(
+    #     num_samples=config.conditional.n_gen_samples,
+    #     batch_size=config.conditional.batch_size,
+    #     num_steps=config.conditional.num_steps,
+    #     stoch=config.conditional.stoch,
+    #     eta=config.conditional.eta,
+    #     use_q_model=use_q_model,
+    #     stop_early_steps=config.conditional.stop_early_steps,
+    # )
+    # torch.save(generated_samples_train, 'generated_samples_train.pt')
+    #
+    # print(f"Generating {config.conditional.n_gen_samples} conditional samples for out-of-sample (test) events "
+    #       f"(real event count: {N_event_test})...")
+    # generated_samples_test = cond_generator.generate(
+    #     num_samples=config.conditional.n_gen_samples,
+    #     batch_size=config.conditional.batch_size,
+    #     num_steps=config.conditional.num_steps,
+    #     stoch=config.conditional.stoch,
+    #     eta=config.conditional.eta,
+    #     use_q_model=use_q_model,
+    #     stop_early_steps=config.conditional.stop_early_steps,
+    # )
+    # torch.save(generated_samples_test, 'generated_samples_test.pt')
 
-    # Generate conditional samples for TEST set events
-    print(f"Generating {config.conditional.n_gen_samples} conditional samples for out-of-sample (test) events "
-          f"(real event count: {N_event_test})...")
-    generated_samples_test = cond_generator.generate(
+    # NEW: generate ONCE and reuse for both train-event and test-event
+    # comparisons. Generation only depends on the trained score model +
+    # h-function + guidance settings -- it has no knowledge of which real
+    # split it'll be compared against, so a second independent draw is just
+    # extra compute spent on a fresh noisy sample from the SAME underlying
+    # distribution, not anything meaningfully different. Both filenames are
+    # still written (rather than collapsing to one) so analysis/cov.py and
+    # analysis/conditional_gen.py, which each load a train and a test path
+    # independently, need no changes.
+    #
+    # No explicit seed passed here -- reproducibility comes from the single
+    # global set_seed(config.seed) call at the top of this script (seeds
+    # torch's global RNG, which the unseeded torch.randn(...) calls inside
+    # generate()/_sample_batch() then draw from).
+    print(f"Generating {config.conditional.n_gen_samples} conditional samples "
+          f"(compared against train events: {N_event_train}, test events: {N_event_test})...")
+    generated_samples = cond_generator.generate(
         num_samples=config.conditional.n_gen_samples,
         batch_size=config.conditional.batch_size,
         num_steps=config.conditional.num_steps,
@@ -382,6 +424,12 @@ def main(args):
         use_q_model=use_q_model,
         stop_early_steps=config.conditional.stop_early_steps,
     )
+    # Kept as two variables (not just two files) so the analysis code below,
+    # which still refers to generated_samples_train / generated_samples_test,
+    # needs no further changes -- both simply point at the same tensor.
+    generated_samples_train = generated_samples
+    generated_samples_test = generated_samples
+    torch.save(generated_samples_train, 'generated_samples_train.pt')
     torch.save(generated_samples_test, 'generated_samples_test.pt')
 
     # ==================== Portfolio Analysis ====================
@@ -488,16 +536,6 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Conditional Diffusion Generation for Financial Time Series"
-    )
-    parser.add_argument(
-        "--skip-diffusion-training",
-        action="store_true",
-        help="Skip diffusion model training and load from checkpoint",
-    )
-    parser.add_argument(
-        "--skip-hfunction-training",
-        action="store_true",
-        help="Skip H-function training and load from checkpoint",
     )
     parser.add_argument(
         "--skip-qmodel-training",

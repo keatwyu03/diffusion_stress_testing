@@ -35,12 +35,22 @@ class HFunctionTransformerDirect(nn.Module):
         ])#n_layers blocks of joint attention over all (asset, day) tokens
 
         self.norm = nn.LayerNorm(embed_dim)  #Applies the layer norm to the last block
-        # Head takes [global mean, start_day, end_day, end-start] pooled features
-        # (4*embed_dim) — the mean channel summarizes window-wide structure
-        # (vol level, co-movement), the start/end channels align with the
-        # event's start->end change definition — see forward().
+
+        # Per-asset projection used to keep start/end/change features asset-resolved
+        # instead of averaging across assets (mean-pooling over assets would discard
+        # cross-sectional structure like dispersion/co-movement). Applied to the last
+        # dim only, so each asset's slot stays independent before flattening.
+        asset_reduce_dim = 64
+        self.asset_reduce = nn.Linear(embed_dim, asset_reduce_dim)
+
+        # Head takes [global mean, start_day, end_day, end-start] pooled features.
+        # The mean channel summarizes window-wide structure (vol level, co-movement)
+        # via a plain average over (asset, day). The start/end/change channels are
+        # asset-resolved (see forward()) so per-asset structure reaches the head
+        # instead of being averaged away.
+        head_in_dim = embed_dim + 3 * n_assets * asset_reduce_dim
         self.head = nn.Sequential(
-            nn.Linear(embed_dim * 4, embed_dim//2),
+            nn.Linear(head_in_dim, embed_dim//2),
             nn.SiLU(),
             nn.Linear(embed_dim // 2, 1),
         ) #Unembeds the vector representation back to a single raw logit (no Sigmoid here — see forward())
@@ -74,10 +84,16 @@ class HFunctionTransformerDirect(nn.Module):
         h = h.reshape(B, T, A, D).permute(0, 2, 1, 3)
 
         h = self.norm(h)                                # (B, A, T, D)
-        h_mean  = h.mean(dim=(1, 2))                     # (B, D) global window summary
-        h_start = h[:, :, 0, :].mean(dim=1)              # (B, D)
-        h_end   = h[:, :, -1, :].mean(dim=1)             # (B, D)
-        h_pooled = torch.cat([h_mean, h_start, h_end, h_end - h_start], dim=-1)  # (B, 4D)
+        h_mean = h.mean(dim=(1, 2))                     # (B, D) global window summary
+
+        # Asset-resolved start/end/change features: reduce per-asset embed dim,
+        # then flatten (B, A, asset_reduce_dim) -> (B, A*asset_reduce_dim) so each
+        # asset keeps its own slice instead of being averaged into the others.
+        h_start_assets  = self.asset_reduce(h[:, :, 0, :]).flatten(start_dim=1)
+        h_end_assets    = self.asset_reduce(h[:, :, -1, :]).flatten(start_dim=1)
+        h_change_assets = self.asset_reduce(h[:, :, -1, :] - h[:, :, 0, :]).flatten(start_dim=1)
+
+        h_pooled = torch.cat([h_mean, h_start_assets, h_end_assets, h_change_assets], dim=-1)
         logits = self.head(h_pooled)
         #return_logits=True feeds BCEWithLogitsLoss directly (numerically stable with pos_weight);
         #default keeps existing probability-output behavior for sampling/generation call sites.
@@ -216,6 +232,7 @@ class HFunctionDirectTrainer:
             Z_end: torch.Tensor,
             use_wandb: bool = False,
             end_dates=None,
+            loss_csv_path: str = "ckpt_new/h_losses.csv",
     ) -> None:
 
         X_train = X_train.to(self.device)
@@ -259,6 +276,18 @@ class HFunctionDirectTrainer:
 
         loss_records = []
         print(f"Direct H-function training | N={N} | pos_ratio={B_labels.mean():.3f} | pos_weight={pos_weight.item():.2f}")
+
+        # Track the single best (global-minimum-loss) checkpoint seen so far, overwritten
+        # in place whenever a new epoch beats it — we report/save this instead of whatever
+        # the final epoch happens to land on, since the per-epoch loss curve is spiky.
+        best_loss = float("inf")
+        best_state = None
+
+        block_size = self.cfg.convergence_block_size
+        min_delta = self.cfg.convergence_min_delta
+        block_losses = []
+        prev_block_avg = None
+        stagnant_blocks = 0
 
         for epoch in tqdm(range(self.cfg.n_epochs), desc = "HFunction-Direct Training"):
             self.model.train()
@@ -324,9 +353,46 @@ class HFunctionDirectTrainer:
                     f"Epoch {epoch:04d} | Loss: {avg_loss:.6f} | "
                     f"Acc: {avg_acc:.4f} | LR: {current_lr:.2e}"
                 )
-        
-        os.makedirs("ckpt_new", exist_ok=True)
-        pd.DataFrame(loss_records).to_csv("ckpt_new/h_losses.csv", index=False)
+
+            # Global-minimum checkpoint: overwritten whenever this epoch beats the best
+            # loss seen so far. Only one state dict is ever held, not one per epoch.
+            if avg_loss < best_loss:
+                best_loss = avg_loss
+                best_state = {k: v.detach().clone() for k, v in self.model.state_dict().items()}
+
+            # Dynamic convergence check: every block_size epochs, compare this block's
+            # average loss to the previous block's. Two consecutive blocks that each
+            # fail to improve by at least min_delta stop training early.
+            block_losses.append(avg_loss)
+            if len(block_losses) == block_size:
+                block_avg = sum(block_losses) / block_size
+                block_losses = []
+
+                if prev_block_avg is not None:
+                    improvement = prev_block_avg - block_avg
+                    if improvement < min_delta:
+                        stagnant_blocks += 1
+                        tqdm.write(
+                            f"Epoch {epoch:04d} | block avg loss {block_avg:.6f} "
+                            f"(prev {prev_block_avg:.6f}, improvement {improvement:.6f} < {min_delta}) "
+                            f"| stagnant blocks: {stagnant_blocks}/2"
+                        )
+                        if stagnant_blocks >= 2:
+                            tqdm.write(f"Converged: stopping at epoch {epoch:04d} (best loss {best_loss:.6f})")
+                            break
+                    else:
+                        stagnant_blocks = 0
+
+                prev_block_avg = block_avg
+
+        # Restore the best (global-minimum-loss) weights before saving/returning —
+        # the run may have continued past the best epoch before triggering the stop.
+        if best_state is not None:
+            self.model.load_state_dict(best_state)
+            self.best_loss = best_loss
+
+        os.makedirs(os.path.dirname(loss_csv_path) or ".", exist_ok=True)
+        pd.DataFrame(loss_records).to_csv(loss_csv_path, index=False)
         print("Direct H-function training complete!")
     
     def save(self, path: str) -> None:

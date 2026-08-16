@@ -163,6 +163,7 @@ class ConditionalGenerator:
         use_q_model: bool = False,
         eps: float = 1e-5,
         stop_early_steps: int = 0,
+        seed: Optional[int] = None,
     ) -> torch.Tensor:
         """
         Generate conditional samples
@@ -178,6 +179,13 @@ class ConditionalGenerator:
             stop_early_steps: Stop this many steps before reaching the end of the
                 reverse SDE (t=eps), leaving some residual noise/diversity in the
                 samples instead of fully resolving to the sharp end state.
+            seed: If given, makes generation reproducible. Each batch draws its
+                initial noise (and the stochastic term at every Euler-Maruyama
+                step) from its own torch.Generator seeded with seed + batch_idx,
+                rather than the ambient global RNG state -- so the same seed
+                always reproduces the exact same samples, and comparisons across
+                checkpoints/etas/etc. are not confounded by draw-to-draw noise.
+                None (default) preserves the old nondeterministic behavior.
 
         Returns:
             all_samples: Generated samples (num_samples, channels, seq_len)
@@ -189,8 +197,10 @@ class ConditionalGenerator:
 
         for i in range(num_full_batches):
             print(f"Sampling batch {i+1}/{num_full_batches} ...")
+            batch_seed = None if seed is None else seed + i
             samples = self._sample_batch(
-                batch_size, num_steps, stoch, eta, use_q_model, eps, stop_early_steps
+                batch_size, num_steps, stoch, eta, use_q_model, eps, stop_early_steps,
+                seed=batch_seed,
             )
             all_samples.append(samples.cpu())
             del samples
@@ -199,8 +209,10 @@ class ConditionalGenerator:
 
         if remainder > 0:
             print(f"Sampling remainder batch of {remainder} ...")
+            batch_seed = None if seed is None else seed + num_full_batches
             samples = self._sample_batch(
-                remainder, num_steps, stoch, eta, use_q_model, eps, stop_early_steps
+                remainder, num_steps, stoch, eta, use_q_model, eps, stop_early_steps,
+                seed=batch_seed,
             )
             all_samples.append(samples.cpu())
             del samples
@@ -220,6 +232,7 @@ class ConditionalGenerator:
         use_q_model: bool,
         eps: float,
         stop_early_steps: int = 0,
+        seed: Optional[int] = None,
     ) -> torch.Tensor:
         """Sample a single batch"""
         self.score_model.eval()
@@ -227,9 +240,16 @@ class ConditionalGenerator:
         if self.q_model is not None:
             self.q_model.eval()
 
+        # A dedicated Generator (rather than torch.manual_seed) keeps this
+        # reproducible without stomping on the caller's global RNG state.
+        rng = None
+        if seed is not None:
+            rng = torch.Generator(device=self.device)
+            rng.manual_seed(seed)
+
         n_assets = self.score_model.n_assets
         seq_len  = self.score_model.seq_len
-        init_x = torch.randn(batch_size, n_assets, seq_len, device=self.device)
+        init_x = torch.randn(batch_size, n_assets, seq_len, device=self.device, generator=rng)
         x = init_x
 
         time_steps = self.make_vp_std_grid_fn(
@@ -292,7 +312,10 @@ class ConditionalGenerator:
             # Euler-Maruyama update
             adjust = (1 + stoch**2) / 2
             mean_x = x + (-f_expanded * x + adjust * drift) * step_size
-            x = mean_x + stoch * torch.sqrt(step_size) * g_expanded * torch.randn_like(x)
+            # randn_like has no `generator` arg, so the shape/dtype/device are
+            # spelled out explicitly to keep drawing from `rng` when seeded.
+            noise = torch.randn(x.shape, dtype=x.dtype, device=x.device, generator=rng)
+            x = mean_x + stoch * torch.sqrt(step_size) * g_expanded * noise
 
         return mean_x
 

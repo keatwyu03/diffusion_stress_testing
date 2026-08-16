@@ -14,35 +14,48 @@ Conditional Diffusion Generation (CDG) for financial time series. Trains a VP-SD
 latent_state_estimation/macro_importer.py   # step 0 (rare): refresh raw FRED macro panels
 explore/import_data.py                      # build dataset — bakes the conditioning series
                                             # (latent state or raw FRED) into column 0
-explore/diagnosis.py                        # data/event sanity checks + stationarity
 main.py                                     # train diffusion + h-function → ckpt_new/
-diffusion_model_analysis/                   # model evaluation scripts
-evaluation/                                 # distribution / dependency metrics
+analysis/                                   # model evaluation scripts (renamed from the
+                                            # old diffusion_model_analysis/ + evaluation/ split
+                                            # — both merged into one directory)
+explore/stationary_diagnosis.py             # macro-conditional stationarity diagnostics
+                                            # (replaces the old explore/diagnosis.py, deleted)
+explore/bfk_stationarity.py                 # BFK stationarity hypothesis test, consumes
+                                            # stationary_diagnosis.py's residual CSV
+gan_baseline/cgan_tsgm.py                   # cGAN baseline, trained/evaluated separately
 ```
 
 Everything downstream of `import_data.py` **trusts that the first column of the CSV
 (`tickers[0]`) is the chosen conditioning series** — no other script runs the latent
 estimation or swaps columns.
 
+**`diffusion_model_analysis/` and `evaluation/` no longer exist** — both were merged
+into a single `analysis/` directory at some point after the sections below were
+originally written. **`explore/diagnosis.py` no longer exists either** — it was an
+empty file (see the old "Known Issues" list) and has since been deleted outright,
+replaced conceptually by `explore/stationary_diagnosis.py`, a different and much more
+extensive diagnostic (see its own section below). Any reference to the old paths
+elsewhere in this document is describing history, not current structure.
+
 ---
 
 ## Directory Structure
 
 ```
-CDG_Finance/Code/
+Conditional_diffusion/
 ├── config/config.py                         # All hyperparameters as dataclasses; paths root-anchored via _ROOT
-├── data/data_processor.py                   # Full preprocessing pipeline (note: file contains two DataProcessor class defs — second one is the current version)
+├── data/data_processor.py                   # Full preprocessing pipeline
 ├── models/
 │   ├── transformer_score.py                 # SpatioTemporalBlock + DualAxisBlock + AdaLN + FinancialTransformerScore
-│   ├── diffusion_model.py                   # VP-SDE wrapper: train / sample (UNet1D or Transformer)
-│   ├── hfunction_direct.py                  # HFunctionTransformerDirect + HFunctionDirectTrainer (one-step BCE)
+│   ├── diffusion_model.py                   # VP-SDE wrapper: train / sample
+│   ├── hfunction_direct.py                  # HFunctionTransformerDirect + HFunctionDirectTrainer (one-step BCE);
+│   │                                        # now has EMA-smoothed early stopping — see H-Function Early Stopping
 │   ├── hfunction_twostep.py                 # EllTransformer + EllTrainer + HFunctionTransformerTwoStep + HFunctionTwoStepTrainer (two-step MSE)
-│   └── conditional_generator.py             # Doob h-transform guided sampler + Q-model (Transformer-based)
-│   # NOTE: models/hfunction.py (the legacy CNN/Transformer trainer) NO LONGER EXISTS
+│   └── conditional_generator.py             # GradientHUNet + ConditionalGenerator — Doob h-transform guided sampler + Q-model
 ├── utils/
 │   ├── helpers.py                           # set_seed + block_interleaved_epoch_order
-│   └── portfolio.py                         # Portfolio strategies + stats/plots
-├── main.py                                  # Full end-to-end pipeline
+│   └── portfolio.py                         # PortfolioAnalyzer — strategies + stats/plots
+├── main.py                                  # Full end-to-end pipeline; writes ckpt_new/, generated_samples_{train,test}.pt at root
 ├── latent_state_estimation/
 │   ├── macro_importer.py                    # Downloads FRED macro panels → growth/inflation {macro,daily}.csv
 │   ├── tracking_regression.py               # PCA monthly factor + tracking regression → daily tracking portfolio u_t
@@ -50,28 +63,53 @@ CDG_Finance/Code/
 │   ├── macro_main.py                        # LatentStateEstimator class ONLY (no script code)
 │   ├── growth_macro.csv / growth_daily.csv  # Raw macro panels (inputs to the estimator)
 │   └── inflation_macro.csv / inflation_daily.csv
-├── diffusion_model_analysis/
-│   ├── unconditional_gen.py                 # Diagnostics table, marginal KDEs
-│   ├── conditional_gen.py                   # Conditional vs real event window marginal KDEs + diagnostics table
+├── analysis/                                 # renamed/merged from the old diffusion_model_analysis/ + evaluation/
+│   ├── evaluation_main.py                   # Orchestrator — runs the scripts below as subprocesses, forwards --gan
+│   ├── unconditional_gen.py                 # Unconditional diffusion samples vs Real. --gan: no-op (see below)
+│   ├── conditional_gen.py                   # Conditional-generation diagnostics (event-conditioned samples vs Real)
 │   ├── cov.py                               # Correlation/covariance matrix comparison (real vs uncond vs cond)
-│   ├── h_function_eval.py                   # H-function calibration check — bypasses sampling/guidance entirely
-│   └── losses.py                            # Score + H-function loss/accuracy curves (auto-discovers CSVs)
-├── evaluation/
-│   ├── distribution_metrics.py
-│   └── dependency_metric.py
+│   ├── dependency_metric.py                 # ACF-of-squared-returns dependency test with per-lag p-values
+│   ├── distribution_metrics.py              # Wasserstein-distance table, real vs generated marginals
+│   ├── h_function_eval.py                   # H-function calibration check — bypasses sampling/guidance entirely.
+│   │                                        # Writes to analysis/results/ — a THIRD results dir, distinct from
+│   │                                        # diffusion_results/ and gan_results/ below
+│   ├── hypothesis_testing.py                # Energy-distance / episode-matched hypothesis tests with bootstrap
+│   │                                        # CIs. Standalone — not called by evaluation_main.py; own argparse
+│   │                                        # CLI, prints to stdout only, writes no files
+│   ├── diffusion_results/                   # Output of the above scripts in diffusion mode (default)
+│   └── gan_results/                         # Output of the above scripts under --gan (cGAN comparison plots)
+├── gan_baseline/
+│   └── cgan_tsgm.py                         # Conditional GAN baseline (TSGM ConditionalGAN). generate_conditional()
+│                                            # always requires a binary event label — NO unconditional generation
+│                                            # path exists. Writes gan_baseline/gan_results/ (checkpoints, raw
+│                                            # samples, losses) when run — not currently present on disk; a run
+│                                            # produced analysis/gan_results/'s plots at some point but the raw
+│                                            # gan_baseline/gan_results/ outputs are gitignored and gone
 ├── explore/
-│   ├── import_data.py                       # Builds macro_data_new.csv + cross_test_data.csv; runs LatentStateEstimator
-│   ├── diagnosis.py                         # Event/correlation/stationarity diagnostics → explore/diagnosis_plots/
-│   └── macro_data_new.csv                   # conditioning series (col 0) + AAPL/ORCL/MSFT/IBM log-returns
+│   ├── import_data.py                       # Builds macro_data_new.csv; runs LatentStateEstimator; also writes
+│   │                                        # bucket_corr_matrices.png, conditioning_series.png
+│   ├── stationary_diagnosis.py              # Macro-conditional stationarity diagnostics — see its own section.
+│   │                                        # Imported by bfk_stationarity.py (not standalone-only)
+│   ├── bfk_stationarity.py                  # BFK stationarity hypothesis test (rpy2 → R's npcp package).
+│   │                                        # CLI: run-asset / combine subcommands. Writes bfk_results/<TICKER>.json
+│   ├── bfk_array_job.sh                     # SLURM array job, one task per ticker, calls bfk_stationarity.py run-asset
+│   ├── submit_bfk_jobs.sh                   # Clears old bfk_results/*.json then sbatch's the array job
+│   ├── bfk_results/                         # Per-ticker JSON results (10 tickers) + logs/
+│   ├── macro_data_new.csv                   # conditioning series (col 0) + 10-ticker log-returns
+│   └── nn_standardized_macro.csv            # Output of stationary_diagnosis.py's save_standardized_residuals() —
+│                                            # the residual CSV bfk_stationarity.py consumes
 └── ckpt_new/                                # Active checkpoint directory (created by training)
     ├── diffusion_model.pt
     ├── hfunction.pt                         # h-function checkpoint (one-step or two-step, same path)
+    ├── h_losses.csv                         # H-function training loss log (epoch, loss, lr, etc.)
+    ├── score_losses.csv                     # Score-network training loss log
     ├── ell_function.pt                      # EllTransformer checkpoint (two-step only)
-    ├── q_model.pt
-    └── score_losses.csv                     # Written by diffusion_model.py after training
+    └── q_model.pt                           # Q-model checkpoint (only if --train-q-model was used)
 ```
 
-**Deleted this session (2026-07-17)** — 16 stale root-level files: `example.py`, `generate_data.py`, `Stocks_logret.csv`, `analyze_regime.py`, `train.log`, `setup.py`, root `__init__.py`, `cleanup_wandb.sh`, `PRIVACY.md`, `run_training.sh`, `run_sampling.sh`, `run_sweep_pretrain.sh`, `sample_insample.py`, `sample_outsample.py`, `pretrain_and_plot.py`, `compare_train_test_events.py`. The root sample/analysis scripts were superseded by `diffusion_model_analysis/` + `evaluation/`. All recoverable from git.
+**`explore/test.py` does not exist.** An earlier, unintegrated Dwivedi–Subba Rao (DFT/trispectrum) portmanteau stationarity test was built and debugged as a standalone file at this path, but it is gone from the current repo state — deleted at some point after being set aside as unvalidated. If you're looking for a DFT-based stationarity test, it isn't there; **the stationarity test actually in use is the BFK test** (`explore/bfk_stationarity.py`), a different method entirely (Bücher–Fermanian–Kojadinov, via R's `npcp` package).
+
+**Deleted 2026-07-17** — 16 stale root-level files from the old synthetic-data/packaging/cluster-tooling era (`example.py`, `generate_data.py`, `Stocks_logret.csv`, `analyze_regime.py`, `train.log`, `setup.py`, root `__init__.py`, `cleanup_wandb.sh`, `PRIVACY.md`, `run_training.sh`, `run_sampling.sh`, `run_sweep_pretrain.sh`, `sample_insample.py`, `sample_outsample.py`, `pretrain_and_plot.py`, `compare_train_test_events.py`). The root sample/analysis scripts were superseded by what was then `diffusion_model_analysis/` + `evaluation/` (now merged into `analysis/`, see above). All recoverable from git.
 
 ---
 
@@ -172,7 +210,8 @@ Consequences:
 **Important (unchanged):** the macro series lives only in `self.df`, never in `X`, so
 any event-mask logic must read it via `get_z_windows*()`. Indexing into
 `X[:, :, event_asset_idx]` reads a stock channel instead. This bug was found in
-`main.py` on 2026-07-08 and again in `diffusion_model_analysis/cov.py` on 2026-07-17.
+`main.py` on 2026-07-08 and again in `cov.py` (then in `diffusion_model_analysis/`,
+now `analysis/`) on 2026-07-17.
 
 ### Paths — root-anchored (new this session)
 
@@ -244,8 +283,9 @@ at `analyze_samples()` and `analyze_test_set()`, so `main.py` Step 6 raises
 | `event_causal=True` (**current default**) | the `seq_len`-day macro window ending at `i - event_lag_gap - 1` | event is **fully known before** the return window starts; `event_lag_gap=0` means the macro window ends the day immediately before |
 
 Causal mode drops windows whose implied `start_row < 0`. Threaded through every
-`DataProcessor(...)` call site (`main.py`, `import_data.py`, `evaluation/*`,
-`diffusion_model_analysis/*`).
+`DataProcessor(...)` call site (`main.py`, `import_data.py`, `analysis/*` —
+formerly split across `evaluation/*` and `diffusion_model_analysis/*`, since
+merged, see Directory Structure above).
 
 **Z-window extraction (macro `Z_start`/`Z_end` per window)** — several sibling methods, all built around `_macro_std_values_and_n_train()` + `_scan_macro_windows()`. **`macro_window_tolerance` was removed** — a window is now valid only if the conditioning series has an actual observation at **both** exact endpoints (no ±w-day search). With the (dense) latent series this keeps ~98% of windows; gaps are holiday NaNs.
 - `get_z_windows()` — aligned with `get_diffusion_data()` (has one extra trailing window vs. `X_train`).
@@ -333,6 +373,26 @@ The primary score network. Stores `self.n_assets` / `self.seq_len` (used by
 - **Checkpoint:** `ckpt_new/hfunction.pt`
 - **`constraint_mode`/`reward_sharpness` (soft labels) ARE now wired into this trainer**
   — the earlier "legacy `hfunction.py` only" note no longer applies.
+- **EMA-smoothed early stopping (new):** with only ~253 positive events out of
+  ~5,057 windows at the current `event_threshold`, a held-out validation split
+  for early stopping was rejected — carving one out would starve both sides and
+  the validation loss itself would be too noisy at that sample size to trust.
+  Instead, training loss is watched directly, but SMOOTHED (raw per-epoch loss
+  on an observed run had epoch-to-epoch std ~0.037 with ~49% of epochs going UP
+  vs. the previous one — too noisy for a direct "did this beat the record"
+  check). An EMA of the loss (`early_stop_ema_span=20`) is compared against the
+  best EMA seen so far; if it hasn't improved by more than
+  `early_stop_min_delta` for `early_stop_patience` consecutive epochs, training
+  stops and the best-EMA checkpoint is restored. `early_stop_patience` (100) is
+  kept larger than `scheduler_patience` (75) so `ReduceLROnPlateau`'s LR decay
+  gets a chance to revive progress before early stopping gives up entirely.
+  `early_stop_min_delta` was tuned against an actual 425-epoch loss trace: the
+  original `5e-3` was too permissive (loss was still declining by ~0.01–0.03
+  per 25-epoch window even near the end of that run, so the patience clock kept
+  resetting on genuine-but-small progress and never fired); raised to `2e-2`,
+  which still lets real decline through without treating any downward drift as
+  a new record. `n_epochs` (1000) is now just the upper-bound safety cap, not
+  the primary stopping signal.
 
 **`"two"` — Two-Step MSE (`models/hfunction_twostep.py`)**
 
@@ -381,9 +441,9 @@ meaningful band; ~50 would be indistinguishable from hard labels.
 **Evaluation always uses the HARD event definition** regardless of `constraint_mode` —
 soft only changes the h-function's training labels, not what counts as an event.
 
-**Why percentage, not raw standardized units:** `Z_start`/`Z_end` are two points close together in time on a persistent series, so they're highly correlated — `Var(Z_end - Z_start)` is much smaller than 1 and raw-unit thresholds don't correspond to percentile intuition. The fraction is converted **once** to a raw cutoff via `get_event_threshold_from_percentile(top_fraction, event_type)` (train windows only, no leakage). With the current latent-state data: top 10% → **≈ 1.207 std**, giving 421 train / 226 test events.
+**Why percentage, not raw standardized units:** `Z_start`/`Z_end` are two points close together in time on a persistent series, so they're highly correlated — `Var(Z_end - Z_start)` is much smaller than 1 and raw-unit thresholds don't correspond to percentile intuition. The fraction is converted **once** to a raw cutoff via `get_event_threshold_from_percentile(top_fraction, event_type)` (train windows only, no leakage). **Current config: `event_threshold=0.05` (top 5%) → threshold ≈ 0.765 std, giving 253 positive events out of 5,057 train windows (5.00%, measured 2026-08-15).** (An older run of this doc reported top 10% → ≈1.207 std, 421/226 events — that was under a different `event_threshold` value; re-measure rather than trust either number blindly, since this is exactly the kind of value that drifts as the config changes.)
 
-The conversion + mask-from-macro-series pattern is used by every consumer: `main.py`, `explore/diagnosis.py`, `diffusion_model_analysis/{cov,conditional_gen,h_function_eval}.py`. (The former root-level sample/compare scripts that also did this were deleted this session.)
+The conversion + mask-from-macro-series pattern is used by every consumer: `main.py`, `analysis/{cov,conditional_gen,h_function_eval}.py` (formerly split across the now-deleted `explore/diagnosis.py` and `diffusion_model_analysis/`).
 
 **Event types:**
 - `"abs_change"`: `|Z_end - Z_start| >= threshold`
@@ -479,11 +539,14 @@ h_t_max=0.9
 train_batch_size=126, train_stoch=0.5, h_mini_batch_size=256
 block_sampling=True, episode_reweight=False
 event_type="upper_change", event_window=10
-event_threshold=0.075              # top 7.5% — converted to a raw cutoff at startup
+event_threshold=0.05               # top 5% — converted to a raw cutoff at startup
+                                    # (253 positive events / 5057 train windows, measured this session)
 constraint_mode="hard"             # "soft" IS implemented here now
 reward_sharpness=5.0
 one_two_step="one"
-n_epochs=425, lr=1e-4, weight_decay=5e-4, scheduler_patience=75
+n_epochs=1000, lr=1e-4, weight_decay=5e-4              # n_epochs is now an upper bound, see early stopping below
+scheduler_patience=75, scheduler_factor=0.5
+early_stop_patience=100, early_stop_min_delta=2e-2, early_stop_ema_span=20  # see H-Function Training section
 
 # Conditional Gen
 batch_size=32, num_steps=500, stoch=1.0, eta=1
@@ -500,56 +563,149 @@ portfolio_tickers = same 10-name basket as data.tickers
 
 ---
 
-## Diagnostics (`explore/diagnosis.py`)
+## Data-Level Diagnostics — historical (`explore/diagnosis.py`, DELETED)
 
-Reads the dataset CSV as-is (column 0 = conditioning series) and writes to
-`explore/diagnosis_plots/`:
+**`explore/diagnosis.py` no longer exists.** The description below is kept for
+history only — it describes plots that a past version of the file produced. The
+file was tracked as an empty file for a while (see the old "Known Issues" list)
+and has since been removed outright. If you need any of this functionality, it
+does not currently exist anywhere in the repo; `stationary_diagnosis.py` (next
+section) covers different ground (conditional stationarity of the *model's
+standardized residuals*, not the raw conditioning series or event/correlation
+sanity checks).
 
-- **`winsorized_standardized_returns.png`** — per-stock standardized return series with test-start marker
-- **`acf_squared_residuals.png`** — ACF of squared residuals (volatility clustering)
-- **`event_detection.png`** — ΔZ scatter for train/test windows with event threshold line; prints valid-window and event counts
-- **`correlation_matrices.png`** — **2×2** last-day-return correlation heatmaps (new layout this session): top-left train-unconditional, top-right train-conditional (event windows), bottom-left test-unconditional, bottom-right test-conditional. Current data: conditioning raises average off-diagonal correlation ~0.45→0.56 in train, directionally consistent in test (n=226, so ±0.13 sampling noise per pair).
-- **`conditional_series.png`** — stationarity check for the conditioning series (new this session): level + 252-day rolling mean, rolling std, ACF (120 lags), and ADF test verdict in the title (also printed to console).
+Historically wrote to `explore/diagnosis_plots/`:
+- `winsorized_standardized_returns.png` — per-stock standardized return series with test-start marker
+- `acf_squared_residuals.png` — ACF of squared residuals (volatility clustering)
+- `event_detection.png` — ΔZ scatter for train/test windows with event threshold line
+- `correlation_matrices.png` — 2×2 last-day-return correlation heatmaps (train/test × unconditional/conditional)
+- `conditional_series.png` — stationarity check for the raw conditioning series (rolling mean/std, ACF, ADF test)
 
-Note the **unconditional** correlation baseline shifts between train and test (e.g.
-AAPL–MSFT 0.40 train vs 0.67 test — mega-cap era regime drift). When judging
-out-of-sample generation, part of any gap is this drift, not conditioning failure.
+## Macro-Conditional Stationarity Diagnostics (`explore/stationary_diagnosis.py`)
 
-## Analysis Scripts (`diffusion_model_analysis/`)
+Tests whether a **learned, macro-state-conditional location-scale
+standardization** removes the nonstationarity in each ticker's returns —
+distinct from (and more targeted than) the old `diagnosis.py`'s stationarity
+check on the raw conditioning series itself.
 
-All scripts run from the **project root**. All outputs save to `diffusion_model_analysis/results/`.
+**Model (`NLL_Stationarity`):** two small MLPs, `mu_net(m)` and `sigma_net(m)`
+(`m` = the macro conditioning state), jointly fit by minimizing the Gaussian
+negative log-likelihood of `r ~ N(mu(m), sigma(m)^2)` on the FULL series (no
+train/test split for the headline result — the question is representability of
+the macro relationship, not forecasting; see the file's own docstrings for the
+reasoning, worked out interactively this session). `sigma` uses
+`softplus` + a `delta` floor to stay positive and away from the NLL's `log(sigma)`
+singularity. `z = (r - mu(m)) / sigma(m)` is the standardized residual under test.
 
-- **`unconditional_gen.py`** — diagnostics table + marginal KDEs. Generates 2000 unconditional samples.
-- **`conditional_gen.py`** — conditional vs real event window KDEs + diagnostics table. Loads pre-generated `.pt` files from root.
-- **`cov.py`** — correlation/covariance heatmaps (real all / real events / uncond generated / cond generated). Event mask rebuilt this session (see Experiments 2026-07-17): now sourced from the conditioning series via `get_z_windows_*` with the percentile-converted threshold, matching main.py/diagnosis.py exactly (421 train / 226 test events). "Conditional Generated" panel (needs `generated_samples_*.pt`) remains optional.
-- **`h_function_eval.py`** — forward-noises real windows at fixed τ and reports `h_model` output split by true label (calibration check, no sampling).
-- **`losses.py`** — auto-discovers `ckpt_new/*.csv` loss curves.
+**Two diagnostics per ticker, both run on the full-series model's `z`:**
+- **`macro_bins`** — quantile-bins `m` into `n_bins` (default 10), reports
+  `E[z | m in bin]` and `Var[z | m in bin]` per bin plus their mean/sd across
+  bins. Tests whether the conditional moments are genuinely flat across the
+  macro state, not just unconditionally standardized — the stronger, more
+  meaningful claim (a plain global z-score trivially passes the unconditional
+  version of this test; it says nothing about macro-conditional structure).
+- **`time_blocks`** — splits `z` into `n_blocks` (default 10) **consecutive**
+  time blocks (never scattered like the macro bins, since autocovariance needs
+  temporally adjacent points), computes the lag-1..`max_lag` autocovariance
+  within each block, and reports the mean/sd of each lag across blocks — tests
+  whether the autocovariance structure drifts over calendar time.
 
-**Audit status update:** `h_function_eval.py` and `conditional_gen.py` have since been
-converted to the macro-based mask pattern (`get_event_threshold_from_percentile` +
-`get_z_windows_*` + `valid_idx`), matching `main.py`. The earlier warning about the
-`X`-based pattern no longer applies to them.
+**Validation methodology worked out this session, worth knowing before trusting
+a result from this file:** an early "does macro conditioning matter" check used
+a permutation control that shuffled `m` and then binned the shuffled model's
+residuals **by the shuffled `m`** — this is a null test of "are residuals
+similar across random groups," which is trivially true, and gave a false
+negative (looked like real macro conditioning was no better than shuffled). The
+corrected control evaluates BOTH the real-macro and shuffled-macro models in
+bins of the **real** `m` — only then does the real model's advantage show up
+(e.g., the bin with the most extreme macro state had raw variance 2.20, fell to
+2.05 under a shuffled-macro model, and to 0.81 under the real-macro model).
+Network capacity was also tested and found **not** to matter here — a 13-parameter
+and a 4,353-parameter version gave nearly identical results, so the earlier
+concern that a large network could trivially memorize its way to flat bins was
+not the actual confound.
 
-## Evaluation Scripts (`evaluation/`)
+**`save_standardized_residuals()`** writes the full-series `z` for every ticker
+to `explore/nn_standardized_macro.csv` (Date + one column per ticker) — this is
+the file `bfk_stationarity.py` (next section) consumes, so it must be run first.
 
-Both load `generated_samples_{train,test}.pt` from the project root and rebuild the
-event masks with the same macro-based pattern as `main.py`. Outputs go to
-`evaluation/results/`.
+Run: `python explore/stationary_diagnosis.py` (add `--print-split-results` for
+an optional secondary 70/30 train/test view — not the headline result, see
+above).
 
-- **`distribution_metrics.py`** — per-asset **Wasserstein distance** between real
-  event-window and generated last-day marginals, printed as a table and rendered to
-  `wasserstein_table.png`. Also defines `fraction()` (empirical exceedance curve),
-  `plot_tail_logs()` (log-log tail plots of `|last-day return|`, real vs generated), and
-  `tail_index()` (slope fit of the log-log exceedance curve). **Note:** `plot_tail_logs()`
-  references `mask_train`/`mask_test`, which are not defined in the module — it uses
-  `X_train_events`/`X_test_events` elsewhere — so that call currently fails.
-- **`dependency_metric.py`** — **ACF of squared residuals** (a volatility-clustering
-  check) for real and generated windows, with 95% bands, plus a **two-sample Welch
-  t-test per lag** comparing real vs generated ACF, rendered as p-value curves.
-  `n_lags = min(10, seq_len - 1)`. Real-side windows are subsampled at stride `seq_len`
-  to approximate non-overlapping draws. Outputs `acf_squared_real_band.png`,
-  `acf_squared_gen_band.png`, `acf_squared_pvalues.png`.
-  Requires `statsmodels` and `pmdarima`.
+**A separate, earlier attempt at a DFT/trispectrum-based stationarity test
+(Dwivedi–Subba Rao portmanteau) was built, debugged, and set aside as a
+standalone file (`explore/test.py`) — that file no longer exists in the repo.**
+Real bugs were found and fixed during that work (trispectrum scaling off by a
+factor of T², pairing-term subtraction needing to happen *before* smoothing
+rather than after, bandwidth instability needing to scale with T), but the
+estimator's finite-sample behavior was never fully validated, and it was never
+wired into anything. If this test is wanted, it would need to be rebuilt from
+scratch.
+
+## BFK Stationarity Test (`explore/bfk_stationarity.py`)
+
+The stationarity hypothesis test actually in use — **Bücher–Fermanian–Kojadinov**
+(not Dwivedi–Subba Rao; see above), run via R's `npcp` package through `rpy2`.
+Consumes `explore/nn_standardized_macro.csv` (written by
+`stationary_diagnosis.py`, above), one ticker column at a time.
+
+CLI: `run-asset <TICKER>` (single ticker) / `combine` (aggregate results) subcommands.
+
+**Cluster submission:**
+- `submit_bfk_jobs.sh` — clears old `bfk_results/*.json`, then `sbatch`'s the array job
+- `bfk_array_job.sh` — SLURM array job (`--array=0-9%2`), one task per ticker across
+  the 10-name basket, each calling `bfk_stationarity.py run-asset <TICKER>`; logs to
+  `explore/bfk_results/logs/`
+
+**Results:** `explore/bfk_results/<TICKER>.json`, one per ticker — all 10 present as
+of the last run. Multiple job IDs' worth of logs are present in `bfk_results/logs/`,
+i.e. this has been run more than once across the session(s) that produced it.
+
+## Analysis Scripts (`analysis/`)
+
+All scripts run from the **project root**. `evaluation_main.py` orchestrates the
+rest as subprocesses and forwards `--gan` uniformly; each script can also be run
+standalone. Default (no `--gan`): diffusion-model outputs to
+`analysis/diffusion_results/`. With `--gan`: cGAN-baseline outputs to
+`analysis/gan_results/`.
+
+- **`evaluation_main.py`** — runs `losses.py`, `unconditional_gen.py`,
+  `conditional_gen.py`, `cov.py`, `dependency_metric.py`, `distribution_metrics.py`
+  in sequence. Writes nothing itself.
+- **`losses.py`** — training-loss curves. Default: score/H-function loss CSVs from
+  `ckpt_new/`. `--gan`: `gan_baseline/gan_results/cgan_losses.json`.
+- **`unconditional_gen.py`** — unconditional diffusion samples vs Real, diagnostics
+  table + marginal KDEs. **Under `--gan` this is a no-op** — it prints a message
+  and exits immediately, because the cGAN baseline's `generate_conditional()`
+  always requires a binary event label; there is no unconditional cGAN generator
+  to compare against. (Previously this script existed but was not wired into
+  `evaluation_main.py`'s script list at all, and wrote to a stray
+  `analysis/results/` directory instead of `diffusion_results/`/`gan_results/` —
+  both fixed this session.)
+- **`conditional_gen.py`** — conditional-generation diagnostics (event-conditioned
+  samples vs Real): KDEs + diagnostics table. Loads pre-generated `.pt` files.
+- **`cov.py`** — correlation/covariance heatmaps (real all / real events / uncond
+  generated / cond generated). Event mask sourced from the conditioning series via
+  `get_z_windows_*` with the percentile-converted threshold, matching `main.py`.
+- **`dependency_metric.py`** — ACF of squared residuals (volatility-clustering
+  check) for real and generated windows with 95% bands, plus a per-lag two-sample
+  Welch t-test rendered as p-value curves. Outputs `acf_squared_real_band.png`,
+  `acf_squared_gen_band.png`, `acf_squared_pvalues.png`. Requires `statsmodels`
+  and `pmdarima`.
+- **`distribution_metrics.py`** — per-asset Wasserstein distance between real
+  event-window and generated last-day marginals, rendered to
+  `wasserstein_table.png`. Also defines tail-index/exceedance-curve helpers.
+- **`h_function_eval.py`** — forward-noises real windows at fixed τ, reports
+  `h_model` output split by true label (calibration check, no sampling). **Writes
+  to `analysis/results/`** — a third results directory, distinct from
+  `diffusion_results/`/`gan_results/`; not currently present on disk (created on
+  first run). Not part of `evaluation_main.py`'s script list.
+- **`hypothesis_testing.py`** — energy-distance / episode-matched hypothesis
+  tests (real-unconditional vs real-conditional; real-conditional vs
+  generated-conditional) with bootstrap CIs. **Standalone** — not called by
+  `evaluation_main.py`; own `argparse` CLI (`--split`, `--n-reference`,
+  `--n-boot`); prints to stdout only, writes no files.
 
 ---
 
@@ -568,18 +724,24 @@ event masks with the same macro-based pattern as `main.py`. Outputs go to
 
 ## Known Issues / Gotchas
 
-1. **Duplicate `DataProcessor` in `data/data_processor.py`:** Two complete class definitions in one file (first is commented out; active one is the second). Should be cleaned up.
+1. ~~**Duplicate `DataProcessor` in `data/data_processor.py`**~~ — **FIXED.** Only one
+   class definition remains; the old commented-out first version is gone.
 
-2. **`utils/portfolio.py` calls the removed `invert_samples()`** — `analyze_samples()`
-   and `analyze_test_set()` both call `self.data_processor.invert_samples(...)`, which no
-   longer exists (removed with the switch to per-window EMA standardization). **`main.py`
-   Step 6 raises `AttributeError`.** Port to `destandardize_windows()` +
-   `sample_entry_stats()` (pass the event mask for conditional samples). This supersedes
-   the old issues 2 and 3 about `mu_seq`/`weekday_mean`.
+2. **`utils/portfolio.py` STILL calls the removed `invert_samples()`** — confirmed still
+   live: `analyze_samples()` (line ~76) and `analyze_test_set()` (line ~112) both call
+   `self.data_processor.invert_samples(...)`, which does not exist on the current
+   `DataProcessor` (removed with the switch to per-window EMA standardization — the
+   comment at `data_processor.py:715` explicitly notes it's gone and points at the
+   replacement). **`main.py` Step 6 still raises `AttributeError`.** Port to
+   `destandardize_windows()` + `sample_entry_stats()` (pass the event mask for
+   conditional samples). This supersedes the old issues 2 and 3 about
+   `mu_seq`/`weekday_mean`.
 
-3. **`explore/diagnosis.py` is currently an EMPTY FILE** (tracked as modified in git).
-   Every diagnostics artifact described in the Diagnostics section below was produced by
-   the previous version of it, not by the file as it now stands.
+3. **`explore/diagnosis.py` no longer exists at all** (previously tracked as an empty
+   file; now deleted outright). See "Data-Level Diagnostics — historical" above for what
+   it used to produce. `explore/stationary_diagnosis.py` covers different ground (model
+   residual stationarity, not raw-series/event/correlation sanity checks) and is not a
+   replacement for the deleted plots.
 
 4. **`cov_weight = 0.0`** — the correlation penalty in `DiffusionModel.loss_fn` is fully
    implemented (including the `real_corr_target` and the low-t mask) but inactive at the
@@ -728,6 +890,79 @@ of the time embedding, broadcast over any number of intermediate dims.
 ---
 
 ## Experiments
+
+### 2026-08-15 — Macro-conditional stationarity diagnostics, BFK test pipeline, analysis/ merge, unconditional_gen.py wiring fix, H-function early stopping
+
+**`analysis/` supersedes `diffusion_model_analysis/` + `evaluation/`.** The two
+directories described throughout the older sections of this document were merged
+into a single `analysis/` at some point; `explore/diagnosis.py` was also deleted
+outright (previously just empty). All directory-structure references throughout
+this doc have been corrected to match; see the "Directory Structure",
+"Data-Level Diagnostics — historical", and "Analysis Scripts" sections above.
+
+**`analysis/unconditional_gen.py` existed but was silently not running.** It was
+never added to `evaluation_main.py`'s `SCRIPTS` list, and it wrote to a stray
+`analysis/results/` directory instead of `diffusion_results/`/`gan_results/` like
+every other script. Both fixed: added to the script list, output path corrected,
+and given a `--gan` no-op path (prints and exits) since the cGAN baseline has no
+unconditional generator to compare against — `generate_conditional()` always
+requires a binary event label.
+
+**`explore/stationary_diagnosis.py` — new macro-conditional stationarity
+diagnostic**, built and iterated on extensively this session (see its own section
+above for the full design). Headline design points worth remembering:
+- Fits `mu(m)`/`sigma(m)` (two small MLPs) on the FULL series by joint Gaussian
+  NLL — no train/test split for the headline result, since the question is
+  representability of the macro relationship, not forecasting.
+- Two diagnostics: `macro_bins` (conditional mean/variance flatness across
+  quantile bins of the macro state) and `time_blocks` (autocovariance drift
+  across consecutive time blocks — deliberately NOT the same partition as the
+  macro bins, since autocovariance needs temporally adjacent points).
+- **A real methodological bug was caught and fixed during this work:** an initial
+  permutation control shuffled the macro state and then binned the shuffled
+  model's residuals BY THE SHUFFLED macro state — a null test of "are residuals
+  similar across random groups" (trivially yes), which produced a false-negative
+  read that real macro conditioning was no better than shuffled. The fix
+  evaluates both the real and shuffled models in bins of the REAL macro state;
+  only then does the real model's advantage appear (example bin: raw variance
+  2.20 → 2.05 under a shuffled-macro model → 0.81 under the real-macro model).
+- Network capacity was tested and found not to matter for this result (13 vs.
+  4,353 parameters gave near-identical outcomes) — ruling out an earlier
+  hypothesis that a large network could trivially memorize its way to flat bins.
+- Writes `explore/nn_standardized_macro.csv` (full-series standardized residuals
+  per ticker), which feeds directly into `bfk_stationarity.py` below.
+- **A separate DFT/trispectrum-based portmanteau test (Dwivedi–Subba Rao) was
+  built, debugged (multiple real bugs: trispectrum scaling off by T², pairing
+  terms needing to be zeroed before smoothing rather than subtracted after,
+  bandwidth needing to scale with T to avoid negative correction denominators at
+  realistic sample sizes), and ultimately set aside as unvalidated at
+  `explore/test.py`. That file no longer exists in the current repo — if
+  wanted, it would need to be rebuilt.**
+
+**`explore/bfk_stationarity.py` — the stationarity test actually in production
+use** (Bücher–Fermanian–Kojadinov, via R's `npcp` through `rpy2`; not the
+Dwivedi–Subba Rao attempt above — different method). Consumes
+`nn_standardized_macro.csv`. Run via SLURM array job across all 10 tickers
+(`submit_bfk_jobs.sh` → `bfk_array_job.sh`); results in
+`explore/bfk_results/<TICKER>.json`, all 10 present, run more than once across
+this project's history (multiple job IDs' worth of logs retained).
+
+**H-function training now has EMA-smoothed early stopping** (`hfunction_direct.py`
+/ `HFunctionConfig`). Driven by extreme class imbalance at the current event
+threshold (253 positive events / 5,057 train windows, 5.00% — measured this
+session, ruling out a held-out validation split as too noisy to trust at that
+scale) and by noisy raw per-epoch loss (epoch-to-epoch std ~0.037, ~49% of
+epochs upward on an observed 425-epoch run — too noisy for a direct "did loss
+improve" check). Design: EMA of the loss (`early_stop_ema_span=20`) compared
+against its best-so-far value; `early_stop_patience=100` epochs of no
+improvement `> early_stop_min_delta` triggers a stop and restores the best
+checkpoint; patience kept above `scheduler_patience=75` so an LR decay gets a
+chance to help first. `early_stop_min_delta` was tuned against the actual loss
+trace — the initial `5e-3` was too permissive (loss was still declining
+~0.01–0.03 per 25 epochs even late in the run, so the clock kept resetting on
+genuine small progress and never fired); raised to `2e-2`. `n_epochs` raised
+from 425 to 1000 and reframed as an upper-bound safety cap rather than the
+primary stopping signal.
 
 ### 2026-07-17 — Latent-state conditioning pipeline, vector-form Kalman filter, codebase cleanup, cov.py mask bug
 

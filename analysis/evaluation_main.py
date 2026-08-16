@@ -1,9 +1,13 @@
 """
-Runs the analysis/ evaluation scripts (losses.py, conditional_gen.py, cov.py,
-dependency_metric.py, distribution_metrics.py) against either the diffusion
-model's generated samples (default) or the cGAN baseline's (--gan). Under
---gan, losses.py plots the cGAN's joint minimax value V(D,G) = -d_loss
-instead of the diffusion model's score/H-function losses.
+Runs the analysis/ evaluation scripts (losses.py, unconditional_gen.py,
+conditional_gen.py, cov.py, dependency_metric.py, distribution_metrics.py)
+against either the diffusion model's generated samples (default) or the cGAN
+baseline's (--gan). Under --gan, losses.py plots the cGAN's joint minimax
+value V(D,G) = -d_loss instead of the diffusion model's score/H-function
+losses, and unconditional_gen.py is a no-op -- the cGAN baseline has no
+unconditional generator to evaluate (cgan_tsgm.generate_conditional always
+requires a binary event label), so there is nothing for it to compare
+against Real.
 
 Each script is a standalone script (not an importable module), so this just
 invokes them as subprocesses with the same interpreter and forwards --gan.
@@ -25,6 +29,7 @@ _ROOT = os.path.dirname(_ANALYSIS_DIR)
 
 SCRIPTS = [
     "losses.py",
+    "unconditional_gen.py",
     "conditional_gen.py",
     "cov.py",
     "dependency_metric.py",
