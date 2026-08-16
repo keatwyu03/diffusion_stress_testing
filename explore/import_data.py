@@ -136,7 +136,7 @@ panels = [
 ]
 
 print(f"\n{'='*60}")
-print(f"Bucket check: {cond_event} {event_type}, top {_cfg.hfunction.event_threshold:.0%}")
+print(f"Bucket check: {cond_event} {event_type}, top {_cfg.hfunction.event_threshold:.1%}")
 print(f"  train events: {len(X_train_events)} / {len(X_train)}")
 print(f"  test  events: {len(X_test_events)} / {len(X_test)}")
 
@@ -173,8 +173,8 @@ for ax, (lbl, arr) in zip(axes, panels):
 
 fig.suptitle(
     f"Correlation Matrices — Last-Day Returns\n"
-    f"(event: {cond_event} {event_type} ≥ {h_threshold:.3f} std "
-    f"[top {_cfg.hfunction.event_threshold:.0%}], causal={_cfg.data.event_causal})\n"
+    f"(event: {cond_event} {event_type} ≥ {h_threshold} std "
+    f"[top {_cfg.hfunction.event_threshold:.1%}], causal={_cfg.data.event_causal})\n"
     f"method: {_cfg.data.latent_method},  conditioning bucket: {bucket_lbl}",
     fontsize=12, fontweight="bold"
 )

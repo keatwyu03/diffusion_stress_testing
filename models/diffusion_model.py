@@ -190,6 +190,7 @@ class DiffusionModel:
         use_wandb: bool = False,
         block_sampling: bool = False,
         end_dates=None,
+        loss_csv_path: str = "ckpt_new/score_losses.csv",
     ) -> None:
         """
         Train the diffusion model
@@ -298,8 +299,8 @@ class DiffusionModel:
                 )
 
         import pandas as pd, os
-        os.makedirs("ckpt_new", exist_ok=True)
-        pd.DataFrame(loss_records).to_csv("ckpt_new/score_losses.csv", index=False)
+        os.makedirs(os.path.dirname(loss_csv_path) or ".", exist_ok=True)
+        pd.DataFrame(loss_records).to_csv(loss_csv_path, index=False)
 
         # Unwrap DataParallel if used
         if isinstance(self.model, nn.DataParallel):
@@ -335,6 +336,7 @@ class DiffusionModel:
         stoch: float = 1.0,
         eps: float = 1e-4,
         return_path: bool = False,
+        seed: Optional[int] = None,
     ) -> torch.Tensor:
         """
         Sample from the diffusion model using Euler-Maruyama
@@ -345,13 +347,24 @@ class DiffusionModel:
             stoch: Stochasticity parameter (0=deterministic, 1=full stochastic)
             eps: Small epsilon for numerical stability
             return_path: Whether to return the full path
+            seed: If given, makes sampling reproducible -- a dedicated
+                torch.Generator (not the ambient global RNG state) is seeded
+                with this value and used for the initial noise and every
+                Euler-Maruyama step, so the same seed always reproduces the
+                same samples. None (default) preserves the old nondeterministic
+                behavior.
 
         Returns:
             samples: Generated samples
         """
         self.model.eval()
 
-        init_x = torch.randn(batch_size, self.in_channels, self.sample_size, device=self.device)
+        rng = None
+        if seed is not None:
+            rng = torch.Generator(device=self.device)
+            rng.manual_seed(seed)
+
+        init_x = torch.randn(batch_size, self.in_channels, self.sample_size, device=self.device, generator=rng)
         x = init_x
 
         time_steps = self.make_vp_std_grid(
@@ -379,7 +392,10 @@ class DiffusionModel:
                 mean_x = (
                     x + (-f_expanded * x + adjust * (g_expanded**2) * score) * step_size
                 )
-                x = mean_x + stoch * torch.sqrt(step_size) * g_expanded * torch.randn_like(x)
+                # randn_like has no `generator` arg, so shape/dtype/device are
+                # spelled out explicitly to keep drawing from `rng` when seeded.
+                noise = torch.randn(x.shape, dtype=x.dtype, device=x.device, generator=rng)
+                x = mean_x + stoch * torch.sqrt(step_size) * g_expanded * noise
 
                 if return_path:
                     next_batch_t = torch.ones(batch_size, device=self.device) * next_t

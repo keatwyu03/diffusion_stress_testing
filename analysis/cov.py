@@ -10,9 +10,10 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from config import get_default_config
+from config import get_default_config, get_run_tag
 from data import DataProcessor
 from models import DiffusionModel
+from utils import set_seed
 
 _parser = argparse.ArgumentParser()
 _parser.add_argument("--gan", action="store_true",
@@ -27,6 +28,7 @@ _parser.add_argument("--gan", action="store_true",
 _args = _parser.parse_args()
 
 config = get_default_config()
+set_seed(config.seed)
 data_processor = DataProcessor(
     csv_path=config.data.csv_path,
     tickers=config.data.tickers,
@@ -92,54 +94,73 @@ _root = os.path.dirname(_dir)                        # repo root
 if _args.gan:
     _gen_dir = os.path.join(_root, 'gan_baseline', 'gan_results')
     _gen_train_path = os.path.join(_gen_dir, 'gan_generated_samples_train.pt')
-    _gen_test_path  = os.path.join(_gen_dir, 'gan_generated_samples_test.pt')
     _cond_panel_label = "cGAN Generated"
     _results_dir = os.path.join(_dir, "gan_results")
 else:
     _gen_train_path = os.path.join(_root, 'generated_samples_train.pt')
-    _gen_test_path  = os.path.join(_root, 'generated_samples_test.pt')
     _cond_panel_label = "Conditional Generated"
     _results_dir = os.path.join(_dir, "diffusion_results")
 
+# ONE conditional-generated batch is compared against both the train-event and
+# test-event panels below (gen_train reused as gen_test) -- generation has no
+# knowledge of which real split it's being compared to, so a second draw would
+# just be a fresh noisy sample from the same underlying distribution rather
+# than anything meaningfully different. Only the train path is read; the
+# _test.pt file main.py also writes is redundant (same tensor) and unused here.
 gen_train = torch.load(_gen_train_path, map_location='cpu') if os.path.exists(_gen_train_path) else None
-gen_test  = torch.load(_gen_test_path,  map_location='cpu') if os.path.exists(_gen_test_path)  else None
+gen_test  = gen_train
 
-if gen_train is None or gen_test is None:
-    print(f"No {_gen_train_path} / {_gen_test_path} found — skipping '{_cond_panel_label}' panel.")
+if gen_train is None:
+    print(f"No {_gen_train_path} found — skipping '{_cond_panel_label}' panel.")
 
-# ── Generate unconditional samples (diffusion mode only -- --gan skips this
-# entirely: no diffusion checkpoint load, no sampling, GAN-only comparison) ──
+# ── Unconditional samples (diffusion mode only -- --gan skips this entirely:
+# no diffusion checkpoint load, no sampling, GAN-only comparison) ──
+# Loaded from the shared, seeded file unconditional_gen.py writes, rather than
+# regenerated here -- two independent (unseeded) generations would cost the
+# sampling time twice AND give two different random draws, so this script's
+# "Unconditional Generated" panel and unconditional_gen.py's own diagnostics
+# would silently be looking at different samples instead of the same baseline.
 if not _args.gan:
-    diffusion_model = DiffusionModel(
-        in_channels=config.diffusion.in_channels,
-        out_channels=config.diffusion.out_channels,
-        sample_size=config.diffusion.sample_size,
-        layers_per_block=config.diffusion.layers_per_block,
-        block_out_channels=config.diffusion.block_out_channels,
-        b_min=config.diffusion.b_min,
-        b_max=config.diffusion.b_max,
-        device=config.diffusion.device,
-        arch=config.diffusion.arch,
-        embed_dim=config.diffusion.embed_dim,
-        n_heads=config.diffusion.n_heads,
-        n_layers=config.diffusion.n_layers,
-        cond_dim=config.diffusion.cond_dim,
-    )
-    diffusion_model.load("ckpt_new/diffusion_model.pt")
+    _uncond_path = os.path.join(_root, "unconditional_samples.pt")
+    if os.path.exists(_uncond_path):
+        uncond = torch.load(_uncond_path, map_location='cpu')
+        print(f"Loaded {_uncond_path} (n={len(uncond)}) -- run analysis/unconditional_gen.py "
+              f"first if this is stale.")
+    else:
+        print(f"No {_uncond_path} found -- generating (run analysis/unconditional_gen.py "
+              f"beforehand to cache this and skip regenerating it here).")
+        diffusion_model = DiffusionModel(
+            in_channels=config.diffusion.in_channels,
+            out_channels=config.diffusion.out_channels,
+            sample_size=config.diffusion.sample_size,
+            layers_per_block=config.diffusion.layers_per_block,
+            block_out_channels=config.diffusion.block_out_channels,
+            b_min=config.diffusion.b_min,
+            b_max=config.diffusion.b_max,
+            device=config.diffusion.device,
+            arch=config.diffusion.arch,
+            embed_dim=config.diffusion.embed_dim,
+            n_heads=config.diffusion.n_heads,
+            n_layers=config.diffusion.n_layers,
+            cond_dim=config.diffusion.cond_dim,
+        )
+        diffusion_model.load(f"ckpt_new/score_{get_run_tag(config)}.pt")
 
-    N_uncond   = config.conditional.n_gen_samples
-    batch_size = 128
-    n_batches  = -(-N_uncond // batch_size)  # ceil
-    print(f"Generating {N_uncond} unconditional samples (batch={batch_size}, {n_batches} batches)...")
-    chunks = []
-    for start in tqdm(range(0, N_uncond, batch_size), total=n_batches, desc="Unconditional batches"):
-        bs = min(batch_size, N_uncond - start)
-        chunks.append(diffusion_model.sample(
-            batch_size=bs,
-            num_steps=config.conditional.num_steps,
-            stoch=config.conditional.stoch,
-        ).cpu())
-    uncond = torch.cat(chunks, dim=0)  # (N, A, T)
+        N_uncond   = config.conditional.n_gen_samples
+        batch_size = 128
+        n_batches  = -(-N_uncond // batch_size)  # ceil
+        print(f"Generating {N_uncond} unconditional samples (batch={batch_size}, {n_batches} batches)...")
+        chunks = []
+        for start in tqdm(range(0, N_uncond, batch_size), total=n_batches, desc="Unconditional batches"):
+            bs = min(batch_size, N_uncond - start)
+            chunks.append(diffusion_model.sample(
+                batch_size=bs,
+                num_steps=config.conditional.num_steps,
+                stoch=config.conditional.stoch,
+            ).cpu())
+        uncond = torch.cat(chunks, dim=0)  # (N, A, T)
+        torch.save(uncond, _uncond_path)
+        print(f"Saved {_uncond_path}")
 
 # ── Last-day return matrices: shape (N, A) ────────────────────────────────────
 # Real: X shape is (N, T, A) → last day = X[:, -1, :]
@@ -171,12 +192,6 @@ for split_label, panels in [("TRAIN", panels_train), ("TEST", panels_test)]:
         C = np.corrcoef(arr.T)
         print(f"\n{lbl}  (n={len(arr)}):")
         print(pd.DataFrame(C, index=plot_tickers, columns=plot_tickers).round(3).to_string())
-
-    print(f"\n── Covariance Matrices ({split_label}) ──")
-    for lbl, arr in panels:
-        C = np.cov(arr.T)
-        print(f"\n{lbl}  (n={len(arr)}):")
-        print(pd.DataFrame(C, index=plot_tickers, columns=plot_tickers).round(4).to_string())
 
 
 # ── Off-diagonal correlation RMSE vs Real (event windows) ─────────────────────
@@ -218,14 +233,14 @@ def plot_matrices(panels, title, fname, vmin, vmax, fmt, rmse_rows=None):
     n_panels = len(panels)
     n_cols   = 2
     n_rows   = (n_panels + n_cols - 1) // n_cols
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(11, 4.5 * n_rows))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 6 * n_rows))
     axes = np.atleast_1d(axes).ravel()
     for ax in axes[n_panels:]:
         ax.axis("off")
     for ax, (lbl, arr) in zip(axes, panels):
         C  = np.corrcoef(arr.T) if "corr" in fname else np.cov(arr.T)
         im = ax.imshow(C, vmin=vmin, vmax=vmax, cmap="RdBu_r")
-        ax.set_xticks(range(n_plot)); ax.set_xticklabels(tick_lbl, fontsize=10)
+        ax.set_xticks(range(n_plot)); ax.set_xticklabels(tick_lbl, fontsize=10, rotation=45, ha="right")
         ax.set_yticks(range(n_plot)); ax.set_yticklabels(tick_lbl, fontsize=10)
         ax.set_title(f"{lbl}\n(n={len(arr)})", fontsize=10, fontweight="bold", pad=8)
         for r in range(n_plot):
@@ -239,8 +254,8 @@ def plot_matrices(panels, title, fname, vmin, vmax, fmt, rmse_rows=None):
                  if config.data.latent_method is None
                  else f"latent ({config.data.latent_method})")
     fig.suptitle(
-        f"{title}\n(event: {event_lbl} {event_type} ≥ {h_threshold:.3f} std"
-        f" [top {config.hfunction.event_threshold:.0%}],  last-day returns)",
+        f"{title}\n(event: {event_lbl} {event_type} ≥ {h_threshold} std"
+        f" [top {config.hfunction.event_threshold:.1%}],  last-day returns)",
         fontsize=13, fontweight="bold"
     )
     fig.tight_layout()
@@ -261,21 +276,11 @@ def plot_matrices(panels, title, fname, vmin, vmax, fmt, rmse_rows=None):
 # ── Train figures ─────────────────────────────────────────────────────────────
 rmse_train = print_corr_rmse("Train", panels_train)
 
-all_cov = [np.cov(arr.T) for _, arr in panels_train]
-cov_lim = float(np.abs(np.concatenate([C.ravel() for C in all_cov])).max())
-
 plot_matrices(panels_train, "Correlation Matrices — Last-Day Returns (Train)",
               "corr_matrices_train.png", vmin=-1, vmax=1, fmt="{:.2f}", rmse_rows=rmse_train)
-plot_matrices(panels_train, "Covariance Matrices — Last-Day Returns (Train)",
-              "cov_matrices_train.png", vmin=-cov_lim, vmax=cov_lim, fmt="{:.3f}")
 
 # ── Test figures ──────────────────────────────────────────────────────────────
 rmse_test = print_corr_rmse("Test", panels_test)
 
-all_cov_t = [np.cov(arr.T) for _, arr in panels_test]
-cov_lim_t = float(np.abs(np.concatenate([C.ravel() for C in all_cov_t])).max())
-
 plot_matrices(panels_test, "Correlation Matrices — Last-Day Returns (Test)",
               "corr_matrices_test.png", vmin=-1, vmax=1, fmt="{:.2f}", rmse_rows=rmse_test)
-plot_matrices(panels_test, "Covariance Matrices — Last-Day Returns (Test)",
-              "cov_matrices_test.png", vmin=-cov_lim_t, vmax=cov_lim_t, fmt="{:.3f}")

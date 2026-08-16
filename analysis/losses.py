@@ -48,8 +48,17 @@ def _latest_csv(pattern):
     return max(hits, key=os.path.getmtime) if hits else None
 
 
-score_path = args.score_loss or _latest_csv("score_losses.csv") or _latest_csv("train_losses.csv")
-h_path     = args.h_loss    or _latest_csv("h_losses.csv")      or _latest_csv("h_function_losses.csv")
+from config import get_default_config, get_run_tag
+_run_tag = get_run_tag(get_default_config())
+
+score_path = (args.score_loss
+              or _latest_csv(f"score_losses_{_run_tag}.csv")
+              or _latest_csv("score_losses.csv")
+              or _latest_csv("train_losses.csv"))
+h_path = (args.h_loss
+          or _latest_csv(f"h_losses_{_run_tag}.csv")
+          or _latest_csv("h_losses.csv")
+          or _latest_csv("h_function_losses.csv"))
 
 if score_path is None:
     raise FileNotFoundError(

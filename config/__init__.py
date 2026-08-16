@@ -7,6 +7,7 @@ from .config import (
     PortfolioConfig,
     WandbConfig,
     get_default_config,
+    get_run_tag,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "PortfolioConfig",
     "WandbConfig",
     "get_default_config",
+    "get_run_tag",
 ]

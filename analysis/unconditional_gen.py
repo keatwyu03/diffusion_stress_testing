@@ -1,3 +1,4 @@
+import argparse
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -7,11 +8,27 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import get_default_config
+from config import get_default_config, get_run_tag
 from data import DataProcessor
 from models import DiffusionModel
+from utils import set_seed
+
+_parser = argparse.ArgumentParser()
+_parser.add_argument("--gan", action="store_true",
+                      help="cGAN mode. The cGAN baseline has no unconditional generator "
+                           "(cgan_tsgm.generate_conditional requires a binary event label) "
+                           "so there is nothing to compare against Real here -- this flag "
+                           "only exists so evaluation_main.py can forward it uniformly across "
+                           "scripts; it makes this script a no-op that exits immediately.")
+_args = _parser.parse_args()
+
+if _args.gan:
+    print("unconditional_gen.py: --gan given, but the cGAN baseline has no unconditional "
+          "generator to evaluate. Nothing to do; exiting.")
+    sys.exit(0)
 
 config = get_default_config()
+set_seed(config.seed)
 data_processor = DataProcessor(
     csv_path=config.data.csv_path,
     tickers=config.data.tickers,
@@ -51,8 +68,19 @@ diffusion_model = DiffusionModel(
     n_layers=config.diffusion.n_layers,
     cond_dim=config.diffusion.cond_dim,
 )
-diffusion_model.load("ckpt_new/diffusion_model.pt")
+diffusion_model.load(f"ckpt_new/score_{get_run_tag(config)}.pt")
 
+_dir  = os.path.dirname(os.path.abspath(__file__))  # analysis/
+_root = os.path.dirname(_dir)                        # repo root
+_uncond_path = os.path.join(_root, "unconditional_samples.pt")
+
+# Cached to a shared file so cov.py (and anything else that wants an
+# unconditional baseline) reuses the EXACT same batch instead of each script
+# paying the sampling cost again and comparing against a different random
+# draw. Reproducibility comes from the single global set_seed(config.seed)
+# call above (seeds torch's global RNG, which the unseeded torch.randn(...)
+# inside diffusion_model.sample() then draws from) -- no separate per-batch
+# seed here.
 N_samples  = config.conditional.n_gen_samples
 batch_size = 128
 n_batches = -(-N_samples // batch_size)  # ceil
@@ -66,9 +94,11 @@ for start in tqdm(range(0, N_samples, batch_size), total=n_batches, desc="Uncond
         stoch=config.conditional.stoch,
     ).cpu())
 uncond = torch.cat(chunks, dim=0)  # (N_samples, A, T)
+torch.save(uncond, _uncond_path)
+print(f"Saved {_uncond_path}")
 
-_dir = os.path.dirname(os.path.abspath(__file__))
-os.makedirs(os.path.join(_dir, "results"), exist_ok=True)
+_results_dir = os.path.join(_dir, "diffusion_results")
+os.makedirs(_results_dir, exist_ok=True)
 
 
 def diagnose_score_target(dm, x, t_values=(1.0, 0.6, 0.35, 0.15, 0.01)):
@@ -124,7 +154,7 @@ tbl.set_fontsize(9)
 tbl.auto_set_column_width(col=list(range(len(col_labels))))
 fig_d.suptitle("Unconditional Generation — Diagnostics", fontsize=12, fontweight="bold")
 fig_d.tight_layout()
-out_diag = os.path.join(_dir, "results", "unconditional_diagnostics.png")
+out_diag = os.path.join(_results_dir, "unconditional_diagnostics.png")
 plt.savefig(out_diag, dpi=150, bbox_inches="tight")
 plt.close()
 print(f"Saved {out_diag}")
@@ -174,7 +204,7 @@ def make_figure(extract_real_fn, extract_gen_fn, suptitle, filename, xlabel):
 
     fig.suptitle(suptitle, fontsize=13, fontweight="bold")
     fig.tight_layout()
-    out = os.path.join(_dir, "results", filename)
+    out = os.path.join(_results_dir, filename)
     plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.show()
     print(f"Saved {out}")
@@ -189,12 +219,6 @@ make_figure(
     xlabel="Standardized Return (day 64)",
 )
 
-# ── Figure 2: Cumulative returns (64-day sum) ─────────────────────────────────
-make_figure(
-    extract_real_fn=lambda X, ch: X[:, :, ch].sum(dim=1).numpy(),
-    extract_gen_fn =lambda ch:    uncond[:, ch, :].sum(dim=1).numpy(),
-    suptitle="Unconditional Generation — Cumulative Return (64-day sum)",
-    filename="unconditional_cumulative.png",
-    xlabel="Cumulative Standardized Return",
-)
+# Cumulative returns (64-day sum) -- data still computed in the diagnostics
+# table below (real_cum/gen_cum), plot intentionally not produced.
 

@@ -177,7 +177,7 @@ class HFunctionTwoStepTrainer:
         ).to(self.device)
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr = cfg.learning_rate, weight_decay= cfg.weight_decay)
     
-    def train(self, use_wandb = False):
+    def train(self, use_wandb = False, loss_csv_path: str = "ckpt_new/h_losses.csv"):
         loss_fn = nn.MSELoss()
         loss_records = []
         pbar = tqdm(range(self.cfg.n_epochs), desc="H-Function Training", miniters=100, mininterval=0)
@@ -219,8 +219,8 @@ class HFunctionTwoStepTrainer:
             if epoch % 100 == 0:
                 tqdm.write(f"Epoch {epoch} | Loss {loss.item():.4f}")
 
-        os.makedirs("ckpt_new", exist_ok=True)
-        pd.DataFrame(loss_records).to_csv("ckpt_new/h_losses.csv", index=False)
+        os.makedirs(os.path.dirname(loss_csv_path) or ".", exist_ok=True)
+        pd.DataFrame(loss_records).to_csv(loss_csv_path, index=False)
 
     def save(self, path):
         torch.save(self.model.state_dict(), path)

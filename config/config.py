@@ -53,8 +53,8 @@ class DataConfig:
     csv_path: str = os.path.join(_ROOT, "explore", "macro_data_new.csv")
     latent_method: Optional[str] = "state_space"    # Choose between state space, tracking regression, or None
 
-    growth_vars: Optional[List[str]] = field(default_factory = lambda: ["indpro", "payems", "pi_transfer", "real_manf_trade", "personal_consump", "capacity_util"])
-    inflation_vars: Optional[List[str]] = field(default_factory=lambda: ["cpi", "oil_price", "ppi", "hour_earnings"])
+    growth_vars: Optional[List[str]] = None #field(default_factory=lambda: ["indpro", "payems", "pi_transfer", "real_manf_trade", "personal_consump", "capacity_util"])
+    inflation_vars: Optional[List[str]] = field(default_factory=lambda: ["cpi"]) #field(default_factory=lambda: ["cpi", "oil_price", "ppi", "hour_earnings"])
 
     start_date : str = "2000-01-01"
     end_date: str = "2026-07-08"      # data window end (None = use all)
@@ -68,7 +68,7 @@ class DataConfig:
     weekday_col: str = "weekday"
     seq_len: int = 10
 
-    event_causal: bool = True
+    event_causal: bool = False
     event_lag_gap: int = 1
 
     test_days: int = 1200             # used only when train_end_date is None
@@ -138,11 +138,20 @@ class HFunctionConfig:
     block_sampling: bool = True         
     episode_reweight: bool = False      
 
-    n_epochs: int = 425               # number of times to go through the data
+    n_epochs: int = 800                 # max epoch cap; convergence check below can stop earlier
     learning_rate: float = 1e-4        # step size for SGD
     weight_decay: float = 5e-4         # penalty to prevent overfitting
     scheduler_patience: int = 75
     scheduler_factor: float = 0.5
+
+    # Dynamic loss-convergence stopping: every convergence_block_size epochs, average
+    # the per-epoch loss over that block and compare to the previous block's average.
+    # If two consecutive blocks each fail to improve by at least convergence_min_delta,
+    # stop early. The per-epoch loss curve is spiky, so a fixed n_epochs risks either
+    # stopping before convergence or running well past it — this adapts to the run.
+    convergence_block_size: int = 35
+    convergence_min_delta: float = 0.01
+
     h_t_max: float = 0.9               # cap on tau during training AND guidance application at
 
     # Event condition
@@ -196,6 +205,8 @@ class ConditionalGenConfig:
                                         # instead of fully resolving to the sharp end state
                                         # independent of the real event count — reduces
                                         # Monte Carlo noise in the generated-side KDE estimate
+    # (no separate conditional.seed -- removed; the single global config.seed
+    # (see top-level Config, set via utils.set_seed) is used everywhere instead)
 
     # Q-model training hyperparameters
     q_model_epochs: int = 500
@@ -273,3 +284,18 @@ class Config:
 def get_default_config() -> Config:
     """Get default configuration"""
     return Config()
+
+
+def get_run_tag(config: Config) -> str:
+    """Filename tag for this config's ticker group + causal/noncausal.
+
+    e.g. indpro-payems_cpi_causal
+    """
+    growth = config.data.growth_vars or []
+    inflation = config.data.inflation_vars or []
+    group = "-".join(growth) + ("_" if growth and inflation else "") + "_".join(inflation)
+    group = group or "no_macro_vars"
+
+    causal = "causal" if config.data.event_causal else "noncausal"
+
+    return f"{group}_{causal}"
