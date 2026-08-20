@@ -35,20 +35,14 @@ class HFunctionTransformerDirect(nn.Module):
         ])#n_layers blocks of joint attention over all (asset, day) tokens
 
         self.norm = nn.LayerNorm(embed_dim)  #Applies the layer norm to the last block
-
-        # Per-asset projection used to keep start/end/change features asset-resolved
-        # instead of averaging across assets (mean-pooling over assets would discard
-        # cross-sectional structure like dispersion/co-movement). Applied to the last
-        # dim only, so each asset's slot stays independent before flattening.
         asset_reduce_dim = 64
         self.asset_reduce = nn.Linear(embed_dim, asset_reduce_dim)
 
-        # Head takes [global mean, start_day, end_day, end-start] pooled features.
-        # The mean channel summarizes window-wide structure (vol level, co-movement)
-        # via a plain average over (asset, day). The start/end/change channels are
-        # asset-resolved (see forward()) so per-asset structure reaches the head
-        # instead of being averaged away.
-        head_in_dim = embed_dim + 3 * n_assets * asset_reduce_dim
+        # +1 for the end-day cross-asset dispersion feature (std across assets,
+        # per embedding channel) — same asset_reduce_dim width as the other
+        # asset-derived terms, but collapsed over the asset axis instead of
+        # flattened, so it's a single (B, asset_reduce_dim) block, not A of them.
+        head_in_dim = embed_dim + 3 * n_assets * asset_reduce_dim + asset_reduce_dim
         self.head = nn.Sequential(
             nn.Linear(head_in_dim, embed_dim//2),
             nn.SiLU(),
@@ -89,11 +83,23 @@ class HFunctionTransformerDirect(nn.Module):
         # Asset-resolved start/end/change features: reduce per-asset embed dim,
         # then flatten (B, A, asset_reduce_dim) -> (B, A*asset_reduce_dim) so each
         # asset keeps its own slice instead of being averaged into the others.
-        h_start_assets  = self.asset_reduce(h[:, :, 0, :]).flatten(start_dim=1)
-        h_end_assets    = self.asset_reduce(h[:, :, -1, :]).flatten(start_dim=1)
-        h_change_assets = self.asset_reduce(h[:, :, -1, :] - h[:, :, 0, :]).flatten(start_dim=1)
+        z_start = self.asset_reduce(h[:, :, 0, :])    # (B, A, asset_reduce_dim)
+        z_end   = self.asset_reduce(h[:, :, -1, :])   # (B, A, asset_reduce_dim)
 
-        h_pooled = torch.cat([h_mean, h_start_assets, h_end_assets, h_change_assets], dim=-1)
+        h_start_assets  = z_start.flatten(start_dim=1)
+        h_end_assets    = z_end.flatten(start_dim=1)
+        h_change_assets = (z_end - z_start).flatten(start_dim=1)
+
+        # Cross-asset dispersion at the end day: std across the asset axis, per
+        # embedding channel. h_mean/h_end_assets summarize the average asset-day
+        # representation; this summarizes how SPREAD OUT the assets are from each
+        # other, which the mean/per-asset-flatten terms don't directly expose
+        # (e.g. "half up half down" vs "all flat" can average to the same h_mean).
+        h_end_std = z_end.std(dim=1, unbiased=False)   # (B, asset_reduce_dim)
+
+        h_pooled = torch.cat(
+            [h_mean, h_start_assets, h_end_assets, h_change_assets, h_end_std], dim=-1
+        )
         logits = self.head(h_pooled)
         #return_logits=True feeds BCEWithLogitsLoss directly (numerically stable with pos_weight);
         #default keeps existing probability-output behavior for sampling/generation call sites.

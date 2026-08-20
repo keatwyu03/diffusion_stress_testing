@@ -16,7 +16,7 @@ _cfg = get_default_config()
 # (the conditioning series) rather than how it was produced — it comes from
 # either state_space or tracking_regression. DataProcessor picks up the first
 # column positionally, so the name only has to avoid clashing with a ticker.
-cond_event = "cond"
+cond_event = "m_t"
 
 # All macro inputs (growth + inflation panels, monthly and daily) are imported
 # separately by latent_state_estimation/macro_importer.py into the *_macro.csv /

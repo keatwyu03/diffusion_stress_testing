@@ -116,7 +116,7 @@ def main(args):
     h_losses_csv = f"ckpt_new/h_losses_{run_tag}.csv"
 
     # ==================== Diffusion Model Training ====================
-    if not os.path.exists(score_ckpt):
+    if args.retrain or not os.path.exists(score_ckpt):
         print("\n" + "=" * 60)
         print("STEP 2: Diffusion Model Training")
         print("=" * 60)
@@ -181,7 +181,7 @@ def main(args):
         diffusion_model.load(score_ckpt)
 
     # ==================== H-Function Training ====================
-    if not os.path.exists(hfunction_ckpt):
+    if args.retrain or not os.path.exists(hfunction_ckpt):
         print("\n" + "=" * 60)
         print("STEP 3: H-Function Training (Direct BCE)")
         print("=" * 60)
@@ -556,6 +556,12 @@ if __name__ == "__main__":
         "--no-wandb",
         action="store_true",
         help="Disable wandb logging",
+    )
+    parser.add_argument(
+        "--retrain",
+        action="store_true",
+        help="Force retraining of the diffusion score model and H-function even if "
+             "a matching checkpoint already exists on disk (overwrites it).",
     )
 
     args = parser.parse_args()

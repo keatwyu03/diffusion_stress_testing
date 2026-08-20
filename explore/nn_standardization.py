@@ -151,15 +151,20 @@ class NLL_Stationarity:
         n_blocks = min(n_blocks, len(z) // (max_lag + 2))
         edges = torch.linspace(0, len(z), n_blocks + 1).long()
 
+        means, vars_ = [], []
         rows = []
         for b in range(n_blocks):
             x = z[edges[b] : edges[b + 1]]
+            means.append(x.mean())
+            vars_.append(x.var(unbiased=False))
             c = x - x.mean()          # each block is centred on its OWN mean
             nb = len(c)
             rows.append(torch.stack([
                 (c[k:] * c[: nb - k]).mean() for k in range(1, max_lag + 1)
             ]))
         acov = torch.stack(rows)                                    # (B, max_lag)
+        block_means = torch.stack(means)                            # (B,)
+        block_vars = torch.stack(vars_)                             # (B,)
 
         gamma_bar = acov.mean(dim=0)                                # per-lag average
         s_gamma = ((acov - gamma_bar) ** 2).mean(dim=0).sqrt()      # per-lag sd
@@ -169,6 +174,8 @@ class NLL_Stationarity:
             "max_lag": max_lag,
             "n_blocks": n_blocks,
             "block_size": len(z) / n_blocks,
+            "block_means": block_means,
+            "block_vars": block_vars,
             "acov": acov,
             "gamma_bar": gamma_bar,
             "s_gamma": s_gamma,
@@ -177,8 +184,13 @@ class NLL_Stationarity:
     @staticmethod
     def print_time_blocks(d, label = "z"):
         acov, K = d["acov"], d["max_lag"]
-        print(f"Autocovariance stability over time — {label}")
+        print(f"Time-block stationarity — {label}")
         print(f"  {d['n']} points in {d['n_blocks']} time blocks of ~{d['block_size']:.0f}")
+
+        print("\n  per time block")
+        print("    block          mean      variance")
+        for b in range(d["n_blocks"]):
+            print(f"    {b:>5}{float(d['block_means'][b]):>+14.6f}{float(d['block_vars'][b]):>14.6f}")
 
         print("\n  gamma_b(k) — rows are time blocks, columns are lags")
         print("    block" + "".join(f"{k:>9}" for k in range(1, K + 1)))
@@ -192,15 +204,30 @@ class NLL_Stationarity:
         print("  every block) for drift; the sd row is how much that lag moves.")
 
 
+def print_before_after(r, z, label="z"):
+    """Unconditional mean/variance of the raw return r vs the standardized
+    residual z (no macro binning — just the plain moments over all points)."""
+    r = r.detach().flatten().double()
+    z = z.detach().flatten().double()
+
+    r_mean, r_var = r.mean().item(), r.var(unbiased=False).item()
+    z_mean, z_var = z.mean().item(), z.var(unbiased=False).item()
+
+    print(f"Before/after standardization — {label}")
+    print(f"{'':<12}{'raw r (before)':>18}{'standardized z (after)':>26}")
+    print(f"  {'mean':<10}{r_mean:>18.4g}{z_mean:>26.4g}")
+    print(f"  {'variance':<10}{r_var:>18.4g}{z_var:>26.4g}")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Run on the conditioning series + ticker returns in explore/macro_data_new.csv
 # ─────────────────────────────────────────────────────────────────────────────
 
-def load_data(csv_path=None, cond_col="cond"):
+def load_data(csv_path=None, cond_col="m_t"):
     """(dates, m, returns_by_ticker) from the CSV, NaN conditioning rows dropped.
 
-    `cond` is the latent macro state written by import_data.py — it is m_t.
-    Every other numeric column is a ticker's daily returns.
+    `m_t` is the latent macro state written by import_data.py. Every other
+    numeric column is a ticker's daily returns.
     """
     import os
     import pandas as pd
@@ -237,18 +264,22 @@ def run_ticker(r, m, ticker, train_frac=0.7, hidden=64, n_layers=2,
                    verbose=verbose, desc=f"fitting {ticker} (full)")
     z_full = model_full.standardize(r, m_full)
 
-    # Bins are cut on the RAW m so the printed ranges read in the conditioning
-    # series' own units; m_full is only what the networks consume. Scaling is
-    # monotone, so bin membership is identical either way.
-    d_full = model_full.macro_bins(z_full, m, n_bins=n_bins)
     d_tb = model_full.time_blocks(z_full, max_lag=max_lag, n_blocks=n_time_blocks)
+
+    # ---- BASELINE: same time blocks, on the RAW (unstandardized) return ----
+    # Without this, "how much nonstationarity did standardization remove" has
+    # no "before" to compare "after" against.
+    d_tb_raw = model_full.time_blocks(r, max_lag=max_lag, n_blocks=n_time_blocks)
+
     if verbose:
-        model_full.print_macro_bins(d_full, label=f"{ticker} — FULL SERIES")
+        model_full.print_time_blocks(d_tb_raw, label=f"{ticker} — RAW (before standardization)")
         print()
-        model_full.print_time_blocks(d_tb, label=f"{ticker} — FULL SERIES")
+        model_full.print_time_blocks(d_tb, label=f"{ticker} — FULL SERIES (after standardization)")
+        print()
+        print_before_after(r, z_full, label=ticker)
 
     # ---- TRAIN/TEST SPLIT: secondary, printed only on request -------------
-    d_in = d_out = None
+    d_tb_in = d_tb_out = None
     if print_split:
         cut = int(train_frac * len(r))
         m_scaled = (m - m[:cut].mean(0)) / m[:cut].std(0)
@@ -259,21 +290,24 @@ def run_ticker(r, m, ticker, train_frac=0.7, hidden=64, n_layers=2,
 
         print()
         z_in = model.standardize(r[:cut], m_scaled[:cut])
-        d_in = model.macro_bins(z_in, m[:cut], n_bins=n_bins)
-        model.print_macro_bins(d_in, label=f"{ticker} — IN-SAMPLE (train)")
+        d_tb_in = model.time_blocks(z_in, max_lag=max_lag, n_blocks=n_time_blocks)
+        model.print_time_blocks(d_tb_in, label=f"{ticker} — IN-SAMPLE (train)")
 
         print()
         z_out = model.standardize(r[cut:], m_scaled[cut:])
-        d_out = model.macro_bins(z_out, m[cut:], n_bins=n_bins)
-        model.print_macro_bins(d_out, label=f"{ticker} — HELD-OUT (test)")
+        d_tb_out = model.time_blocks(z_out, max_lag=max_lag, n_blocks=n_time_blocks)
+        model.print_time_blocks(d_tb_out, label=f"{ticker} — HELD-OUT (test)")
 
-    return model_full, z_full, (d_full, d_tb, d_in, d_out)
+    return model_full, z_full, (d_tb, d_tb_in, d_tb_out, d_tb_raw)
 
 
-def save_standardized_residuals(residuals_by_ticker, dates, csv_path=None):
-    """Write full-series standardized residuals z_full to a CSV (Date + one
-    column per ticker), so downstream consumers (e.g. bfk_stationarity.py)
-    don't need to refit the models themselves. Always overwrites csv_path.
+def save_standardized_residuals(residuals_by_ticker, dates, m=None, csv_path=None):
+    """Write full-series standardized residuals z_full to a CSV (Date, m_t,
+    then one column per ticker), so downstream consumers (e.g.
+    bfk_stationarity.py) don't need to refit the models themselves. `m` is
+    the raw conditioning series (same m fed to every ticker's mu_net/sigma_net
+    in run_ticker) — included so the macro state each z was standardized
+    against is visible alongside the residuals. Always overwrites csv_path.
     """
     import os
 
@@ -283,6 +317,8 @@ def save_standardized_residuals(residuals_by_ticker, dates, csv_path=None):
 
     out = pd.DataFrame({t: z.detach().cpu().numpy() for t, z in residuals_by_ticker.items()})
     out.insert(0, "Date", dates.reset_index(drop=True))
+    if m is not None:
+        out.insert(1, "m_t", m.detach().cpu().numpy().flatten())
     out.to_csv(csv_path, index=False)
     print(f"wrote {len(out)} rows x {len(residuals_by_ticker)} tickers to {csv_path}")
     return out
@@ -310,27 +346,52 @@ if __name__ == "__main__":
         z_by_ticker[ticker] = z_full
         print()
 
-    save_standardized_residuals(z_by_ticker, dates)
+    save_standardized_residuals(z_by_ticker, dates, m=m)
     print()
+
+    def _block_spread(d, key):
+        """(level, sd-across-blocks) for block_means or block_vars."""
+        vals = d[key]
+        level = vals.mean().item()
+        sd = ((vals - vals.mean()) ** 2).mean().sqrt().item()
+        return level, sd
 
     def summary_table(title, which):
         print("=" * 72)
         print(f"SUMMARY — {title}")
         print("=" * 72)
-        print("           |----- E[z|macro bin] -----|---- Var[z|macro bin] ----|")
+        print("           |----- mean across blocks -----|--- variance across blocks ---|")
         print(f"  {'ticker':<8}{'avg':>12}{'sd':>13}{'avg':>13}{'sd':>13}")
         for ticker, res in results.items():
             d = res[which]
-            print(f"  {ticker:<8}{d['mu_bar']:>+12.4f}{d['s_mu']:>13.4f}"
-                  f"{d['v_bar']:>13.4f}{d['s_v']:>13.4f}")
+            mu_bar, s_mu = _block_spread(d, "block_means")
+            v_bar, s_v = _block_spread(d, "block_vars")
+            print(f"  {ticker:<8}{mu_bar:>+12.4f}{s_mu:>13.4f}"
+                  f"{v_bar:>13.4f}{s_v:>13.4f}")
         print()
 
     summary_table("FULL SERIES standardized innovations z", 0)
-    print("  target: E[z|G] ~0 and Var[z|G] ~1 in EVERY macro bin.")
-    print("  the sd columns are the test — they measure how much the conditional")
-    print("  moments still move with the macro state, i.e. what sigma_phi missed.")
+    print("  target: mean ~0 and variance ~1 in EVERY time block.")
+    print("  the sd columns are the test — they measure how much the moments")
+    print("  still drift over time, i.e. what standardization missed.")
+
+    print("=" * 72)
+    print("SUMMARY — before/after standardization (variance-flatness improvement)")
+    print("=" * 72)
+    print("  CV = block-variance sd / block-variance level — lower is flatter over time.")
+    print(f"  {'ticker':<8}{'CV before':>14}{'CV after':>14}{'improvement':>16}")
+    for ticker, res in results.items():
+        d_z_t, d_raw_t = res[0], res[3]
+        v_bar_raw, s_v_raw = _block_spread(d_raw_t, "block_vars")
+        v_bar_z, s_v_z = _block_spread(d_z_t, "block_vars")
+        cv_raw = s_v_raw / abs(v_bar_raw) if v_bar_raw else float("nan")
+        cv_z = s_v_z / abs(v_bar_z) if v_bar_z else float("nan")
+        improvement = f"{cv_raw / cv_z:.2f}x" if cv_z > 0 else "n/a"
+        print(f"  {ticker:<8}{cv_raw:>14.4g}{cv_z:>14.4g}{improvement:>16}")
+    print("  improvement < 1x means standardization made variance-flatness WORSE")
+    print("  for that ticker — worth checking individually if it shows up.\n")
 
     if args.print_split_results:
         print()
-        summary_table("IN-SAMPLE (train) standardized innovations z", 2)
-        summary_table("HELD-OUT (test) standardized innovations z", 3)
+        summary_table("IN-SAMPLE (train) standardized innovations z", 1)
+        summary_table("HELD-OUT (test) standardized innovations z", 2)
