@@ -45,7 +45,7 @@ class LatentStateEstimator:
     selected monthly series with the full bucket of daily market data.
     """
 
-    VARIABLES = ("growth", "inflation")
+    VARIABLES = ("growth", "inflation", "vol")
 
     def __init__(
         self,
@@ -53,10 +53,11 @@ class LatentStateEstimator:
         data_dir: str = _dir,
         growth_vars=None,
         inflation_vars=None,
+        vol_vars=None,
     ):
         self.method = method
         self.data_dir = data_dir
-        self.var_selection = {"growth": growth_vars, "inflation": inflation_vars}
+        self.var_selection = {"growth": growth_vars, "inflation": inflation_vars, "vol": vol_vars}
         self.trackers = {}       # name -> fitted TrackingRegression (method 1 only)
         self.state_space = None  # fitted StateSpace (method 2 only)
         self.latent = None
@@ -68,8 +69,8 @@ class LatentStateEstimator:
         active = [n for n in self.VARIABLES if self.var_selection[n]]
         if not active:
             raise ValueError(
-                "growth_vars and inflation_vars are both empty — at least one "
-                "group must name the columns to use."
+                "growth_vars, inflation_vars, and vol_vars are all empty — at "
+                "least one group must name the columns to use."
             )
 
         macro, daily = {}, {}

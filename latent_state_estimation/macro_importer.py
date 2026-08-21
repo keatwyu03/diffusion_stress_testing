@@ -29,6 +29,10 @@ inflation_macro_data = {
 
 }
 
+vol_macro_data = {
+    'epu': fred.get_series('USEPUINDXM'),              # Economic Policy Uncertainty Index, earliest: 1985-01-01
+}
+
 
 def _get_futures_close(ticker, period="max", retries=3):
     """Daily close price series for a single futures ticker via yfinance."""
@@ -58,17 +62,25 @@ inflation_daily_futures = {
     'gold': _get_futures_close('GC=F'),            # gold futures, earliest: 2000-08-30
 }
 
+
+vol_daily_series = {
+    'vix': fred.get_series('VIXCLS'),              # CBOE VIX, earliest: 1990-01-02
+    'credit_spread': fred.get_series('BAA10Y'),    # Moody's Baa - 10yr Treasury, earliest: 1986-01-02
+}
+
+# Monthly anchors: raw levels, no transform (deliberate revert — see git
+# history for the log-diff version).
 df_growth_macro_data = pd.DataFrame(growth_macro_data)
 df_inf_macro_data = pd.DataFrame(inflation_macro_data)
+df_vol_macro_data = pd.DataFrame(vol_macro_data)
 
-_capacity_util = df_growth_macro_data["capacity_util"].diff()
-df_growth_macro_data = np.log(df_growth_macro_data.drop(columns="capacity_util")).diff()
-df_growth_macro_data["capacity_util"] = _capacity_util
-
-df_inf_macro_data = np.log(df_inf_macro_data).diff()
-
+# Daily proxies: original transforms restored (log-diff for prices, duration-
+# adjusted log-diff for yield futures, ex_ir diff for fed_funds, corn/wheat
+# blend for grains) — these had deliberate design reasons, unlike the monthly
+# anchors above.
 growth_daily_cols = {}
 inf_daily_cols = {}
+vol_daily_cols = {}
 
 growth_daily_cols["copper"] = np.log(growth_daily_futures["copper"]).diff()
 growth_daily_cols["energy"] = np.log(growth_daily_futures["energy"]).diff()
@@ -101,17 +113,24 @@ inf_daily_cols["grains"] = 0.5 * corn + 0.5 * wheat
 
 inf_daily_cols["gold"] = np.log(inflation_daily_futures["gold"]).diff()
 
+vol_daily_cols["vix"] = np.log(vol_daily_series["vix"]).diff()
+vol_daily_cols["credit_spread"] = vol_daily_series["credit_spread"].diff()
+
 df_growth_daily_data = pd.DataFrame(growth_daily_cols)
 df_inf_daily_data = pd.DataFrame(inf_daily_cols)
+df_vol_daily_data = pd.DataFrame(vol_daily_cols)
 
 df_growth_daily_data = df_growth_daily_data.loc[df_growth_daily_data.apply(pd.Series.first_valid_index).max():].dropna()
 df_inf_daily_data = df_inf_daily_data.loc[df_inf_daily_data.apply(pd.Series.first_valid_index).max():].dropna()
+df_vol_daily_data = df_vol_daily_data.loc[df_vol_daily_data.apply(pd.Series.first_valid_index).max():].dropna()
 
 _out_dir = os.path.dirname(os.path.abspath(__file__))
 df_growth_daily_data.to_csv(os.path.join(_out_dir, "growth_daily.csv"))
 df_inf_daily_data.to_csv(os.path.join(_out_dir, "inflation_daily.csv"))
+df_vol_daily_data.to_csv(os.path.join(_out_dir, "vol_daily.csv"))
 df_growth_macro_data.to_csv(os.path.join(_out_dir, "growth_macro.csv"))
 df_inf_macro_data.to_csv(os.path.join(_out_dir, "inflation_macro.csv"))
+df_vol_macro_data.to_csv(os.path.join(_out_dir, "vol_macro.csv"))
 
 
 

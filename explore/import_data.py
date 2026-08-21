@@ -26,12 +26,13 @@ cond_event = "m_t"
 # those columns, None or [] = group dropped (same rule as LatentStateEstimator).
 bucket = {group: list(sel)
           for group, sel in (("growth", _cfg.data.growth_vars),
-                             ("inflation", _cfg.data.inflation_vars))
+                             ("inflation", _cfg.data.inflation_vars),
+                             ("vol", _cfg.data.vol_vars))
           if sel}
 
 if not bucket:
-    raise ValueError("growth_vars and inflation_vars are both empty — at least one "
-                     "group must name the columns used for the conditioning series.")
+    raise ValueError("growth_vars, inflation_vars, and vol_vars are all empty — at "
+                     "least one group must name the columns used for the conditioning series.")
 
 # e.g. "inflation: cpi" — used to label the figures with what actually produced
 # the conditioning series
@@ -46,6 +47,7 @@ cond_series = LatentStateEstimator(
     method=_cfg.data.latent_method,
     growth_vars=_cfg.data.growth_vars,
     inflation_vars=_cfg.data.inflation_vars,
+    vol_vars=_cfg.data.vol_vars,
 ).fit()
 print("[1/4] done.")
 
@@ -54,15 +56,14 @@ csv_path = _cfg.data.csv_path
 
 print(f"[2/4] downloading price history for {tickers} from yfinance...")
 df = yf.download(tickers, start = _cfg.data.start_date, auto_adjust=True)["Close"]
-log_ret = np.log(df / df.shift(1)).dropna()
 print(f"[2/4] done ({len(df)} raw rows).")
 
-print("[3/4] merging conditioning series with stock log-returns...")
+print("[3/4] merging conditioning series with stock price levels...")
 df[cond_event] = cond_series.reindex(df.index)
 
 df_out = pd.DataFrame({cond_event: df[cond_event]})
 for t in tickers:
-    df_out[t] = log_ret[t]
+    df_out[t] = df[t]
 
 df_out = df_out.dropna(subset=tickers)
 print("[3/4] done.")

@@ -55,6 +55,7 @@ class DataConfig:
 
     growth_vars: Optional[List[str]] = field(default_factory=lambda: ["indpro", "payems", "pi_transfer", "real_manf_trade", "personal_consump", "capacity_util"])
     inflation_vars: Optional[List[str]] = field(default_factory=lambda: ["cpi", "oil_price", "ppi", "hour_earnings"])
+    vol_vars: Optional[List[str]] = None
 
     start_date : str = "1990-01-01"
     end_date: str = "2026-07-08"      # data window end (None = use all)
@@ -293,8 +294,9 @@ def get_run_tag(config: Config) -> str:
     """
     growth = config.data.growth_vars or []
     inflation = config.data.inflation_vars or []
-    group = "-".join(growth) + ("_" if growth and inflation else "") + "_".join(inflation)
-    group = group or "no_macro_vars"
+    vol = config.data.vol_vars or []
+    parts = ["-".join(g) for g in (growth, inflation, vol) if g]
+    group = "_".join(parts) or "no_macro_vars"
 
     causal = "causal" if config.data.event_causal else "noncausal"
 
