@@ -31,6 +31,7 @@ inflation_macro_data = {
 
 vol_macro_data = {
     'epu': fred.get_series('USEPUINDXM'),              # Economic Policy Uncertainty Index, earliest: 1985-01-01
+    'umcsent': fred.get_series('UMCSENT'),             # U. Michigan Consumer Sentiment Index, earliest: 1952-11-01
 }
 
 
@@ -64,12 +65,12 @@ inflation_daily_futures = {
 
 
 vol_daily_series = {
-    'vix': fred.get_series('VIXCLS'),              # CBOE VIX, earliest: 1990-01-02
-    'credit_spread': fred.get_series('BAA10Y'),    # Moody's Baa - 10yr Treasury, earliest: 1986-01-02
+    'vix': fred.get_series('VIXCLS'),                    # CBOE VIX, earliest: 1990-01-02
+    'credit_spread': fred.get_series('BAA10Y'),          # Moody's Baa - 10yr Treasury, earliest: 1986-01-02
+    'aaa_spread': fred.get_series('AAA10Y'),             # Moody's Aaa - 10yr Treasury, earliest: 1983-01-03
 }
 
-# Monthly anchors: raw levels, no transform (deliberate revert — see git
-# history for the log-diff version).
+# Monthly anchors: raw levels, no transform.
 df_growth_macro_data = pd.DataFrame(growth_macro_data)
 df_inf_macro_data = pd.DataFrame(inflation_macro_data)
 df_vol_macro_data = pd.DataFrame(vol_macro_data)
@@ -115,6 +116,7 @@ inf_daily_cols["gold"] = np.log(inflation_daily_futures["gold"]).diff()
 
 vol_daily_cols["vix"] = np.log(vol_daily_series["vix"]).diff()
 vol_daily_cols["credit_spread"] = vol_daily_series["credit_spread"].diff()
+vol_daily_cols["aaa_spread"] = vol_daily_series["aaa_spread"].diff()
 
 df_growth_daily_data = pd.DataFrame(growth_daily_cols)
 df_inf_daily_data = pd.DataFrame(inf_daily_cols)
