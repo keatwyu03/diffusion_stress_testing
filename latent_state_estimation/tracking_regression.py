@@ -46,6 +46,11 @@ class TrackingRegression:
         # units as the factor itself, from the fitted OLS residuals.
         self.anchor_rmse = float(np.sqrt(np.mean(self.model.resid ** 2)))
 
+        # R^2 of the anchor fit: 1 - sum(resid^2) / sum((z_{m+1} - mean)^2).
+        # self.model.rsquared is exactly this (OLS's own R^2 on the same
+        # z_{m+1} target/residuals used for anchor_rmse above).
+        self.anchor_r2 = float(self.model.rsquared)
+
         # daily tracking portfolio returns
         self.ut = self.daily @ self.betas
         return self.ut
