@@ -70,10 +70,28 @@ vol_daily_series = {
     'aaa_spread': fred.get_series('AAA10Y'),             # Moody's Aaa - 10yr Treasury, earliest: 1983-01-03
 }
 
-# Monthly anchors: raw levels, no transform.
-df_growth_macro_data = pd.DataFrame(growth_macro_data)
-df_inf_macro_data = pd.DataFrame(inflation_macro_data)
-df_vol_macro_data = pd.DataFrame(vol_macro_data)
+# Monthly anchors: log-differenced (the only transform used downstream --
+# latent_state_estimation's PCA/tracking-regression/state-space all consume
+# these *_macro.csv files directly, so this is the single place the
+# level -> monthly-change conversion happens). capacity_util is a
+# utilization RATE (already bounded ~0-100), so a plain first difference is
+# used for it instead of a log-diff.
+DIFF_COLS = ("capacity_util",)
+
+
+def _monthly_change(df):
+    out = pd.DataFrame(index=df.index)
+    for col in df.columns:
+        if col in DIFF_COLS:
+            out[col] = df[col].diff()
+        else:
+            out[col] = np.log(df[col]).diff()
+    return out
+
+
+df_growth_macro_data = _monthly_change(pd.DataFrame(growth_macro_data))
+df_inf_macro_data = _monthly_change(pd.DataFrame(inflation_macro_data))
+df_vol_macro_data = _monthly_change(pd.DataFrame(vol_macro_data))
 
 # Daily proxies: original transforms restored (log-diff for prices, duration-
 # adjusted log-diff for yield futures, ex_ir diff for fed_funds, corn/wheat

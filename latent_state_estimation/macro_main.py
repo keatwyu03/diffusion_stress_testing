@@ -61,6 +61,7 @@ class LatentStateEstimator:
         self.trackers = {}       # name -> fitted TrackingRegression (method 1 only)
         self.state_space = None  # fitted StateSpace (method 2 only)
         self.latent = None
+        self.anchor_rmse = None  # pd.Series, RMSE of each active group's monthly anchor
 
     def fit(self) -> pd.Series:
         # A group is active only if it has a non-empty variable selection —
@@ -89,6 +90,10 @@ class LatentStateEstimator:
             uts = pd.concat({n: tr.ut for n, tr in self.trackers.items()}, axis=1).dropna()
             z = (uts - uts.mean()) / uts.std()
             self.latent = z.mean(axis=1).rename("latent")
+            self.anchor_rmse = pd.Series(
+                {name: tr.anchor_rmse for name, tr in self.trackers.items()},
+                name="anchor_rmse",
+            )
 
         elif self.method == "state_space":
             # y: one monthly PCA factor per ACTIVE group only — n shrinks if a
@@ -105,6 +110,7 @@ class LatentStateEstimator:
             x = (x - x.mean()) / x.std()
             self.state_space = StateSpace(y=factors, x=x).fit()
             self.latent = self.state_space.filtered_states()
+            self.anchor_rmse = self.state_space.anchor_rmse()
 
         else:
             raise ValueError(f"unknown latent_method: {self.method!r}")

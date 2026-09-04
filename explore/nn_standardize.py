@@ -153,8 +153,10 @@ def run_ticker(r, m, ticker, hidden=64, n_layers=2, n_epochs=1000, batch_size=12
     model.fit(r, m_full, n_epochs=n_epochs, batch_size=batch_size,
              verbose=verbose, desc=f"fitting {ticker}")
     z = model.standardize(r, m_full)
+    with torch.no_grad():
+        mu, sigma = model.joint_forward(m_full)
 
-    return model, z
+    return model, z, mu, sigma
 
 
 def save_standardized_residuals(residuals_by_ticker, dates, m=None, csv_path=None):
@@ -187,7 +189,7 @@ if __name__ == "__main__":
 
     z_by_ticker = {}
     for ticker, r in returns.items():
-        _, z = run_ticker(r, m, ticker)
+        _, z, _, _ = run_ticker(r, m, ticker)
         z_by_ticker[ticker] = z
 
     save_standardized_residuals(z_by_ticker, dates, m=m)

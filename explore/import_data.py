@@ -58,11 +58,10 @@ print(f"[2/4] downloading price history for {tickers} from yfinance...")
 df = yf.download(tickers, start = _cfg.data.start_date, auto_adjust=True)["Close"]
 print(f"[2/4] done ({len(df)} raw rows).")
 
-print("[3/4] merging conditioning series with stock log-returns...")
-log_ret = np.log(df / df.shift(1)).dropna()
-df_out = pd.DataFrame({cond_event: cond_series.reindex(log_ret.index)})
+print("[3/4] merging conditioning series with stock price levels...")
+df_out = pd.DataFrame({cond_event: cond_series.reindex(df.index)})
 for t in tickers:
-    df_out[t] = log_ret[t]
+    df_out[t] = df[t]
 
 df_out = df_out.dropna(subset=tickers)
 print("[3/4] done.")

@@ -43,16 +43,27 @@ STD_CSV = os.path.join(OUT_DIR, "nn_standardized_macro.csv")
 
 # ── 1. NN standardization ───────────────────────────────────────────────────
 
+PARAMS_CSV = os.path.join(OUT_DIR, "nn_predicted_mean_variance.csv")
+
+
 def step_standardize():
     dates, m, returns = load_data(csv_path=MACRO_CSV)
     print(f"standardizing {len(returns)} tickers, {len(m)} days...")
 
     z_by_ticker = {}
+    params_cols = {}
     for ticker, r in returns.items():
-        _, z = run_ticker(r, m, ticker)
+        _, z, mu, sigma = run_ticker(r, m, ticker)
         z_by_ticker[ticker] = z
+        params_cols[f"{ticker}_mean"] = mu.detach().cpu().numpy()
+        params_cols[f"{ticker}_variance"] = (sigma ** 2).detach().cpu().numpy()
 
     save_standardized_residuals(z_by_ticker, dates, m=m, csv_path=STD_CSV)
+
+    params_df = pd.DataFrame(params_cols)
+    params_df.insert(0, "Date", dates.reset_index(drop=True))
+    params_df.to_csv(PARAMS_CSV, index=False)
+    print(f"wrote predicted mean/variance to {PARAMS_CSV}")
     print("done.")
 
 
@@ -132,13 +143,7 @@ def step_residuals_plot(std_df, raw_df, tickers):
 # ── 5. 252-day rolling mean/variance grid ────────────────────────────────────
 
 def _plot_rolling_grid(std_df, tickers, window, series_fn, color, ylabel, hline,
-                        metric_name, title, save_path, n_cols=2):
-    """metric_name labels mean_t |log(series_t)| next to each ticker's title —
-    for rolling variance this is mean|log(var)| (0 = variance always exactly 1,
-    the target); for rolling mean, mean|log(mean)| is only over the days where
-    the rolling mean is positive (log undefined otherwise), since mean's target
-    is 0, not the multiplicative reference point log(1)=0 that makes this
-    metric meaningful for variance."""
+                        title, save_path, n_cols=2):
     n_rows = (len(tickers) + n_cols - 1) // n_cols
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(9 * n_cols, 3.2 * n_rows), sharex=True)
     axes = np.atleast_1d(axes).ravel()
@@ -152,12 +157,7 @@ def _plot_rolling_grid(std_df, tickers, window, series_fn, color, ylabel, hline,
         ax.set_ylabel(ylabel, fontsize=8)
         ax.tick_params(axis="y", labelsize=7)
         ax.grid(True, alpha=0.25)
-
-        valid = series.dropna()
-        valid = valid[valid > 0]
-        metric = np.abs(np.log(valid)).mean() if len(valid) else float("nan")
-        ax.set_title(f"{ticker}   {metric_name}={metric:.4f}",
-                     fontsize=10, fontweight="bold", loc="left")
+        ax.set_title(ticker, fontsize=10, fontweight="bold", loc="left")
 
         if ax is axes[0]:
             ax.legend(fontsize=7, loc="upper left")
@@ -175,7 +175,6 @@ def step_rolling_mean(std_df, tickers, window=252):
     _plot_rolling_grid(
         std_df, tickers, window, lambda z: z.rolling(window).mean(),
         color="steelblue", ylabel="rolling mean", hline=0,
-        metric_name="mean|log(mean)|",
         title=f"{window}-Day Rolling Mean of Standardized Residuals (per asset)",
         save_path=os.path.join(OUT_DIR, "rolling_mean.png"),
     )
@@ -186,10 +185,187 @@ def step_rolling_variance(std_df, tickers, window=252):
     _plot_rolling_grid(
         std_df, tickers, window, lambda z: z.rolling(window).var(),
         color="firebrick", ylabel="rolling variance", hline=1,
-        metric_name="mean|log(var)|",
         title=f"{window}-Day Rolling Variance of Standardized Residuals (per asset)",
         save_path=os.path.join(OUT_DIR, "rolling_variance.png"),
     )
+
+
+# ── 5b. Rolling-moment stabilization: standardized vs. 3 baselines ──────────
+#
+# Two SEPARATE relative measures (mean, variance) of how much standardization
+# changed rolling-window instability relative to a given baseline series
+# (raw price, differenced price, log return). These are descriptive relative
+# reductions computed from overlapping rolling windows — NOT independent-
+# observation confidence intervals, and NOT formal stationarity tests.
+
+def _rolling_mean_instability(x, window):
+    """M_W(x): mean_t |(-hat mu_{t,W}(x) - hat mu(x)) / hat sigma(x)|, both
+    hat mu(x) and hat sigma(x) full-sample (same baseline used for both
+    series being compared — never 0 as a fixed target)."""
+    x = pd.Series(x).astype(float)
+    mu_full = x.mean()
+    sigma_full = x.std(ddof=0)
+    if sigma_full == 0 or not np.isfinite(sigma_full):
+        return float("nan")
+    roll_mean = x.rolling(window).mean().dropna()
+    return (roll_mean - mu_full).abs().div(sigma_full).mean()
+
+
+def _rolling_variance_instability(x, window):
+    """V_W(x): mean_t |log(hat v_{t,W}(x) / hat v(x))|, hat v(x) the
+    full-sample variance of x itself (never 1 as a fixed target)."""
+    x = pd.Series(x).astype(float)
+    var_full = x.var(ddof=0)
+    if var_full <= 0 or not np.isfinite(var_full):
+        return float("nan")
+    roll_var = x.rolling(window).var().dropna()
+    roll_var = roll_var[roll_var > 0]
+    return np.log(roll_var / var_full).abs().mean()
+
+
+def _pct_reduction(baseline_val, standardized_val):
+    if baseline_val is None or not np.isfinite(baseline_val) or baseline_val == 0:
+        return float("nan")
+    return 100 * (1 - standardized_val / baseline_val)
+
+
+def step_stabilization_table(std_df, tickers, window=252):
+    """For each asset x each of 3 baselines (raw price, differenced price,
+    log return), compute M_W/V_W for the baseline and for z_t (date-aligned,
+    same window), then R_mu and R_v. Prints a concise table and renders it as
+    an image — no CSV, per explicit instruction."""
+    print(f"computing rolling-moment stabilization vs. 3 baselines (window={window})...")
+
+    cfg_tickers = tickers
+    start_date = None
+    try:
+        sys.path.insert(0, os.path.dirname(HERE))
+        from config import get_default_config
+        _cfg = get_default_config()
+        start_date = _cfg.data.start_date
+    except Exception:
+        pass
+
+    import yfinance as yf
+    print(f"  fetching raw price history for {cfg_tickers} from yfinance...")
+    px = yf.download(cfg_tickers, start=start_date, auto_adjust=True)["Close"]
+    px = px[cfg_tickers].dropna(how="all")
+
+    baselines = {
+        "raw_price": px,
+        "diff_price": px.diff().dropna(how="all"),
+        "log_return": np.log(px / px.shift(1)).dropna(how="all"),
+    }
+
+    z_indexed = std_df.set_index("Date")
+
+    rows = []
+    for ticker in tickers:
+        z_full = z_indexed[ticker].dropna()
+
+        for baseline_name, base_df in baselines.items():
+            if ticker not in base_df.columns:
+                continue
+            base_series = base_df[ticker].dropna()
+
+            joined = pd.concat(
+                {"r": base_series, "z": z_full}, axis=1
+            ).dropna()
+            if len(joined) <= window:
+                continue
+
+            r_aligned = joined["r"]
+            z_aligned = joined["z"]
+
+            M_r = _rolling_mean_instability(r_aligned, window)
+            M_z = _rolling_mean_instability(z_aligned, window)
+            R_mu = _pct_reduction(M_r, M_z)
+
+            V_r = _rolling_variance_instability(r_aligned, window)
+            V_z = _rolling_variance_instability(z_aligned, window)
+            R_v = _pct_reduction(V_r, V_z)
+
+            rows.append({
+                "asset": ticker,
+                "baseline": baseline_name,
+                "mean_instability_baseline": M_r,
+                "mean_instability_standardized": M_z,
+                "mean_stabilization_pct": R_mu,
+                "variance_instability_baseline": V_r,
+                "variance_instability_standardized": V_z,
+                "variance_stabilization_pct": R_v,
+            })
+
+    summary_df = pd.DataFrame(rows)
+
+    print(f"\n{'asset':<7}{'baseline':<12}{'R_mu (%)':>12}{'R_v (%)':>12}")
+    for _, row in summary_df.iterrows():
+        r_mu_str = f"{row['mean_stabilization_pct']:+.1f}"
+        r_v_str = f"{row['variance_stabilization_pct']:+.1f}"
+        flag = ""
+        if row["mean_stabilization_pct"] < 0:
+            flag += " [mean LESS stable]"
+        if row["variance_stabilization_pct"] < 0:
+            flag += " [var LESS stable]"
+        print(f"{row['asset']:<7}{row['baseline']:<12}{r_mu_str:>12}{r_v_str:>12}{flag}")
+
+    _render_stabilization_image(summary_df, tickers, window)
+    print("done.")
+    return summary_df
+
+
+def _render_stabilization_image(summary_df, tickers, window):
+    """One table per baseline (raw_price, diff_price, log_return), placed
+    SIDE BY SIDE (not stacked) — columns: asset, R_mu (%), R_v (%).
+    matplotlib's ax.table(loc="center") renders at a fixed size independent
+    of its parent axes' height, so stacking tables vertically in separate
+    axes leaves large blank gaps; side-by-side avoids that since every axes
+    gets the same (correctly sized) height."""
+    baseline_order = ["raw_price", "diff_price", "log_return"]
+    baseline_titles = {
+        "raw_price": "Raw Price Levels",
+        "diff_price": "Differenced Prices",
+        "log_return": "Log Returns",
+    }
+    present = [b for b in baseline_order if b in summary_df["baseline"].unique()]
+    n_assets = summary_df["asset"].nunique()
+
+    fig, axes = plt.subplots(1, len(present), figsize=(5.2 * len(present), 0.35 * n_assets + 1.8))
+    axes = np.atleast_1d(axes).ravel()
+
+    for ax, baseline in zip(axes, present):
+        ax.axis("off")
+        sub = summary_df[summary_df["baseline"] == baseline].set_index("asset")
+        sub = sub.loc[[t for t in tickers if t in sub.index]]
+
+        cell_text = [[t, f"{row.mean_stabilization_pct:+.1f}", f"{row.variance_stabilization_pct:+.1f}"]
+                     for t, row in sub.iterrows()]
+        tbl = ax.table(cellText=cell_text,
+                        colLabels=["asset", "μ Deviation Reduction (%)", "σ² Deviation Reduction (%)"],
+                        loc="center", cellLoc="center")
+        tbl.auto_set_font_size(False)
+        tbl.set_fontsize(8)
+        tbl.scale(1, 1.4)
+
+        for i, row in enumerate(sub.itertuples(), start=1):
+            if row.mean_stabilization_pct < 0:
+                tbl[(i, 1)].set_facecolor("#fdd")
+            if row.variance_stabilization_pct < 0:
+                tbl[(i, 2)].set_facecolor("#fdd")
+
+        ax.set_title(baseline_titles[baseline], fontsize=11, fontweight="bold", pad=14)
+
+    fig.suptitle(
+        f"Rolling-Moment Stabilization vs. Baseline Returns (window={window}d)\n"
+        "Descriptive relative reduction in rolling-window instability — not a formal stationarity test.\n"
+        "Positive = standardized residuals more stable than baseline; negative (shaded) = less stable.",
+        fontsize=11.5, fontweight="bold"
+    )
+    fig.tight_layout(rect=[0, 0, 1, 0.88])
+    save_path = os.path.join(OUT_DIR, "rolling_moment_stabilization.png")
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved {save_path}")
 
 
 # ── 6. Blockwise autocovariance stability (raw vs. standardized) ────────────
@@ -414,10 +590,16 @@ def main():
                         help="block length in trading days for --autocov (default: 252)")
     parser.add_argument("--max-lag", type=int, default=10,
                         help="max autocovariance lag for --autocov (default: 10)")
+    parser.add_argument("--stabilization", action="store_true",
+                        help="write rolling_moment_stabilization.png (relative reduction "
+                             "in rolling-mean and rolling-variance instability vs. raw "
+                             "price, differenced price, and log-return baselines)")
+    parser.add_argument("--stabilization-window", type=int, default=252,
+                        help="rolling window (days) for --stabilization (default: 252)")
     args = parser.parse_args()
 
     any_flag = any([args.standardize, args.adf_dcorr, args.plot_res,
-                    args.plot_means, args.plot_vars, args.autocov])
+                    args.plot_means, args.plot_vars, args.autocov, args.stabilization])
     run_all = not any_flag
 
     if args.standardize or run_all:
@@ -444,6 +626,9 @@ def main():
     if args.autocov or run_all:
         step_autocov_heatmaps(std_df, raw_df, tickers,
                                block_length=args.block_length, max_lag=args.max_lag)
+
+    if args.stabilization or run_all:
+        step_stabilization_table(std_df, tickers, window=args.stabilization_window)
 
     print(f"\nOutputs written to {OUT_DIR}")
 

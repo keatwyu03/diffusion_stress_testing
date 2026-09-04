@@ -42,6 +42,10 @@ class TrackingRegression:
         self.model = sm.OLS(z["m+1"], X).fit()
         self.betas = self.model.params[self.daily.columns]
 
+        # RMSE of the monthly anchor z_{m+1}, in the same (standardized PC1)
+        # units as the factor itself, from the fitted OLS residuals.
+        self.anchor_rmse = float(np.sqrt(np.mean(self.model.resid ** 2)))
+
         # daily tracking portfolio returns
         self.ut = self.daily @ self.betas
         return self.ut

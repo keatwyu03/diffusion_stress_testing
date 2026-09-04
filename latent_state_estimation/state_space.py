@@ -7,10 +7,23 @@ from numba import njit
 
 @njit(cache=True)
 def _filter_numba(params, x, xlag, y, is_month_start, k, n, T):
-    """Numba-compiled core of StateSpace.filter(). Same recursion as the
-    pure-Python version — see filter() below — just compiled so the
-    per-day Python-loop overhead (dominant cost across ~6600 days x
-    thousands of objective evals during MLE) drops out."""
+    """Numba-compiled core of StateSpace.filter().
+
+    Timing: y[t] (only present on month-start days, per StateSpace.__init__)
+    describes the month that JUST ENDED, i.e. it must be compared against
+    the accumulator c AS COMPLETED at the end of the previous day -- not
+    against a freshly-reset day-t state. So on a month-start day, the
+    observation update runs FIRST, using the state exactly as it stood at
+    the end of day t-1 (a, P below, still un-transitioned into day t); ONLY
+    AFTER that update does the day-t transition run (with gamma=0, resetting
+    the accumulator c to begin the new month). On every other day, only the
+    normal transition runs, exactly as before -- there is never an
+    observation on a non-month-start day.
+
+    Also records the one-step-ahead prediction error (innovation)
+    v = y[t] - (a0 + a1*c_{m-1}) for every observed monthly anchor, so RMSE
+    of the monthly anchors can be reported after fitting (see
+    StateSpace.anchor_rmse())."""
     b0 = params[0]
     b1 = params[1]
     b2 = params[2 : 2 + k]
@@ -23,9 +36,34 @@ def _filter_numba(params, x, xlag, y, is_month_start, k, n, T):
     RQR = np.ones((2, 2))
 
     att = np.zeros((T, 2))
+    resid = np.full((T, n), np.nan)
     loglikelihood = 0.0
 
     for t in range(T):
+        # ---- Step A (month-start days only): observation update using
+        # yesterday's completed state (a, P), BEFORE today's transition ----
+        if is_month_start[t]:
+            obs = ~np.isnan(y[t])
+            m = int(obs.sum())
+            if m > 0:
+                a1_obs = a1[obs]
+                Z = np.zeros((m, 2))
+                Z[:, 1] = a1_obs
+                v = y[t][obs] - (a0[obs] + Z @ a)
+                F = Z @ P @ Z.T + np.diag(var_y[obs])
+                Finv_v = np.linalg.solve(F, v)
+                K = np.linalg.solve(F, Z @ P).T
+                a = a + K @ v
+                P = P - K @ Z @ P
+                sign, logdetF = np.linalg.slogdet(F)
+                loglikelihood -= 0.5 * (m * np.log(2 * np.pi) + logdetF + v @ Finv_v)
+
+                obs_idx = np.where(obs)[0]
+                for i in range(m):
+                    resid[t, obs_idx[i]] = v[i]
+
+        # ---- Step B: today's transition (gamma=0 resets c on month-start
+        # days, after the update above; gamma=1 otherwise) ----
         gamma = 0.0 if is_month_start[t] else 1.0
 
         Tt = np.array([[b1, 0.0], [b1, gamma]])
@@ -35,24 +73,9 @@ def _filter_numba(params, x, xlag, y, is_month_start, k, n, T):
         a = const + Tt @ a
         P = Tt @ P @ Tt.T + RQR
 
-        obs = ~np.isnan(y[t])
-        m = int(obs.sum())
-        if m > 0:
-            a1_obs = a1[obs]
-            Z = np.zeros((m, 2))
-            Z[:, 1] = a1_obs
-            v = y[t][obs] - (a0[obs] + Z @ a)
-            F = Z @ P @ Z.T + np.diag(var_y[obs])
-            Finv_v = np.linalg.solve(F, v)
-            K = np.linalg.solve(F, Z @ P).T
-            a = a + K @ v
-            P = P - K @ Z @ P
-            sign, logdetF = np.linalg.slogdet(F)
-            loglikelihood -= 0.5 * (m * np.log(2 * np.pi) + logdetF + v @ Finv_v)
-
         att[t] = a
 
-    return loglikelihood, att
+    return loglikelihood, att, resid
 
 
 class StateSpace():
@@ -75,18 +98,28 @@ class StateSpace():
         y = pd.DataFrame(y)
         self.obs_names = [str(c) for c in y.columns]
         self.n = y.shape[1]
-        is_month_end = np.r_[self.is_month_start[1:], True]
 
-        # place each monthly factor at its month-end day, NaN elsewhere
+        # y_m (indexed at FRED's month-start convention, e.g. 1919-03-01)
+        # describes the month that just ENDED (February), not the month
+        # it's indexed under (March) -- so it belongs on the first trading
+        # day of ITS indexed month, to be compared against the accumulator
+        # completed over the PRIOR month (see _filter_numba's update-before-
+        # reset handling of month-start days). This is a placement/timing
+        # fix: y_m must NOT be placed at its own month-end and compared
+        # against that same month's own (still-accumulating) daily data.
         self.y = np.full((self.T, self.n), np.nan)
         for j, col in enumerate(y.columns):
             yj = y[col].dropna()
             y_by_month = dict(zip(yj.index.to_period("M"), yj.to_numpy(float)))
-            for t in np.where(is_month_end)[0]:
+            for t in np.where(self.is_month_start)[0]:
                 self.y[t, j] = y_by_month.get(months[t], np.nan)
 
+        # The very first month-start day in the series has no completed
+        # PRIOR month accumulator to compare against -- exclude it. Every
+        # other month-start day (including the last one, which now compares
+        # against the completed second-to-last month) is a valid
+        # observation, unlike under the old month-end placement.
         self.y[months == months[0]] = np.nan
-        self.y[months == months[-1]] = np.nan
 
         self.params = None
 
@@ -144,5 +177,15 @@ class StateSpace():
         return self
 
     def filtered_states(self):
-        _, att = self.filter(self.params)
+        _, att, _ = self.filter(self.params)
         return pd.Series(att[:, 0], index=self.dates, name="latent")
+
+    def anchor_rmse(self) -> pd.Series:
+        """RMSE of the one-step-ahead prediction error for each monthly
+        anchor series, at the fitted params: sqrt(nanmean(v**2)) over all
+        month-end observations of that column, v = y_actual - y_predicted
+        (the Kalman filter's innovation, computed in _filter_numba and
+        returned as `resid`)."""
+        _, _, resid = self.filter(self.params)
+        rmse = np.sqrt(np.nanmean(resid ** 2, axis=0))
+        return pd.Series(rmse, index=self.obs_names, name="anchor_rmse")
