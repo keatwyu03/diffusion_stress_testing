@@ -47,14 +47,31 @@ def _default_device() -> str:
 
 @dataclass
 class DataConfig:
-    """Data configuration"""
-    # Where to load the data. Training/Testing split
-    # Outlier handling -> winsorize upper and lower = % bounds to remove
-    csv_path: str = os.path.join(_ROOT, "explore", "macro_data_new.csv")
-    latent_method: Optional[str] = "state_space"    # Choose between state space, tracking regression, or None
 
-    growth_vars: Optional[List[str]] = field(default_factory=lambda: ["indpro", "payems", "pi_transfer", "real_manf_trade", "personal_consump", "capacity_util"])
-    inflation_vars: Optional[List[str]] = field(default_factory=lambda: ["cpi", "oil_price", "ppi", "hour_earnings"])
+    # Final file the DIFFUSION reads: latent macro state m_t (col 0) +
+    # macro-standardized log-returns. Built by:
+    #   explore/import_data.py            -> macro_data_new.csv  (m_t + log-returns)
+    #   explore/residual_main.py --standardize -> this file      (m_t + z-scored returns)
+    csv_path: str = os.path.join(_ROOT, "explore", "standardization_results", "data_for_diffusion.csv")
+    latent_method: Optional[str] = "state_space"
+    latent_accumulator: str = "sum"
+
+    # Standardization mode for the asset columns of data_for_diffusion.csv.
+    # The latent macro state m_t is ALWAYS computed (full latent-state chain)
+    # and written as column 0 either way -- this toggle only changes how the
+    # asset log-returns are standardized, and it tags the checkpoints so the
+    # two experiment arms never overwrite each other.
+    #   True  -> per-ticker NN standardization AGAINST m_t:
+    #            z = (r - mu(m_t)) / sigma(m_t)   (macro-conditional residuals)
+    #            checkpoints get a "_LS" suffix   (e.g. score_cpi_causal_LS.pt)
+    #   False -> plain unconditional z-score of the raw log-returns:
+    #            z = (r - mean(r)) / std(r)
+    #            checkpoints use the un-suffixed tag (e.g. score_cpi_causal.pt)
+    # Flip this, re-run explore/nn_standardize.py to rebuild the CSV, then train.
+    latent_standardized: bool = True
+
+    growth_vars: Optional[List[str]] = None
+    inflation_vars: Optional[List[str]] = field(default_factory=lambda: ["cpi"])
     vol_vars: Optional[List[str]] = None
 
     start_date : str = "1990-01-01"
@@ -69,7 +86,7 @@ class DataConfig:
     weekday_col: str = "weekday"
     seq_len: int = 10
 
-    event_causal: bool = False
+    event_causal: bool = True
     event_lag_gap: int = 1
 
     test_days: int = 1200             # used only when train_end_date is None
@@ -300,4 +317,8 @@ def get_run_tag(config: Config) -> str:
 
     causal = "causal" if config.data.event_causal else "noncausal"
 
-    return f"{group}_{causal}"
+    # "_LS" marks checkpoints trained on latent-standardized (macro-conditional)
+    # asset residuals, so they never collide with the plain-z-score arm.
+    ls = "_LS" if config.data.latent_standardized else ""
+
+    return f"{group}_{causal}{ls}"

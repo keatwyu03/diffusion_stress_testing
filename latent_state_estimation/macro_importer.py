@@ -89,9 +89,12 @@ def _monthly_change(df):
     return out
 
 
-df_growth_macro_data = _monthly_change(pd.DataFrame(growth_macro_data))
-df_inf_macro_data = _monthly_change(pd.DataFrame(inflation_macro_data))
-df_vol_macro_data = _monthly_change(pd.DataFrame(vol_macro_data))
+# TEMPORARILY DISABLED for an isolation test (raw levels vs. log-diff, to
+# check whether log-diffing explains a drop in state_space's anchor R^2) --
+# revert to _monthly_change(...) afterward.
+df_growth_macro_data = pd.DataFrame(growth_macro_data)
+df_inf_macro_data = pd.DataFrame(inflation_macro_data)
+df_vol_macro_data = pd.DataFrame(vol_macro_data)
 
 # Daily proxies: original transforms restored (log-diff for prices, duration-
 # adjusted log-diff for yield futures, ex_ir diff for fed_funds, corn/wheat

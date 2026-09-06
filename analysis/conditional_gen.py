@@ -170,7 +170,6 @@ def make_figure(extract_fn, suptitle, filename, xlabel, n_cols=5):
             )
             ax.set_title(ticker.upper(), fontsize=11, fontweight="bold")
 
-        fig.suptitle(f"{suptitle} — {split_label}", fontsize=13, fontweight="bold")
         fig.tight_layout()
 
         out = os.path.join(_results_dir, f"{stem}_{split_key}{ext}")

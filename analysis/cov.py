@@ -226,61 +226,46 @@ def print_corr_rmse(split_label, panels):
 
 
 # ── Plot helper ───────────────────────────────────────────────────────────────
-def plot_matrices(panels, title, fname, vmin, vmax, fmt, rmse_rows=None):
+# One saved image PER PANEL (not a combined grid): no title, no sample-count
+# text, no RMSE annotation -- only the heatmap, its colorbar, ticker labels,
+# and the correlation numbers in each cell.
+def _panel_filename(lbl, split_label):
+    slug = lbl.lower().replace(" ", "_").replace("(", "").replace(")", "")
+    return f"{slug}_{split_label.lower()}.png"
+
+
+def plot_matrices(panels, fname_prefix, vmin, vmax, fmt, split_label):
     tick_lbl  = [t.upper() for t in plot_tickers]
     font_size = max(8, min(13, 40 // n_plot))
 
-    n_panels = len(panels)
-    n_cols   = 2
-    n_rows   = (n_panels + n_cols - 1) // n_cols
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 6 * n_rows))
-    axes = np.atleast_1d(axes).ravel()
-    for ax in axes[n_panels:]:
-        ax.axis("off")
-    for ax, (lbl, arr) in zip(axes, panels):
-        C  = np.corrcoef(arr.T) if "corr" in fname else np.cov(arr.T)
+    os.makedirs(_results_dir, exist_ok=True)
+    for lbl, arr in panels:
+        C = np.corrcoef(arr.T) if "corr" in fname_prefix else np.cov(arr.T)
+
+        fig, ax = plt.subplots(figsize=(7, 6))
         im = ax.imshow(C, vmin=vmin, vmax=vmax, cmap="RdBu_r")
         ax.set_xticks(range(n_plot)); ax.set_xticklabels(tick_lbl, fontsize=10, rotation=45, ha="right")
         ax.set_yticks(range(n_plot)); ax.set_yticklabels(tick_lbl, fontsize=10)
-        ax.set_title(f"{lbl}\n(n={len(arr)})", fontsize=10, fontweight="bold", pad=8)
         for r in range(n_plot):
             for c in range(n_plot):
                 v = C[r, c]
                 ax.text(c, r, fmt.format(v), ha="center", va="center", fontsize=font_size,
                         fontweight="bold", color="white" if abs(v) > 0.6 * abs(vmax) else "black")
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        fig.tight_layout()
 
-    event_lbl = (data_processor.macro_col.upper()
-                 if config.data.latent_method is None
-                 else f"latent ({config.data.latent_method})")
-    fig.suptitle(
-        f"{title}\n(event: {event_lbl} {event_type} ≥ {h_threshold} std"
-        f" [top {config.hfunction.event_threshold:.1%}],  last-day returns)",
-        fontsize=13, fontweight="bold"
-    )
-    fig.tight_layout()
-
-    if rmse_rows:
-        rmse_line = "  |  ".join(f"{lbl} off-diag RMSE = {rmse:.4f}" for lbl, rmse in rmse_rows)
-        fig.subplots_adjust(bottom=0.12)
-        fig.text(0.5, 0.02, rmse_line, ha="center", va="bottom",
-                  fontsize=10, fontweight="bold")
-
-    os.makedirs(_results_dir, exist_ok=True)
-    out = os.path.join(_results_dir, fname)
-    plt.savefig(out, dpi=150, bbox_inches="tight")
-    plt.show()
-    print(f"Saved {out}")
+        out = os.path.join(_results_dir, _panel_filename(lbl, split_label))
+        plt.savefig(out, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"Saved {out}")
 
 
 # ── Train figures ─────────────────────────────────────────────────────────────
 rmse_train = print_corr_rmse("Train", panels_train)
 
-plot_matrices(panels_train, "Correlation Matrices — Last-Day Returns (Train)",
-              "corr_matrices_train.png", vmin=-1, vmax=1, fmt="{:.2f}", rmse_rows=rmse_train)
+plot_matrices(panels_train, "corr_matrices", vmin=-1, vmax=1, fmt="{:.2f}", split_label="train")
 
 # ── Test figures ──────────────────────────────────────────────────────────────
 rmse_test = print_corr_rmse("Test", panels_test)
 
-plot_matrices(panels_test, "Correlation Matrices — Last-Day Returns (Test)",
-              "corr_matrices_test.png", vmin=-1, vmax=1, fmt="{:.2f}", rmse_rows=rmse_test)
+plot_matrices(panels_test, "corr_matrices", vmin=-1, vmax=1, fmt="{:.2f}", split_label="test")

@@ -124,8 +124,10 @@ class NLL_Stationarity:
 def load_data(csv_path=None, cond_col="m_t"):
     """(dates, m, returns_by_ticker) from the CSV, NaN conditioning rows dropped.
 
-    `m_t` is the latent macro state written by import_data.py. Every other
-    numeric column is a ticker's daily returns.
+    Reads macro_data_new.csv (import_data.py's output): `m_t` is the latent
+    macro state, every other numeric column is that ticker's daily LOG-RETURN
+    (import_data.py writes np.log(P/P.shift(1))). This step standardizes those
+    returns against m_t: z = (r - mu(m_t)) / sigma(m_t).
     """
     import os
     import pandas as pd
@@ -170,8 +172,10 @@ def save_standardized_residuals(residuals_by_ticker, dates, m=None, csv_path=Non
     import os
 
     if csv_path is None:
+        # same file residual_main.py writes, so both entry points agree and
+        # config.data.csv_path (which the diffusion reads) has one target
         csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                 "nn_standardized_macro.csv")
+                                 "standardization_results", "nn_standardized_macro.csv")
 
     out = pd.DataFrame({t: z.detach().cpu().numpy() for t, z in residuals_by_ticker.items()})
     out.insert(0, "Date", dates.reset_index(drop=True))
@@ -182,14 +186,62 @@ def save_standardized_residuals(residuals_by_ticker, dates, m=None, csv_path=Non
     return out
 
 
+def save_diffusion_csv(out, csv_path=None):
+    """Write the final conditional-diffusion input CSV (config.data.csv_path):
+    col 0 = Date, col 1 = m_t latent macro state, remaining cols = the
+    standardized asset columns. This is the file main.py / DataProcessor read.
+    Overwrites: it's meant to be regenerated whenever you flip
+    config.data.latent_standardized between experiment arms. The checkpoint
+    naming ("_LS" suffix via get_run_tag) is what keeps the two arms' trained
+    models from colliding, not the CSV name."""
+    import os
+
+    if csv_path is None:
+        csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "standardization_results", "data_for_diffusion.csv")
+
+    out.to_csv(csv_path, index=False)
+    print(f"wrote conditional-diffusion input ({len(out)} rows, "
+          f"{out.shape[1] - 1} cols after Date) to {csv_path}")
+    return csv_path
+
+
+def plain_zscore(returns_by_ticker):
+    """Unconditional per-ticker z-score of the raw log-returns:
+    z = (r - mean(r)) / std(r), whole-series stats. Used when
+    config.data.latent_standardized is False -- m_t is still computed and
+    kept as column 0 of the output CSV, it just isn't used to standardize."""
+    out = {}
+    for t, r in returns_by_ticker.items():
+        out[t] = (r - r.mean()) / r.std()
+    return out
+
+
 if __name__ == "__main__":
+    import sys, os
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from config import get_default_config
+
+    _cfg = get_default_config()
+    latent_std = _cfg.data.latent_standardized
+
     dates, m, returns = load_data()
     print(f"{len(m)} days, {dates.iloc[0].date()} to {dates.iloc[-1].date()}, "
-          f"{len(returns)} tickers\n")
+          f"{len(returns)} tickers")
+    print(f"latent_standardized = {latent_std}  "
+          f"({'NN macro-conditional residuals' if latent_std else 'plain unconditional z-score'})\n")
 
-    z_by_ticker = {}
-    for ticker, r in returns.items():
-        _, z, _, _ = run_ticker(r, m, ticker)
-        z_by_ticker[ticker] = z
+    if latent_std:
+        z_by_ticker = {}
+        for ticker, r in returns.items():
+            _, z, _, _ = run_ticker(r, m, ticker)
+            z_by_ticker[ticker] = z
+        # keep writing the NN-residual diagnostics file in this arm
+        out = save_standardized_residuals(z_by_ticker, dates, m=m)
+    else:
+        z_by_ticker = plain_zscore(returns)
+        out = pd.DataFrame({t: z.detach().cpu().numpy() for t, z in z_by_ticker.items()})
+        out.insert(0, "Date", dates.reset_index(drop=True))
+        out.insert(1, "m_t", m.detach().cpu().numpy().flatten())
 
-    save_standardized_residuals(z_by_ticker, dates, m=m)
+    save_diffusion_csv(out)

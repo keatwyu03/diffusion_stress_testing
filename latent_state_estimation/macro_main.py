@@ -54,9 +54,11 @@ class LatentStateEstimator:
         growth_vars=None,
         inflation_vars=None,
         vol_vars=None,
+        accumulator: str = "sum",
     ):
         self.method = method
         self.data_dir = data_dir
+        self.accumulator = accumulator  # state_space only: "sum" or "average"
         self.var_selection = {"growth": growth_vars, "inflation": inflation_vars, "vol": vol_vars}
         self.trackers = {}       # name -> fitted TrackingRegression (method 1 only)
         self.state_space = None  # fitted StateSpace (method 2 only)
@@ -113,7 +115,7 @@ class LatentStateEstimator:
             # than commodity returns)
             x = pd.concat(daily, axis=1).dropna()
             x = (x - x.mean()) / x.std()
-            self.state_space = StateSpace(y=factors, x=x).fit()
+            self.state_space = StateSpace(y=factors, x=x, accumulator=self.accumulator).fit()
             self.latent = self.state_space.filtered_states()
             self.anchor_rmse = self.state_space.anchor_rmse()
             self.anchor_r2 = self.state_space.anchor_r2()

@@ -43,25 +43,39 @@ print(f"      bucket: {' + '.join(bucket)}")
 for group, cols in bucket.items():
     print(f"        {group:<10} {', '.join(cols)}")
 
-cond_series = LatentStateEstimator(
+_estimator = LatentStateEstimator(
     method=_cfg.data.latent_method,
     growth_vars=_cfg.data.growth_vars,
     inflation_vars=_cfg.data.inflation_vars,
     vol_vars=_cfg.data.vol_vars,
-).fit()
+    accumulator=_cfg.data.latent_accumulator,
+)
+cond_series = _estimator.fit()
 print("[1/4] done.")
 
+print("      monthly anchor fit (per group):")
+print(f"        {'group':<10}{'RMSE':>10}{'R^2':>10}")
+for name in _estimator.anchor_rmse.index:
+    print(f"        {name:<10}{_estimator.anchor_rmse[name]:>10.4f}"
+          f"{_estimator.anchor_r2[name]:>10.4f}")
+
 tickers = _cfg.data.tickers   # asset tickers only; conditioning series is separate
-csv_path = _cfg.data.csv_path
+# import_data.py is the raw-dataset BUILDER, so it always writes the raw
+# (price-level + latent) dataset to macro_data_new.csv, regardless of what
+# config.data.csv_path points at. config.data.csv_path is the file the
+# DIFFUSION reads (currently the nn-standardized concatenation), which is a
+# downstream product of this one via residual_main.py --standardize.
+csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "macro_data_new.csv")
 
 print(f"[2/4] downloading price history for {tickers} from yfinance...")
 df = yf.download(tickers, start = _cfg.data.start_date, auto_adjust=True)["Close"]
 print(f"[2/4] done ({len(df)} raw rows).")
 
-print("[3/4] merging conditioning series with stock price levels...")
-df_out = pd.DataFrame({cond_event: cond_series.reindex(df.index)})
+print("[3/4] merging conditioning series with stock log-returns...")
+log_ret = np.log(df / df.shift(1)).dropna()
+df_out = pd.DataFrame({cond_event: cond_series.reindex(log_ret.index)})
 for t in tickers:
-    df_out[t] = df[t]
+    df_out[t] = log_ret[t]
 
 df_out = df_out.dropna(subset=tickers)
 print("[3/4] done.")

@@ -6,11 +6,22 @@ from numba import njit
 
 
 @njit(cache=True)
-def _filter_numba(params, x, xlag, y, is_month_start, k, n, T):
+def _filter_numba(params, x, xlag, y, is_month_start, day_in_month, use_average, k, n, T):
     """Numba-compiled core of StateSpace.filter(). Same recursion as the
     pure-Python version — see filter() below — just compiled so the
     per-day Python-loop overhead (dominant cost across ~6600 days x
     thousands of objective evals during MLE) drops out.
+
+    The intramonth cumulator c can be either a running SUM (use_average=False,
+    original behavior) or a running MEAN (use_average=True) of the same daily
+    increment (b1*s_{t-1} + b0 + b2@x_{t-1}):
+        sum:     c_t = b1*s_{t-1} + c_{t-1}             + (b0 + b2@x_{t-1})
+        average: c_t = (b1/d_t)*s_{t-1} + (1-1/d_t)*c_{t-1} + (b0 + b2@x_{t-1})/d_t
+    where d_t = day_in_month[t] is the number of trading days elapsed since
+    (and including) the most recent month-start reset -- known exactly from
+    the calendar, not estimated. At d_t=1 (month-start) the average form
+    reduces to c_t = b1*s_{t-1} + (b0 + b2@x_{t-1}), i.e. c_{t-1} is fully
+    discarded, matching the sum form's reset-to-zero-then-add-one-term.
 
     Also records the one-step-ahead prediction error (innovation)
     v = y[t] - (a0 + a1*s_t) for every observed monthly anchor, so RMSE of
@@ -34,10 +45,15 @@ def _filter_numba(params, x, xlag, y, is_month_start, k, n, T):
 
     for t in range(T):
         gamma = 0.0 if is_month_start[t] else 1.0
-
-        Tt = np.array([[b1, 0.0], [b1, gamma]])
         const_val = b0 + b2 @ xlag[t]
-        const = np.array([const_val, const_val])
+
+        if use_average:
+            w = 1.0 / day_in_month[t]
+            Tt = np.array([[b1, 0.0], [b1 * w, 1.0 - w]])
+            const = np.array([const_val, const_val * w])
+        else:
+            Tt = np.array([[b1, 0.0], [b1, gamma]])
+            const = np.array([const_val, const_val])
 
         a = const + Tt @ a
         P = Tt @ P @ Tt.T + RQR
@@ -72,7 +88,15 @@ class StateSpace():
     observed at month ends through the intramonth cumulator c.
     y, x can be Series (n = k = 1, original behavior) or DataFrames."""
 
-    def __init__(self, y, x):
+    def __init__(self, y, x, accumulator: str = "sum"):
+        """accumulator: "sum" (original -- c is a running SUM of daily
+        increments over the month) or "average" (c is a running MEAN of the
+        same daily increments, using the exact trading-day count elapsed
+        since the last month-start reset -- see _filter_numba)."""
+        if accumulator not in ("sum", "average"):
+            raise ValueError(f"accumulator must be 'sum' or 'average', got {accumulator!r}")
+        self.accumulator = accumulator
+
         x = pd.DataFrame(x).dropna()
         self.dates = x.index
         self.x = x.to_numpy(float)              # (T, k)
@@ -80,6 +104,16 @@ class StateSpace():
 
         months = self.dates.to_period("M")
         self.is_month_start = np.asarray(~months.duplicated())
+
+        # day_in_month[t] = number of trading days elapsed since (and
+        # including) the most recent month-start reset, i.e. 1 on a
+        # month-start day, 2 the next day, etc. -- known exactly from the
+        # calendar, used only when accumulator="average".
+        self.day_in_month = np.empty(self.T, dtype=np.float64)
+        _counter = 0
+        for _t in range(self.T):
+            _counter = 1 if self.is_month_start[_t] else _counter + 1
+            self.day_in_month[_t] = _counter
 
         self.xlag = np.r_[self.x[:1], self.x[:-1]]
 
@@ -122,6 +156,7 @@ class StateSpace():
         params = np.asarray(params, dtype=np.float64)
         return _filter_numba(
             params, self.x, self.xlag, self.y, self.is_month_start,
+            self.day_in_month, self.accumulator == "average",
             self.k, self.n, self.T,
         )
 
