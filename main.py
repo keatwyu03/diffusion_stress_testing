@@ -84,6 +84,7 @@ def main(args):
         winsorize_upper=config.data.winsorize_upper,
         ema_span=config.data.ema_span,
         event_causal=config.data.event_causal,
+        use_ema_standardization=config.data.use_ema_standardization,
         event_lag_gap=config.data.event_lag_gap,
     )
 

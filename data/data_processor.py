@@ -264,6 +264,7 @@ class DataProcessor:
         winsorize_upper: float = 0.995,
         ema_span: int = 60,
         ema_min_periods: int = 20,
+        use_ema_standardization: bool = True,
         event_causal: bool = False,
         event_lag_gap: int = 0,
     ):
@@ -280,6 +281,7 @@ class DataProcessor:
         self.winsorize_upper = winsorize_upper
         self.ema_span = ema_span
         self.ema_min_periods = ema_min_periods
+        self.use_ema_standardization = use_ema_standardization
         self.event_causal = event_causal
         self.event_lag_gap = event_lag_gap
 
@@ -368,8 +370,22 @@ class DataProcessor:
         (replicates rare_event_CDG): stats at row t use data through t-1 only
         (shift(1)), so the entry-day standardizer never sees the window itself.
         Rows before the EMA warm-up are trimmed from self.df, so windows and
-        the macro series keep sharing one row base."""
+        the macro series keep sharing one row base.
+
+        When self.use_ema_standardization is False the EMA layer is skipped:
+        MU/SG become the identity transform (0 / 1) over every row, no warm-up
+        trim, and the asset columns of data_for_diffusion.csv flow into the
+        windows unchanged (they are already standardized upstream). All
+        downstream code (make_sequences, get_diffusion_data, entry-stat pools,
+        destandardize_windows) keeps working because it only ever does
+        (r - MU) / SG and r * SG + MU."""
         r = self.df[self.tickers]
+        if not self.use_ema_standardization:
+            self.MU = np.zeros(r.shape, dtype=np.float64)
+            self.SG = np.ones(r.shape, dtype=np.float64)
+            print(f"EMA standardizer: DISABLED (use_ema_standardization=False), "
+                  f"{len(self.df)} rows, columns used as-is")
+            return
         MU = r.ewm(span=self.ema_span, min_periods=self.ema_min_periods).mean().shift(1)
         SG = r.ewm(span=self.ema_span, min_periods=self.ema_min_periods).std().shift(1)
         valid = MU.notna().all(axis=1) & SG.notna().all(axis=1) & (SG > 0).all(axis=1)
@@ -472,7 +488,8 @@ class DataProcessor:
         print("Winsorizing raw returns (train-only quantiles)...")
         self._winsorize_raw_returns()
 
-        print("Computing causal EMA standardizer...")
+        print("Computing causal EMA standardizer..." if self.use_ema_standardization
+              else "Skipping EMA standardizer (use_ema_standardization=False)...")
         self._compute_ema_stats()
         self.r_dw = self.df[self.tickers]  # raw stock returns (winsorized, post warm-up trim)
 

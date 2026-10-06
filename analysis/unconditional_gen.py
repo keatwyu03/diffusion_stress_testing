@@ -38,6 +38,7 @@ data_processor = DataProcessor(
     window_shift=config.data.window_shift,
     winsorize_lower=config.data.winsorize_lower,
     winsorize_upper=config.data.winsorize_upper,
+    use_ema_standardization=config.data.use_ema_standardization,
 )
 data_processor.process_all()
 

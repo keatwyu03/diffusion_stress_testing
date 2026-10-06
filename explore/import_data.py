@@ -4,13 +4,29 @@ import yfinance as yf
 import matplotlib.pyplot as plt
 import os
 
+import torch
+
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(_HERE))
+sys.path.insert(0, _HERE)
 from config import get_default_config
 from data import DataProcessor
-from latent_state_estimation.macro_main import LatentStateEstimator
+from nn_standardize import run_ticker
 
 _cfg = get_default_config()
+
+# Always refresh the macro panels (growth/inflation/vol *_macro.csv and
+# *_daily.csv) before fitting the latent state, regardless of which columns
+# this config selects — macro_importer.py is a pure top-level script (fetches
+# everything unconditionally, no config filtering), so running it here just
+# means the LatentStateEstimator below always reads fresh FRED/yfinance data
+# instead of whatever was left on disk from a previous config's run.
+print("[0/5] refreshing macro panels (latent_state_estimation/macro_importer.py)...")
+import latent_state_estimation.macro_importer  # noqa: F401  (executes on import)
+print("[0/5] done.")
+
+from latent_state_estimation.macro_main import LatentStateEstimator
 
 # Conditioning column, written as column 0 of the CSV. Named for what it IS
 # (the conditioning series) rather than how it was produced — it comes from
@@ -38,7 +54,7 @@ if not bucket:
 # the conditioning series
 bucket_lbl = ";  ".join(f"{g} using {', '.join(cols)}" for g, cols in bucket.items())
 
-print(f"[1/4] estimating macro state (method={_cfg.data.latent_method!r})...")
+print(f"[1/5] estimating macro state (method={_cfg.data.latent_method!r})...")
 print(f"      bucket: {' + '.join(bucket)}")
 for group, cols in bucket.items():
     print(f"        {group:<10} {', '.join(cols)}")
@@ -51,7 +67,7 @@ _estimator = LatentStateEstimator(
     accumulator=_cfg.data.latent_accumulator,
 )
 cond_series = _estimator.fit()
-print("[1/4] done.")
+print("[1/5] done.")
 
 print("      monthly anchor fit (per group):")
 print(f"        {'group':<10}{'RMSE':>10}{'R^2':>10}")
@@ -60,31 +76,70 @@ for name in _estimator.anchor_rmse.index:
           f"{_estimator.anchor_r2[name]:>10.4f}")
 
 tickers = _cfg.data.tickers   # asset tickers only; conditioning series is separate
-# import_data.py is the raw-dataset BUILDER, so it always writes the raw
-# (price-level + latent) dataset to macro_data_new.csv, regardless of what
-# config.data.csv_path points at. config.data.csv_path is the file the
-# DIFFUSION reads (currently the nn-standardized concatenation), which is a
-# downstream product of this one via residual_main.py --standardize.
-csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "macro_data_new.csv")
 
-print(f"[2/4] downloading price history for {tickers} from yfinance...")
+# import_data.py is the SOLE builder of both files:
+#   macro_data_new.csv       raw intermediate: m_t (latent state) + raw log-returns
+#   data_for_diffusion.csv   the file main.py / DataProcessor / analysis read
+#                            (config.data.csv_path). Its asset columns depend on
+#                            config.data.latent_standardized:
+#                              True  -> per-ticker NN residuals z=(r-mu(m_t))/sig(m_t)
+#                              False -> raw log-returns, untouched
+#                            Column 0 (m_t) is the raw latent state either way.
+# nn_standardize.py is NOT run as a separate step; its run_ticker() is imported
+# above and called here when latent_standardized is True.
+raw_csv_path  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "macro_data_new.csv")
+diff_csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "standardization_results", "data_for_diffusion.csv")
+
+print(f"[2/5] downloading price history for {tickers} from yfinance...")
 df = yf.download(tickers, start = _cfg.data.start_date, auto_adjust=True)["Close"]
-print(f"[2/4] done ({len(df)} raw rows).")
+print(f"[2/5] done ({len(df)} raw rows).")
 
-print("[3/4] merging conditioning series with stock log-returns...")
+print("[3/5] merging conditioning series with stock log-returns...")
 log_ret = np.log(df / df.shift(1)).dropna()
 df_out = pd.DataFrame({cond_event: cond_series.reindex(log_ret.index)})
 for t in tickers:
     df_out[t] = log_ret[t]
 
 df_out = df_out.dropna(subset=tickers)
-print("[3/4] done.")
+print("[3/5] done.")
 
-print(f"[4/4] writing {csv_path}...")
-df_out.to_csv(csv_path, index_label="Date")
-print("[4/4] done.")
+print(f"[4/5] writing raw intermediate {raw_csv_path}...")
+df_out.to_csv(raw_csv_path, index_label="Date")
+print(f"[4/5] done ({len(df_out)} rows).")
 
-print(f"total rows: {len(df_out)}")
+# ── Build data_for_diffusion.csv ────────────────────────────────────────────
+# Rows with a valid m_t only (the latent state is sparse at the series start);
+# the asset columns are complete by the dropna() above.
+latent_std = _cfg.data.latent_standardized
+diff_df = df_out[df_out[cond_event].notna()].copy()
+dates_diff = diff_df.index
+
+if latent_std:
+    print(f"[5/5] latent_standardized=True: fitting per-ticker NN residuals "
+          f"z=(r-mu(m_t))/sig(m_t) for {len(tickers)} tickers...")
+    m = torch.tensor(diff_df[[cond_event]].to_numpy(), dtype=torch.float32)   # (n, 1)
+    out = pd.DataFrame(index=dates_diff)
+    for t in tickers:
+        r = torch.tensor(diff_df[t].to_numpy(), dtype=torch.float32)
+        _, z, _, _ = run_ticker(r, m, t, seed=_cfg.seed)
+        out[t] = z.detach().cpu().numpy()
+else:
+    print("[5/5] latent_standardized=False: using raw log-returns directly "
+          "(only standardization is DataProcessor's causal per-window EWMA)...")
+    out = diff_df[list(tickers)].copy()
+
+out.insert(0, cond_event, diff_df[cond_event].to_numpy())   # raw latent state, col 0
+out.index.name = "Date"
+os.makedirs(os.path.dirname(diff_csv_path), exist_ok=True)
+out.to_csv(diff_csv_path)
+print(f"[5/5] wrote diffusion input {diff_csv_path} "
+      f"({len(out)} rows, {out.shape[1] - 1} asset cols).")
+
+print(f"total rows: raw={len(df_out)}, diffusion={len(out)}")
+
+# keep the downstream diagnostic block pointed at the raw intermediate
+csv_path = raw_csv_path
 
 # ── Covariance/correlation check: real data vs. conditioning-event bucket —
 # lets us see whether the selected event bucket actually shifts cross-asset
@@ -108,6 +163,7 @@ dp = DataProcessor(
     winsorize_lower = _cfg.data.winsorize_lower,
     winsorize_upper = _cfg.data.winsorize_upper,
     ema_span        = _cfg.data.ema_span,
+    use_ema_standardization = _cfg.data.use_ema_standardization,
     event_causal    = _cfg.data.event_causal,
     event_lag_gap   = _cfg.data.event_lag_gap,
 )

@@ -35,6 +35,7 @@ data_processor = DataProcessor(
     winsorize_lower=config.data.winsorize_lower,
     winsorize_upper=config.data.winsorize_upper,
     event_causal=config.data.event_causal,
+    use_ema_standardization=config.data.use_ema_standardization,
     event_lag_gap=config.data.event_lag_gap,
 )
 data_processor.process_all()

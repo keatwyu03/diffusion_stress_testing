@@ -48,30 +48,24 @@ def _default_device() -> str:
 @dataclass
 class DataConfig:
 
-    # Final file the DIFFUSION reads: latent macro state m_t (col 0) +
-    # macro-standardized log-returns. Built by:
-    #   explore/import_data.py            -> macro_data_new.csv  (m_t + log-returns)
-    #   explore/residual_main.py --standardize -> this file      (m_t + z-scored returns)
-    csv_path: str = os.path.join(_ROOT, "explore", "standardization_results", "data_for_diffusion.csv")
     latent_method: Optional[str] = "state_space"
     latent_accumulator: str = "sum"
 
-    # Standardization mode for the asset columns of data_for_diffusion.csv.
-    # The latent macro state m_t is ALWAYS computed (full latent-state chain)
-    # and written as column 0 either way -- this toggle only changes how the
-    # asset log-returns are standardized, and it tags the checkpoints so the
-    # two experiment arms never overwrite each other.
-    #   True  -> per-ticker NN standardization AGAINST m_t:
-    #            z = (r - mu(m_t)) / sigma(m_t)   (macro-conditional residuals)
-    #            checkpoints get a "_LS" suffix   (e.g. score_cpi_causal_LS.pt)
-    #   False -> plain unconditional z-score of the raw log-returns:
-    #            z = (r - mean(r)) / std(r)
-    #            checkpoints use the un-suffixed tag (e.g. score_cpi_causal.pt)
-    # Flip this, re-run explore/nn_standardize.py to rebuild the CSV, then train.
     latent_standardized: bool = True
 
-    growth_vars: Optional[List[str]] = None
-    inflation_vars: Optional[List[str]] = field(default_factory=lambda: ["cpi"])
+    # The DIFFUSION always reads this one file. explore/import_data.py is its
+    # SOLE builder and its CONTENTS depend on latent_standardized:
+    #   True  -> asset cols = NN macro-conditional residuals z=(r-mu(m_t))/sig(m_t)
+    #            (import_data.py calls nn_standardize.run_ticker internally)
+    #   False -> asset cols = RAW log-returns; the only asset standardization is
+    #            the causal per-window EWMA in DataProcessor (use_ema_standardization=True)
+    # Column 0 (m_t) is the raw latent macro state either way. Rerun
+    # explore/import_data.py whenever you flip latent_standardized;
+    # get_run_tag() keeps the two arms' checkpoints from colliding.
+    csv_path: str = os.path.join(_ROOT, "explore", "standardization_results", "data_for_diffusion.csv")
+
+    growth_vars: Optional[List[str]] = field(default_factory=lambda: ["indpro", "payems", "pi_transfer", "real_manf_trade", "personal_consump", "capacity_util"])
+    inflation_vars: Optional[List[str]] = field(default_factory=lambda: ["cpi", "oil_price", "ppi", "hour_earnings"])
     vol_vars: Optional[List[str]] = None
 
     start_date : str = "1990-01-01"
@@ -80,7 +74,8 @@ class DataConfig:
     window_shift : int = 1
 
     tickers: List[str] = field(default_factory=lambda: [
-        "IBM", "CSCO", "AAPL", "MSFT", "ORCL", "INTC", "TXN", "QCOM", "AMAT", "ADBE"
+        "IBM", "CSCO", "AAPL", "MSFT", "ORCL", "INTC", "TXN", "QCOM", "AMAT", "ADBE",
+        "KO", "PG", "CL", "GIS", "KMB"
     ])
 
     weekday_col: str = "weekday"
@@ -95,7 +90,7 @@ class DataConfig:
     winsorize_upper: float = 0.995
     ema_span: int = 60                # per-window causal EMA standardizer span
                                        # (z = (r - EMA_mean)/EMA_vol at window entry)
-
+    use_ema_standardization: bool = True
 
 @dataclass
 class DiffusionConfig:
@@ -317,8 +312,24 @@ def get_run_tag(config: Config) -> str:
 
     causal = "causal" if config.data.event_causal else "noncausal"
 
-    # "_LS" marks checkpoints trained on latent-standardized (macro-conditional)
-    # asset residuals, so they never collide with the plain-z-score arm.
-    ls = "_LS" if config.data.latent_standardized else ""
+    # Standardization arm — keeps checkpoints from different standardization
+    # pipelines from colliding:
+    #   "_LS"    latent_standardized=True: NN macro-conditional residuals
+    #            (data_for_diffusion.csv). May itself carry EWMA on top.
+    #   "_EWMA"  latent_standardized=False + use_ema_standardization=True:
+    #            raw log-returns in data_for_diffusion.csv, causal per-window
+    #            EWMA is the ONLY standardizer.
+    #   "_noEMA" use_ema_standardization=False: EWMA layer disabled.
+    if config.data.latent_standardized:
+        std = "_LS" if config.data.use_ema_standardization else "_LS_noEMA"
+    else:
+        std = "_EWMA" if config.data.use_ema_standardization else "_noEMA"
 
-    return f"{group}_{causal}{ls}"
+    # Asset-count tag — keeps a differently-sized ticker universe (e.g. the
+    # 15-stock expansion) from colliding with/loading an existing checkpoint
+    # trained on a different number of assets. Left blank at the historical
+    # default (10) so already-trained 10-asset checkpoints keep their names.
+    n_assets = len(config.data.tickers)
+    asset_tag = "" if n_assets == 10 else f"_{n_assets}a"
+
+    return f"{group}_{causal}{std}{asset_tag}"
