@@ -81,7 +81,7 @@ class DataConfig:
     weekday_col: str = "weekday"
     seq_len: int = 10
 
-    event_causal: bool = True
+    event_causal: bool = False
     event_lag_gap: int = 1
 
     test_days: int = 1200             # used only when train_end_date is None

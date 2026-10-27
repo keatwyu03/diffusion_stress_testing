@@ -124,6 +124,7 @@ class DiffusionModel:
         marginal_prob_mean: Callable,
         marginal_prob_std: Callable,
         eps: float = 1e-5,
+        condition: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Loss function for training the score-based model
@@ -154,7 +155,7 @@ class DiffusionModel:
         # eps has unit variance at every t by construction, unlike the score
         # (-z/std), which diverges as t -> 0 — a much easier, uniformly-scaled
         # target to regress on across all noise levels.
-        eps_hat = self.model(perturbed_x, random_t).sample
+        eps_hat = self.model(perturbed_x, random_t, condition=condition).sample
         score = self.score_from_eps(eps_hat, random_t)
         # One-step (Tweedie's formula) estimate of x0 from the current noisy input
         x0_hat = (perturbed_x + std_expanded ** 2 * score) / mean_expanded
@@ -180,6 +181,7 @@ class DiffusionModel:
     def train(
         self,
         train_data: torch.Tensor,
+        condition_data: Optional[torch.Tensor] = None,
         batch_size: int = 256,
         n_epochs: int = 600,
         learning_rate: float = 1e-4,
@@ -211,6 +213,10 @@ class DiffusionModel:
                 of DataLoader's flat shuffle. Requires end_dates.
             end_dates: window end dates, 1:1 aligned with train_data's rows,
                 required when block_sampling=True.
+            condition_data: optional (N,) or (N, 1) tensor, 1:1 aligned with
+                train_data's rows, giving each window's scalar conditioning
+                value (e.g. a macro state). None (default) trains the
+                original unconditional score network unchanged.
         """
         if use_wandb:
             import wandb
@@ -227,7 +233,10 @@ class DiffusionModel:
         print(f"[DEBUG] GPU count: {torch.cuda.device_count()}", flush=True)
 
         if not block_sampling:
-            dataset = TensorDataset(train_data)
+            if condition_data is not None:
+                dataset = TensorDataset(train_data, condition_data)
+            else:
+                dataset = TensorDataset(train_data)
             data_loader = DataLoader(
                 dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers
             )
@@ -260,15 +269,28 @@ class DiffusionModel:
                 # perm indexes train_data, which stays on CPU here (each batch
                 # is moved to self.device below, same as the DataLoader path).
                 perm = block_interleaved_epoch_order(end_dates, device=train_data.device)
-                batches = (train_data[perm[i:i + batch_size]] for i in range(0, len(perm), batch_size))
+                if condition_data is not None:
+                    batches = (
+                        (train_data[perm[i:i + batch_size]], condition_data[perm[i:i + batch_size]])
+                        for i in range(0, len(perm), batch_size)
+                    )
+                else:
+                    batches = (
+                        (train_data[perm[i:i + batch_size]], None)
+                        for i in range(0, len(perm), batch_size)
+                    )
             else:
-                batches = (x for (x,) in data_loader)
+                if condition_data is not None:
+                    batches = ((x, c) for (x, c) in data_loader)
+                else:
+                    batches = ((x, None) for (x,) in data_loader)
 
-            for x in batches:
+            for x, cond in batches:
                 x = x.to(self.device)
+                cond = cond.to(self.device) if cond is not None else None
 
                 loss = self.loss_fn(
-                    x, self.marginal_prob_mean_fn, self.marginal_prob_std_fn
+                    x, self.marginal_prob_mean_fn, self.marginal_prob_std_fn, condition=cond
                 )
 
                 optimizer.zero_grad()
@@ -337,6 +359,7 @@ class DiffusionModel:
         eps: float = 1e-4,
         return_path: bool = False,
         seed: Optional[int] = None,
+        condition: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Sample from the diffusion model using Euler-Maruyama
@@ -364,6 +387,9 @@ class DiffusionModel:
             rng = torch.Generator(device=self.device)
             rng.manual_seed(seed)
 
+        if condition is not None:
+            condition = condition.to(self.device)
+
         init_x = torch.randn(batch_size, self.in_channels, self.sample_size, device=self.device, generator=rng)
         x = init_x
 
@@ -386,7 +412,7 @@ class DiffusionModel:
                 f = self.drift_coeff_fn(batch_time_step)
                 f_expanded = f[:, None, None]
 
-                eps_hat = self.model(x, batch_time_step).sample
+                eps_hat = self.model(x, batch_time_step, condition=condition).sample
                 score = self.score_from_eps(eps_hat, batch_time_step)
                 adjust = (1 + stoch**2) / 2
                 mean_x = (

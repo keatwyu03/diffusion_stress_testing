@@ -212,6 +212,16 @@ class FinancialTransformerScore(nn.Module):
             nn.Linear(cond_dim, cond_dim),
         )
 
+        # Optional scalar conditioning (e.g. a macro state), added to the time
+        # embedding before AdaLN. Unused (and untouched) unless forward() is
+        # called with condition != None, so the unconditional path is exactly
+        # the pre-existing behavior.
+        self.cond_embed = nn.Sequential(
+            nn.Linear(1, cond_dim),
+            nn.SiLU(),
+            nn.Linear(cond_dim, cond_dim),
+        )
+
         self.blocks = nn.ModuleList([
             SpatioTemporalBlock(embed_dim, n_heads, cond_dim, ff_mult, dropout)
             for _ in range(n_layers)
@@ -220,12 +230,17 @@ class FinancialTransformerScore(nn.Module):
         self.output_norm = nn.LayerNorm(embed_dim)
         self.output_proj = nn.Linear(embed_dim, 1)
 
-    def forward(self, x: torch.Tensor, t: torch.Tensor) -> ScoreOutput:
+    def forward(self, x: torch.Tensor, t: torch.Tensor, condition: torch.Tensor = None) -> ScoreOutput:
         # x: (B, A, T),  t: (B,) or scalar tensor
+        # condition: optional (B,) or (B, 1) scalar conditioning value, e.g. a
+        # macro state. None reproduces the original unconditional forward exactly.
         if t.ndim == 0:
             t = t.unsqueeze(0).expand(x.shape[0])
 
         t_emb = self.time_embed(t)               # (B, cond_dim)
+        if condition is not None:
+            c = condition.reshape(-1, 1).to(dtype=t_emb.dtype, device=t_emb.device)
+            t_emb = t_emb + self.cond_embed(c)
 
         h = self.input_proj(x.unsqueeze(-1))      # (B, A, T, embed_dim)
         h = (h

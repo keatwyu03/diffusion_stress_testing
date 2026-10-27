@@ -1,0 +1,21 @@
+{
+  "model": "m4",
+  "architecture": {
+    "n_assets": 15,
+    "seq_len": 10,
+    "embed_dim": 256,
+    "n_heads": 16,
+    "n_layers": 8,
+    "cond_dim": 256,
+    "b_min": 0.1,
+    "b_max": 10.0
+  },
+  "conditioning_feature": {
+    "macro_change_window": 10
+  },
+  "scale_factor": 52.05597998285509,
+  "condition_norm_stats": {
+    "mu": 0.9277268266524774,
+    "sigma": 0.736904916175756
+  }
+}
