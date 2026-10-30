@@ -147,11 +147,24 @@ def compute_conditioning_variables(df: pd.DataFrame, macro_col: str, L_ewma: int
     # which equals config.data.seq_len by convention).
     macro_change = (macro_level - macro_level.shift(macro_change_window - 1)).abs()
 
+    # M1-M3 mirror the SAME trailing-window-change design, for structural
+    # parity with M4 (all four condition on "how much did X move over the
+    # trailing macro_change_window days", not "what is X's level right now"),
+    # even though their raw levels are already stationary (train/test z-range
+    # fully overlapping -- unlike the macro level, this parity is a design
+    # choice, not a fix for an OOD problem they don't have).
+    ewma_mean_change = (ewma_mean - ewma_mean.shift(macro_change_window - 1)).abs()
+    ewma_vol_change = (ewma_vol - ewma_vol.shift(macro_change_window - 1)).abs()
+    pca_change = (pca - pca.shift(macro_change_window - 1)).abs()
+
     return pd.DataFrame({
         "ewma_mean": ewma_mean,
         "ewma_vol": ewma_vol,
         "pca": pca,
         "macro_level": macro_level,
+        "ewma_mean_change": ewma_mean_change,
+        "ewma_vol_change": ewma_vol_change,
+        "pca_change": pca_change,
         "macro_change": macro_change,
     }, index=df.index)
 
@@ -160,12 +173,14 @@ def compute_conditioning_variables(df: pd.DataFrame, macro_col: str, L_ewma: int
 # 3. Window construction (common sample set across all 5 models)
 # ─────────────────────────────────────────────────────────────────────────
 
-def build_windows(df: pd.DataFrame, cond_df: pd.DataFrame, seq_len: int):
+def build_windows(df: pd.DataFrame, cond_df: pd.DataFrame, seq_len: int, required_cond_cols=None):
     R = df[TICKERS].to_numpy(dtype=np.float64)
     N = len(df)
     dates = df.index
 
-    valid_cond = cond_df[["ewma_mean", "pca", "macro_change"]].notna().all(axis=1).to_numpy()
+    if required_cond_cols is None:
+        required_cond_cols = ["ewma_mean", "pca", "macro_change"]  # unchanged default
+    valid_cond = cond_df[required_cond_cols].notna().all(axis=1).to_numpy()
 
     starts = [i for i in range(1, N - seq_len + 1) if valid_cond[i - 1]]
     starts = np.array(starts, dtype=np.int64)
@@ -175,7 +190,8 @@ def build_windows(df: pd.DataFrame, cond_df: pd.DataFrame, seq_len: int):
     X = np.stack([R[i:i + seq_len].T for i in starts])  # (Nw, A, T) raw log returns
     cond_row = starts - 1
     cond_vals = {k: cond_df[k].to_numpy()[cond_row]
-                 for k in ["ewma_mean", "ewma_vol", "pca", "macro_level", "macro_change"]}
+                 for k in ["ewma_mean", "ewma_vol", "pca", "macro_level",
+                           "ewma_mean_change", "ewma_vol_change", "pca_change", "macro_change"]}
 
     window_start_dates = dates[starts]
     window_end_dates = dates[starts + seq_len - 1]
@@ -246,10 +262,11 @@ def build_diffusion_model(cfg, seq_len: int) -> DiffusionModel:
     )
 
 
-def get_condition_array(model_key: str, cond_vals: dict):
+def get_condition_array(model_key: str, cond_vals: dict, cond_key_map: dict = None):
     if model_key == "m0":
         return None
-    return cond_vals[COND_KEY[model_key]]
+    cond_key_map = cond_key_map or COND_KEY
+    return cond_vals[cond_key_map[model_key]]
 
 
 def architecture_signature(cfg, seq_len: int, n_assets: int) -> dict:
@@ -263,12 +280,14 @@ def architecture_signature(cfg, seq_len: int, n_assets: int) -> dict:
 
 def conditioning_signature(model_key: str, args) -> dict:
     """Which conditioning-feature knobs affect this model's conditioning
-    series, so a checkpoint trained under a different --ewma-lookback or
-    --pca-lookback is never silently loaded as if it still matched."""
+    series, so a checkpoint trained under a different --ewma-lookback,
+    --pca-lookback, or --m1m3-change setting is never silently loaded as if
+    it still matched."""
+    m1m3_change = bool(getattr(args, "m1m3_change", False))
     if model_key == "m3":
-        return {"pca_lookback": args.pca_lookback}
+        return {"pca_lookback": args.pca_lookback, "m1m3_change": m1m3_change}
     if model_key in ("m1", "m2"):
-        return {"ewma_lookback": args.ewma_lookback}
+        return {"ewma_lookback": args.ewma_lookback, "m1m3_change": m1m3_change}
     if model_key == "m4":
         return {"macro_change_window": args.macro_change_window}
     return {}
@@ -311,11 +330,11 @@ def validate_checkpoint_compatibility(out_dir, model_key, seq_len, n_assets, cfg
     return meta
 
 
-def train_model(model_key, X_train_raw, cond_train_all, scale, args, cfg, out_dir):
+def train_model(model_key, X_train_raw, cond_train_all, scale, args, cfg, out_dir, cond_key_map=None):
     set_seed(args.seed)
     os.makedirs(out_dir, exist_ok=True)
 
-    raw_cond = get_condition_array(model_key, cond_train_all)
+    raw_cond = get_condition_array(model_key, cond_train_all, cond_key_map)
     norm_stats = None
     cond_tensor = None
     if raw_cond is not None:
@@ -364,8 +383,8 @@ def load_model(model_key, seq_len, n_assets, cfg, scale, args, out_dir):
     return dm, meta["condition_norm_stats"], meta["scale_factor"]
 
 
-def sample_model(model_key, dm, norm_stats, scale, cond_test_all, args, out_dir):
-    raw_cond_full = get_condition_array(model_key, cond_test_all)
+def sample_model(model_key, dm, norm_stats, scale, cond_test_all, args, out_dir, cond_key_map=None):
+    raw_cond_full = get_condition_array(model_key, cond_test_all, cond_key_map)
     n_available = len(next(iter(cond_test_all.values())))
     n_test = min(args.n_test_windows, n_available) if args.n_test_windows else n_available
 
@@ -430,16 +449,30 @@ def main():
     parser.add_argument("--seed", type=int, default=cfg.seed)
     parser.add_argument("--output-dir", type=str, default=os.path.join(_HERE, "exp1_results"))
     parser.add_argument("--retrain", action="store_true", help="Force retraining even if a checkpoint exists")
+    parser.add_argument("--m1m3-change", action="store_true",
+                         help="Condition M1-M3 on the trailing-window CHANGE in ewma_mean/ewma_vol/pca "
+                              "(|value[t] - value[t-macro_change_window+1]|), mirroring M4's macro_change "
+                              "design, instead of the raw point value at the conditioning date. Default "
+                              "(off) is the original per-model raw-value conditioning.")
     args = parser.parse_args()
 
     set_seed(args.seed)
+
+    cond_key_map = {
+        "m1": "ewma_mean_change", "m2": "ewma_vol_change", "m3": "pca_change", "m4": "macro_change",
+    } if args.m1m3_change else COND_KEY
+    required_cond_cols = (
+        ["ewma_mean_change", "ewma_vol_change", "pca_change", "macro_change"]
+        if args.m1m3_change else None  # None -> build_windows' unchanged default
+    )
 
     df, macro_col = load_raw_data(cfg)
     cond_df = compute_conditioning_variables(
         df, macro_col, L_ewma=args.ewma_lookback, L_pca=args.pca_lookback, alpha=59 / 61,
         macro_change_window=args.macro_change_window,
     )
-    X, cond_vals, w_start, w_end, c_dates, starts = build_windows(df, cond_df, seq_len=cfg.data.seq_len)
+    X, cond_vals, w_start, w_end, c_dates, starts = build_windows(
+        df, cond_df, seq_len=cfg.data.seq_len, required_cond_cols=required_cond_cols)
     split_idx, test_start_idx = train_test_split_idx(starts, w_end, cfg.data.seq_len, cfg)
     print(f"Train/test split: {split_idx} train windows, {len(X) - test_start_idx} test windows "
           f"(test_days={cfg.data.test_days}, train_end_date={cfg.data.train_end_date}, "
@@ -482,7 +515,8 @@ def main():
         seq_len, n_assets = X_train.shape[-1], X_train.shape[1]
         if args.mode in ("train", "both"):
             if args.retrain or not os.path.exists(ckpt_path):
-                dm, norm_stats = train_model(model_key, X_train, cond_train, scale, args, cfg, out_dir)
+                dm, norm_stats = train_model(model_key, X_train, cond_train, scale, args, cfg, out_dir,
+                                              cond_key_map=cond_key_map)
             else:
                 print(f"Found existing checkpoint {ckpt_path}, validating and loading...")
                 dm, norm_stats, scale = load_model(model_key, seq_len, n_assets, cfg, scale, args, out_dir)
@@ -490,7 +524,7 @@ def main():
             dm, norm_stats, scale = load_model(model_key, seq_len, n_assets, cfg, scale, args, out_dir)
 
         if args.mode in ("sample", "both"):
-            sample_model(model_key, dm, norm_stats, scale, cond_test, args, out_dir)
+            sample_model(model_key, dm, norm_stats, scale, cond_test, args, out_dir, cond_key_map=cond_key_map)
 
     print("\nDone.")
 

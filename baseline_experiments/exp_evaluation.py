@@ -57,8 +57,12 @@ def load_shared_test_data(experiment_dir):
     return data["X_test"]  # (N_test, A, T) raw log returns
 
 
-def load_generated(experiment_dir, model_key):
-    out_dir = os.path.join(experiment_dir, MODEL_DIRNAMES[model_key])
+def load_generated(experiment_dir, model_key, model_dirnames=None):
+    # Defaults to the module constant -- Experiment 1's existing calls (no
+    # new argument) stay byte-identical. Experiment 2 passes its own S0-S4
+    # dirname mapping explicitly.
+    model_dirnames = model_dirnames or MODEL_DIRNAMES
+    out_dir = os.path.join(experiment_dir, model_dirnames[model_key])
     gen_path = os.path.join(out_dir, "generated_samples.npy")
     if not os.path.exists(gen_path):
         return None, out_dir
@@ -114,9 +118,35 @@ def portfolio_log_returns(window: np.ndarray) -> np.ndarray:
     return window.mean(axis=0)
 
 
-def portfolio_variance(window: np.ndarray) -> float:
+def portfolio_variance_legacy(window: np.ndarray) -> float:
+    """Original implementation -- CONFIRMED (Experiment 2 review) inconsistent
+    with portfolio_wealth_path (and therefore with max_drawdown/
+    portfolio_cum_return): this is Var(mean_a log_r[a,t]), the variance of
+    the ARITHMETIC MEAN of each asset's log return, while
+    portfolio_wealth_path builds the TRUE daily-rebalanced wealth path from
+    mean_a(exp(log_r[a,t])-1) -- the log-return of the MEAN simple return.
+    By Jensen's inequality these are different series whenever assets'
+    daily returns differ (always, in practice). Kept only so already-computed
+    Experiment 1 tables stay reproducible under the definition they were
+    actually computed with -- use portfolio_variance_v2 for anything new,
+    and recompute old tables under v2 before comparing them to new ones."""
     port_r = portfolio_log_returns(window)
     return float(np.var(port_r, ddof=1))
+
+
+def portfolio_variance_v2(window: np.ndarray) -> float:
+    """Corrected: variance of the log-returns of the SAME daily-rebalanced
+    wealth path that max_drawdown/portfolio_cum_return already use (via
+    portfolio_wealth_path), instead of an independently (and inconsistently)
+    defined series."""
+    wealth = portfolio_wealth_path(window)
+    port_log_r = np.diff(np.log(wealth))
+    return float(np.var(port_log_r, ddof=1))
+
+
+# Default unchanged -- every existing call site (Experiment 1's own CLI,
+# with no new arguments) stays byte-identical in behavior.
+portfolio_variance = portfolio_variance_legacy
 
 
 def portfolio_wealth_path(window: np.ndarray) -> np.ndarray:
@@ -144,11 +174,15 @@ def pinball_loss(y: float, q_hat: float, q: float) -> float:
     return q * (y - q_hat) if y >= q_hat else (1 - q) * (q_hat - y)
 
 
-def group_b_metrics(X_test: np.ndarray, gen: np.ndarray, quantiles=QUANTILES):
+def group_b_metrics(X_test: np.ndarray, gen: np.ndarray, quantiles=QUANTILES, variance_fn=None):
+    # variance_fn defaults to the legacy function -- Experiment 1's existing
+    # calls (no new argument) stay byte-identical. Experiment 2 passes
+    # portfolio_variance_v2 explicitly.
+    variance_fn = variance_fn or portfolio_variance
     n_test = min(len(X_test), len(gen))
 
-    var_real = np.array([portfolio_variance(X_test[i]) for i in range(n_test)])
-    var_gen = np.array([portfolio_variance(gen[i, k]) for i in range(n_test) for k in range(gen.shape[1])])
+    var_real = np.array([variance_fn(X_test[i]) for i in range(n_test)])
+    var_gen = np.array([variance_fn(gen[i, k]) for i in range(n_test) for k in range(gen.shape[1])])
 
     mdd_real = np.array([max_drawdown(X_test[i]) for i in range(n_test)])
     mdd_gen = np.array([max_drawdown(gen[i, k]) for i in range(n_test) for k in range(gen.shape[1])])
@@ -177,8 +211,14 @@ def group_b_metrics(X_test: np.ndarray, gen: np.ndarray, quantiles=QUANTILES):
 # Orchestration
 # ─────────────────────────────────────────────────────────────────────────
 
-def evaluate_model(experiment_dir, model_key, X_test, quantiles):
-    gen, out_dir = load_generated(experiment_dir, model_key)
+def evaluate_model(experiment_dir, model_key, X_test, quantiles, model_dirnames=None, model_labels=None,
+                    variance_fn=None):
+    # Both default to the module constants -- Experiment 1's existing calls
+    # (no new arguments) stay byte-identical. Experiment 2 passes its own
+    # S0-S4 dirname/label mappings and portfolio_variance_v2 explicitly.
+    model_dirnames = model_dirnames or MODEL_DIRNAMES
+    model_labels = model_labels or MODEL_LABELS
+    gen, out_dir = load_generated(experiment_dir, model_key, model_dirnames)
     if gen is None:
         print(f"[skip] {model_key}: no generated_samples.npy in {out_dir}")
         return None
@@ -189,10 +229,10 @@ def evaluate_model(experiment_dir, model_key, X_test, quantiles):
 
     es = mean_energy_score(X_test, gen)
     w1 = mean_wasserstein_marginals(X_test, gen)
-    b = group_b_metrics(X_test, gen, quantiles)
+    b = group_b_metrics(X_test, gen, quantiles, variance_fn=variance_fn)
 
     row = {
-        "model": MODEL_LABELS[model_key],
+        "model": model_labels[model_key],
         "energy_score": es,
         "wasserstein1_marginal": w1,
         "portfolio_variance_w1": b["E_variance_w1"],
