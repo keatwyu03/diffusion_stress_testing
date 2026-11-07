@@ -23,6 +23,17 @@ Conditioning feature: the full causal window of each method's own raw daily
 state (seq_len values ending event_lag_gap + 1 rows before the return window
 starts) -- same conditioner and helper as main_exp1.py's M1-M4.
 
+Diffusion TARGETS: each method k trains on its OWN NN-standardized residual
+windows z^(k) = (r - mu_k(v^(k))) / sigma_k(v^(k)) (standardize_own_macro.py,
+production nn_standardize.run_ticker fit on that method's own daily series).
+S1-S4 never use S0's residuals, and there is no raw-return fallback: a missing
+standardizer is an error. Generated residuals are mapped back to log returns
+with the same method's mu/sigma on the window's own dates:
+    r = mu_k(v_t) + sigma_k(v_t) * z
+generated_samples.npy holds those returns (generated_residuals.npy the raw
+model output), and eval_data.npz holds the real windows in both units plus the
+mu/sigma used, dates and conditioning values.
+
 Evaluation is IN-SAMPLE: train on the train windows, then sample/score on an
 evenly spaced subset of those same train windows (--n-eval-windows, same rule
 as main_exp1.py), saved to <method>/diffusion_causal/eval_data.npz.
@@ -102,6 +113,29 @@ def build_X(df: pd.DataFrame, starts: np.ndarray, seq_len: int) -> np.ndarray:
     return np.stack([R[i:i + seq_len].T for i in starts])  # (Nw, A, T)
 
 
+def load_own_residual_targets(methods, manifest, std_dir: str) -> dict:
+    """Per method: residual windows Z (Nw, A, T) plus the mu/sigma windows that
+    invert them, on the manifest calendar. Checks mu + sigma * Z == raw returns."""
+    idx, starts, T = manifest["df"].index, manifest["starts"], manifest["seq_len"]
+    X = build_X(manifest["df"], starts, T)
+    out = {}
+    for m in methods:
+        d = os.path.join(std_dir, common.METHOD_DIRNAMES[m])
+        if not os.path.exists(os.path.join(d, "residuals.csv")):
+            raise FileNotFoundError(f"{d}/residuals.csv missing -- run standardize_own_macro.py --method {m} first "
+                                    f"(no raw-return fallback).")
+        tabs = {k: pd.read_csv(os.path.join(d, f"{k}.csv"), parse_dates=["Date"]).set_index("Date")
+                   .reindex(idx)[common.TICKERS].to_numpy(np.float64) for k in ("residuals", "mu", "sigma")}
+        win = {k: np.stack([v[i:i + T].T for i in starts]) for k, v in tabs.items()}
+        ok = np.isfinite(win["residuals"]).all(axis=(1, 2))
+        err = float(np.max(np.abs(win["mu"][ok] + win["sigma"][ok] * win["residuals"][ok] - X[ok])))
+        if err > 1e-5:
+            raise RuntimeError(f"{m}: mu + sigma * z != raw returns (max err {err})")
+        out[m] = {"Z": win["residuals"], "MU": win["mu"], "SG": win["sigma"], "valid": ok, "dir": d, "inverse_err": err}
+        print(f"  {m}: own residual targets from {d} ({ok.sum()} complete windows, inverse check {err:.1e})")
+    return out
+
+
 def train_positions(manifest, mask: np.ndarray, cfg) -> np.ndarray:
     """Manifest positions of the train windows. Same rule as main_exp1.py: the
     train/test cutoff is applied to the common valid pool (not the raw
@@ -112,12 +146,10 @@ def train_positions(manifest, mask: np.ndarray, cfg) -> np.ndarray:
     return valid_pos[:split_idx]
 
 
-def train_one(method: str, manifest, cond_values: np.ndarray, mask: np.ndarray, cfg, args, out_dir):
+def train_one(method: str, manifest, cond_values: np.ndarray, mask: np.ndarray, cfg, args, out_dir, targets):
     set_seed(args.seed)  # same init + shuffle seed for every method (as main_exp1.train_model)
-    X = build_X(manifest["df"], manifest["starts"], manifest["seq_len"])
-
     pos = train_positions(manifest, mask, cfg)
-    X_train_raw = X[pos]
+    X_train_raw = targets["Z"][pos]  # this method's OWN NN residuals, never raw returns or S0's residuals
     cond_train = cond_values[pos]
 
     scale = _m1.fit_scale_factor(X_train_raw)
@@ -145,6 +177,9 @@ def train_one(method: str, manifest, cond_values: np.ndarray, mask: np.ndarray, 
                           "event_causal": cfg.data.event_causal, "event_lag_gap": cfg.data.event_lag_gap,
                           "scale_factor": scale, "cond_mu": c_mu, "cond_sigma": c_sigma,
                           "n_train_windows_used": int(len(pos)), "block_sampling": cfg.diffusion.block_sampling},
+        "target": {"type": "own NN-standardized residuals z^(k)", "standardizer_dir": targets["dir"],
+                   "inverse": "r = mu_k(v_t) + sigma_k(v_t) * z on the window's own dates",
+                   "scale_factor_applies_to": "residuals (divide generated output by it before the inverse)"},
     }
     with open(os.path.join(out_dir, "checkpoint_meta.json"), "w") as f:
         json.dump(meta, f, indent=2)
@@ -158,11 +193,13 @@ def in_sample_eval_windows(manifest, mask: np.ndarray, cfg, n_eval: int) -> np.n
     return train_pos[eval_window_idx(len(train_pos), n_eval)]
 
 
-def sample_one(method: str, manifest, cond_values: np.ndarray, mask: np.ndarray, dm, scale, c_mu, c_sigma, cfg, args, out_dir):
+def sample_one(method: str, manifest, cond_values: np.ndarray, mask: np.ndarray, dm, scale, c_mu, c_sigma, cfg, args, out_dir,
+               targets):
     X = build_X(manifest["df"], manifest["starts"], manifest["seq_len"])
 
     pos = in_sample_eval_windows(manifest, mask, cfg, args.n_eval_windows)
     X_test_raw, cond_test = X[pos], cond_values[pos]
+    Z_eval, MU_eval, SG_eval = targets["Z"][pos], targets["MU"][pos], targets["SG"][pos]
     n_test = len(pos)
 
     K = args.n_samples
@@ -177,17 +214,22 @@ def sample_one(method: str, manifest, cond_values: np.ndarray, mask: np.ndarray,
         samp = dm.sample(batch_size=end - start, num_steps=args.num_steps, stoch=1.0,
                           condition=cond_flat[start:end], seed=args.seed + start)
         flat[start:end] = samp.detach().cpu().numpy()
-    gen = (flat.reshape(n_test, K, A, T) / scale).astype(np.float32)
+    gen_z = (flat.reshape(n_test, K, A, T) / scale).astype(np.float32)          # generated residuals z^(k)
+    gen = (MU_eval[:, None] + SG_eval[:, None] * gen_z).astype(np.float32)        # inverse -> daily log returns
 
     n_nan = int(np.isnan(gen).sum() + np.isinf(gen).sum())
     if n_nan:
         raise ValueError(f"{method}: {n_nan} NaN/Inf in generated samples")
 
     np.save(os.path.join(out_dir, "generated_samples.npy"), gen)
-    np.savez(os.path.join(out_dir, "eval_data.npz"), X_eval=X_test_raw, cond_eval=cond_test, eval_split="train",
-             manifest_pos=pos, window_start_dates=manifest["window_start_dates"][pos].strftime("%Y-%m-%d").to_numpy(dtype=str),
-             window_end_dates=manifest["window_end_dates"][pos].strftime("%Y-%m-%d").to_numpy(dtype=str), K=K)
-    print(f"  {method}: saved generated samples {gen.shape} -> {out_dir}/generated_samples.npy")
+    np.save(os.path.join(out_dir, "generated_residuals.npy"), gen_z)
+    np.savez(os.path.join(out_dir, "eval_data.npz"), X_eval=X_test_raw, Z_eval=Z_eval, mu_eval=MU_eval, sigma_eval=SG_eval,
+             cond_eval=cond_test, eval_split="train", manifest_pos=pos,
+             window_start_dates=manifest["window_start_dates"][pos].strftime("%Y-%m-%d").to_numpy(dtype=str),
+             window_end_dates=manifest["window_end_dates"][pos].strftime("%Y-%m-%d").to_numpy(dtype=str), K=K,
+             units="X_eval / generated_samples.npy: daily log returns; Z_eval / generated_residuals.npy: own NN residuals",
+             standardizer_dir=targets["dir"], scale_factor=scale)
+    print(f"  {method}: saved generated samples {gen.shape} (returns) + residuals -> {out_dir}")
 
 
 def main():
@@ -212,6 +254,9 @@ def main():
                          help="Override the experiment's <method>/daily_state.csv folder (then --out-dir is required).")
     parser.add_argument("--out-dir", type=str, default=None,
                          help="Results go to <out-dir>/<method>/diffusion_causal/. Default: from --experiment.")
+    parser.add_argument("--standardization-dir", type=str, default=None,
+                         help="Folder with <method>/residuals.csv, mu.csv, sigma.csv (standardize_own_macro.py). "
+                              "Default: from --experiment.")
     args = parser.parse_args()
 
     paths = experiment_paths(args.experiment)
@@ -220,6 +265,7 @@ def main():
                          "results don't land in the wrong experiment folder.")
     args.states_dir = args.states_dir or paths["states_dir"]
     args.out_dir = args.out_dir or paths["macro_embed"]
+    args.standardization_dir = args.standardization_dir or paths["standardization_dir"]
 
     cfg = common.get_default_config()
     args.epochs = args.epochs or cfg.diffusion.n_epochs
@@ -238,8 +284,14 @@ def main():
     print(f"States from {args.states_dir}; results to {args.out_dir}/<method>/{subdir}")
     all_cond = {m: per_window_cond_values(build_cond_feature(m, manifest, seq_len, args.states_dir), manifest,
                                           cfg.data.event_causal, cfg.data.event_lag_gap) for m in methods}
+    print(f"Diffusion targets: each method's own NN residuals from {args.standardization_dir}")
+    targets = load_own_residual_targets(methods, manifest, args.standardization_dir)
     mask = common_valid_window_mask(all_cond)
-    print(f"Common valid-window pool across {methods}: {mask.sum()}/{len(mask)} windows")
+    n_cond = int(mask.sum())
+    for m in methods:
+        mask &= targets[m]["valid"]  # every return day of the window has a residual, for every method
+    print(f"Common valid-window pool across {methods}: {mask.sum()}/{len(mask)} windows "
+          f"({n_cond} with a complete conditioner, then restricted to complete residual targets)")
 
     for m in methods:
         diag = conditioning_diagnostics(all_cond[m], mask)
@@ -256,7 +308,7 @@ def main():
         ckpt_path = os.path.join(out_dir, "checkpoint.pt")
 
         if args.mode in ("train", "both"):
-            dm, scale, c_mu, c_sigma = train_one(m, manifest, all_cond[m], mask, cfg, args, out_dir)
+            dm, scale, c_mu, c_sigma = train_one(m, manifest, all_cond[m], mask, cfg, args, out_dir, targets[m])
         else:
             with open(os.path.join(out_dir, "checkpoint_meta.json")) as f:
                 meta = json.load(f)
@@ -266,7 +318,7 @@ def main():
             scale, c_mu, c_sigma = meta["conditioning"]["scale_factor"], meta["conditioning"]["cond_mu"], meta["conditioning"]["cond_sigma"]
 
         if args.mode in ("sample", "both"):
-            sample_one(m, manifest, all_cond[m], mask, dm, scale, c_mu, c_sigma, cfg, args, out_dir)
+            sample_one(m, manifest, all_cond[m], mask, dm, scale, c_mu, c_sigma, cfg, args, out_dir, targets[m])
 
     print("\nDone.")
 

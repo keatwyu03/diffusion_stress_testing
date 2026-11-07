@@ -203,15 +203,24 @@ def main():
                          help="Use the CPI-only growth/inflation var selection (also flipped in config.py, "
                               "same backup/restore pattern as event_causal) and swap in the _cpi-suffixed "
                               "per-channel CSVs instead of the default (Full macro set) ones.")
+    parser.add_argument("--own-std", action="store_true",
+                         help="Macro embedding with PER-METHOD NN residuals: swap in data_for_diffusion_<channel>_ownstd.csv "
+                              "(assets standardized on that method's own state), train a FRESH base diffusion model for "
+                              "every channel (data differ per channel) and keep each one in its channel folder.")
+    parser.add_argument("--standardization-dir", default=None,
+                         help="--own-std: folder with <method>/mu.csv, sigma.csv (for the inverse transform artifacts)")
     args = parser.parse_args()
+    if args.own_std and (args.cpi_only or not args.standardization_dir):
+        raise ValueError("--own-std needs --standardization-dir and is Full-only here (no --cpi-only).")
     channels = [c.strip() for c in args.channels.split(",") if c.strip()]
     for c in channels:
         if c not in ALL_CHANNELS:
             raise ValueError(f"Unknown channel {c!r}, expected one of {ALL_CHANNELS}")
 
     causal = args.causal == "true"
-    csv_suffix = "_cpi" if args.cpi_only else ""
-    results_root = f"doobh_results_exp2_{'causal' if causal else 'noncausal'}{'_cpi' if args.cpi_only else ''}"
+    csv_suffix = "_cpi" if args.cpi_only else ("_ownstd" if args.own_std else "")
+    results_root = (f"doobh_results_exp2_{'causal' if causal else 'noncausal'}{'_cpi' if args.cpi_only else ''}"
+                    f"{'_ownstd' if args.own_std else ''}")
 
     if causal:
         atexit.register(restore_config)
@@ -241,13 +250,19 @@ def main():
             os.path.join(_ROOT, "results", "portfolio_comparison_insample.png"),
             os.path.join(_ROOT, "results", "portfolio_comparison_outsample.png"),
         ]
+        if args.own_std:
+            # each channel trains on its own residuals -> its own base model; move it out after the channel
+            # so it is kept with that channel and can never be reused by the next one
+            movable += [score_ckpt, os.path.join(_ROOT, "ckpt_new", f"score_losses_{run_tag}.csv")]
+            if os.path.exists(score_ckpt):
+                raise RuntimeError(f"{score_ckpt} already exists -- refusing to reuse a base model in --own-std mode.")
         ckpt_exists = os.path.exists(score_ckpt)
         print(f"Score checkpoint for this run: {score_ckpt} "
               f"({'EXISTS -- will be reused' if ckpt_exists else 'does NOT exist -- training fresh on first channel'})")
 
         for i, channel in enumerate(channels):
-            run_channel(channel, movable, score_ckpt, results_root, force_retrain=(not ckpt_exists and i == 0),
-                        csv_suffix=csv_suffix)
+            run_channel(channel, movable, score_ckpt, results_root,
+                        force_retrain=True if args.own_std else (not ckpt_exists and i == 0), csv_suffix=csv_suffix)
 
         print(f"\n{'=' * 70}\nEvaluation\n{'=' * 70}")
         for channel in channels:
@@ -257,6 +272,14 @@ def main():
             if csv_suffix:
                 eval_cmd += ["--csv-suffix", csv_suffix]
             subprocess.run(eval_cmd, cwd=_HERE, check=False)
+
+        print(f"\n{'=' * 70}\nSaving rare-event artifacts (generated + real windows, dates, inverse-transform inputs)\n{'=' * 70}")
+        for channel in channels:
+            art_cmd = [sys.executable, "-u", "save_rare_event_artifacts.py", "--group", "embedding",
+                       "--channel", channel, "--results-root", results_root, "--csv-suffix", csv_suffix]
+            if args.own_std:
+                art_cmd += ["--standardization-dir", args.standardization_dir]
+                subprocess.run(art_cmd, cwd=_HERE, check=False)
 
         print(f"\nAll done (causal={causal}). Score checkpoint: {score_ckpt}")
         print(f"Per-channel results under: {os.path.join(_EXP2_DIR, results_root)}/<channel>/")

@@ -218,6 +218,12 @@ def main():
                              "--channel", channel, "--results-root", "doobh_results_causal"],
                             cwd=_HERE, check=False)
 
+        # still inside event_causal=True: the artifacts rebuild the same causal event mask
+        print(f"\n{'=' * 70}\nSaving rare-event artifacts (event_causal=True, still active)\n{'=' * 70}")
+        for channel in (channels if args.channel else CHANNELS):
+            subprocess.run([sys.executable, "-u", "save_rare_event_artifacts.py", "--group", "inclusion",
+                            "--channel", channel, "--results-root", "doobh_results_causal"], cwd=_HERE, check=False)
+
         print(f"\nAll done. Score checkpoint: {score_ckpt}")
         print(f"Per-channel results under: {RESULTS_ROOT}/<channel>/")
     finally:

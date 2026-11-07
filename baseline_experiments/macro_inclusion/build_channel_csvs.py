@@ -19,6 +19,12 @@ describe the resulting label (the change in that variable).
 data/data_processor.py picks the conditioning column positionally
 (df.columns[0]), so main.py and data_processor.py need no changes.
 
+--raw-returns puts RAW daily log returns (explore/macro_data_new.csv) in the
+15 asset columns instead of the production NN-standardized residuals, so the
+rare-event diffusion targets are raw returns for every M1-M4 channel (macro
+inclusion must not depend on S0-standardized residuals). Calendar, column 0
+and its NaN mask are unchanged.
+
 Usage:
     python build_channel_csvs.py
 """
@@ -52,6 +58,9 @@ def main():
                          help="Input with the macro state in column 0 (default explore/macro_data_new.csv); "
                               "e.g. explore/macro_data_new_cpi.csv for CPI-only.")
     parser.add_argument("--suffix", default="", help="Output filename suffix, e.g. _cpi")
+    parser.add_argument("--raw-returns", action="store_true",
+                         help="Asset columns = raw daily log returns instead of the production residuals.")
+    parser.add_argument("--out-dir", default=OUT_DIR, help="Where to write the CSVs (default explore/standardization_results)")
     args = parser.parse_args()
     cfg = m1.get_default_config()
 
@@ -62,6 +71,14 @@ def main():
 
     prod_df = pd.read_csv(PROD_CSV, parse_dates=["Date"]).set_index("Date")
     asset_cols = list(prod_df.columns[1:])
+    if args.raw_returns:
+        # read the CSV directly (load_raw_data cuts at config end_date; DataProcessor applies that cut itself)
+        src = args.macro_csv or os.path.join(_ROOT, "explore", "macro_data_new.csv")
+        raw = pd.read_csv(src, parse_dates=["Date"]).set_index("Date")[asset_cols].reindex(prod_df.index)
+        if raw.isna().any().any():
+            raise ValueError("raw returns missing on some production-calendar dates")
+        prod_df[asset_cols] = raw
+        print(f"Asset columns = RAW daily log returns from {args.macro_csv or 'explore/macro_data_new.csv'}")
     print(f"Production CSV: {PROD_CSV}")
     print(f"  {prod_df.shape[0]} rows, date range {prod_df.index.min()} -> {prod_df.index.max()}")
 
@@ -83,7 +100,7 @@ def main():
 
         out_df = prod_df[asset_cols].copy()
         out_df.insert(0, channel, series.to_numpy())
-        out_path = os.path.join(OUT_DIR, f"data_for_diffusion_{channel}{args.suffix}.csv")
+        out_path = os.path.join(args.out_dir, f"data_for_diffusion_{channel}{args.suffix}.csv")
         out_df.to_csv(out_path, index_label="Date")
         print(f"  Wrote {out_path} ({out_df.shape[0]} rows, {out_df.shape[1]} cols)")
 

@@ -213,6 +213,11 @@ def main():
                          "--channel", channel, "--results-root", "doobh_results"],
                         cwd=_HERE, check=False)
 
+    print(f"\n{'=' * 70}\nSaving rare-event artifacts (generated + real windows, dates, inverse-transform inputs)\n{'=' * 70}")
+    for channel in channels:
+        subprocess.run([sys.executable, "-u", "save_rare_event_artifacts.py", "--group", "inclusion",
+                        "--channel", channel, "--results-root", "doobh_results"], cwd=_HERE, check=False)
+
     print(f"\nAll done. Shared score checkpoint: {SCORE_CKPT}")
     print(f"Per-channel results under: {RESULTS_ROOT}/<channel>/")
 

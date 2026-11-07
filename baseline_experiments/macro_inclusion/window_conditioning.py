@@ -39,6 +39,8 @@ def experiment_paths(name: str) -> dict:
         "states_dir": os.path.join(_BASELINE, e["states_dir"]),
         "macro_inclusion": os.path.join(causal_dir, "macro_inclusion", "conditional_only"),
         "macro_embed": os.path.join(causal_dir, "macro_embed", "conditional_only"),
+        # per-method NN standardizers / residuals (standardize_own_macro.py)
+        "standardization_dir": os.path.join(_BASELINE, e["dir"], "extras", "standardization_own"),
     }
 
 
