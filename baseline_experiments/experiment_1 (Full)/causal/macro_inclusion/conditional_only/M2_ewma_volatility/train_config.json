@@ -1,0 +1,21 @@
+{
+  "model": "m2",
+  "mode": "both",
+  "epochs": 20,
+  "batch_size": 75,
+  "num_steps": 500,
+  "n_samples": 50,
+  "n_eval_windows": 1200,
+  "ewma_lookback": 10,
+  "pca_lookback": 10,
+  "macro_change_window": 10,
+  "experiment": "full",
+  "causal": "true",
+  "macro_csv": "/scr/kadenwu/Conditional_diffusion/explore/macro_data_new.csv",
+  "seed": 2025,
+  "output_dir": "/scr/kadenwu/Conditional_diffusion/baseline_experiments/experiment_1 (Full)/causal/macro_inclusion/conditional_only",
+  "retrain": false,
+  "event_causal": true,
+  "event_lag_gap": 1,
+  "seq_len": 10
+}

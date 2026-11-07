@@ -343,6 +343,9 @@ def validate_checkpoint_compatibility(out_dir, model_key, seq_len, n_assets, cfg
         if meta.get("conditioning_feature", {}).get(k) != v:
             mismatches.append(f"conditioning_feature.{k}: saved={meta.get('conditioning_feature', {}).get(k)!r} current={v!r}")
 
+    # main_exp1 has no residual path: every checkpoint it ever wrote is raw-return trained (older metas lack the field)
+    if meta.get("target", "raw daily log returns") != "raw daily log returns":
+        mismatches.append(f"target: saved={meta.get('target')!r} current='raw daily log returns'")
     saved_scale = meta.get("scale_factor")
     if saved_scale is None or abs(saved_scale - scale) > 1e-6 * max(1.0, abs(scale)):
         mismatches.append(f"scale_factor: saved={saved_scale!r} current={scale!r}")
@@ -396,6 +399,7 @@ def train_model(model_key, X_train_raw, cond_train_all, scale, args, cfg, out_di
         "conditioning_feature": conditioning_signature(model_key, args),
         "scale_factor": scale,
         "condition_norm_stats": norm_stats,
+        "target": "raw daily log returns",
         "block_sampling": cfg.diffusion.block_sampling,
         "n_train_windows": int(len(X_train_raw)),
     }

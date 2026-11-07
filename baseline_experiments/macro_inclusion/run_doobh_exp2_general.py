@@ -34,6 +34,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(os.path.dirname(_HERE))
@@ -148,7 +149,7 @@ def clear_stale_outputs(movable, results_root):
             print(f"[warn] found pre-existing {path}, moved to {dest} before starting fresh run")
 
 
-def move_outputs(channel, movable, results_root):
+def move_outputs(channel, movable, results_root, extra_meta=None):
     out_dir = os.path.join(_EXP2_DIR, results_root, channel)
     os.makedirs(out_dir, exist_ok=True)
     for path in movable:
@@ -163,10 +164,14 @@ def move_outputs(channel, movable, results_root):
                     "note": "retrospective methods (S1/S3) were used as a Doob-h guidance channel "
                             "as explicitly requested; their own state construction needs a future "
                             "monthly anchor -- disclosed, not a bug." if RETROSPECTIVE[channel] else
-                            "causal in its own state construction."}, f, indent=2)
+                            "causal in its own state construction.", **(extra_meta or {})}, f, indent=2)
 
 
 def run_channel(channel, movable, score_ckpt, results_root, force_retrain=False, csv_suffix=""):
+    """Returns True only if generation produced samples (and, in --own-std mode, the base model was
+    trained during THIS channel on THIS channel's residuals). main.py's own exit code is not usable
+    (the known STEP 6 portfolio bug always exits 1)."""
+    t0 = time.time()
     print(f"\n{'=' * 70}\nChannel: {channel} (retrain={force_retrain}, csv_suffix={csv_suffix!r})\n{'=' * 70}")
     clear_stale_outputs(movable, results_root)
     swap_in_channel_csv(channel, csv_suffix=csv_suffix)
@@ -182,13 +187,30 @@ def run_channel(channel, movable, score_ckpt, results_root, force_retrain=False,
         print(f"[warn] main.py exited {result.returncode} for channel '{channel}' "
               f"(expected: the known STEP 6 portfolio-analysis bug). Checking generation output...")
 
-    move_outputs(channel, movable, results_root)
-    gen_path = os.path.join(_EXP2_DIR, results_root, channel, "generated_samples_test.pt")
-    if os.path.exists(gen_path):
-        print(f"Channel '{channel}' done -> {os.path.join(_EXP2_DIR, results_root, channel)}")
+    out_dir = os.path.join(_EXP2_DIR, results_root, channel)
+    move_outputs(channel, movable, results_root)   # moves this channel's base model (own-std mode) into out_dir
+    base = os.path.join(out_dir, os.path.basename(score_ckpt))
+    base_fresh = os.path.exists(base) and os.path.getmtime(base) >= t0
+    meta_path = os.path.join(out_dir, "channel_meta.json")
+    meta = json.load(open(meta_path))
+    meta.update({"diffusion_target_csv": f"data_for_diffusion_{channel}{csv_suffix}.csv",
+                 "diffusion_target": ("own NN residuals of this method" if csv_suffix == "_ownstd" else
+                                      "production residuals (legacy)"),
+                 "base_model": base if os.path.exists(base) else score_ckpt,
+                 "base_model_trained_this_channel": bool(base_fresh) if csv_suffix == "_ownstd" else None})
+    with open(meta_path, "w") as f:
+        json.dump(meta, f, indent=2)
+    gen_path = os.path.join(out_dir, "generated_samples_test.pt")
+    ok = os.path.exists(gen_path) and os.path.getmtime(gen_path) >= t0
+    if csv_suffix == "_ownstd" and not base_fresh:
+        print(f"[error] Channel '{channel}': base diffusion model was NOT trained during this channel -- refusing it.")
+        ok = False
+    if ok:
+        print(f"Channel '{channel}' done -> {out_dir}")
     else:
-        print(f"[error] Channel '{channel}' did NOT produce generated_samples_test.pt -- a real failure.")
+        print(f"[error] Channel '{channel}' did NOT produce fresh generated samples -- a real failure.")
     print(f"(score checkpoint: {score_ckpt}, {'reused/cached' if os.path.exists(score_ckpt) else 'will be trained fresh'})")
+    return ok
 
 
 def main():
@@ -260,9 +282,11 @@ def main():
         print(f"Score checkpoint for this run: {score_ckpt} "
               f"({'EXISTS -- will be reused' if ckpt_exists else 'does NOT exist -- training fresh on first channel'})")
 
+        failures = []
         for i, channel in enumerate(channels):
-            run_channel(channel, movable, score_ckpt, results_root,
-                        force_retrain=True if args.own_std else (not ckpt_exists and i == 0), csv_suffix=csv_suffix)
+            if not run_channel(channel, movable, score_ckpt, results_root,
+                               force_retrain=True if args.own_std else (not ckpt_exists and i == 0), csv_suffix=csv_suffix):
+                failures.append(f"{channel}: training/generation")
 
         print(f"\n{'=' * 70}\nEvaluation\n{'=' * 70}")
         for channel in channels:
@@ -271,7 +295,8 @@ def main():
                         "--channel", channel, "--results-root", results_root]
             if csv_suffix:
                 eval_cmd += ["--csv-suffix", csv_suffix]
-            subprocess.run(eval_cmd, cwd=_HERE, check=False)
+            if subprocess.run(eval_cmd, cwd=_HERE, check=False).returncode != 0:
+                failures.append(f"{channel}: evaluation")
 
         print(f"\n{'=' * 70}\nSaving rare-event artifacts (generated + real windows, dates, inverse-transform inputs)\n{'=' * 70}")
         for channel in channels:
@@ -279,13 +304,17 @@ def main():
                        "--channel", channel, "--results-root", results_root, "--csv-suffix", csv_suffix]
             if args.own_std:
                 art_cmd += ["--standardization-dir", args.standardization_dir]
-                subprocess.run(art_cmd, cwd=_HERE, check=False)
+                if subprocess.run(art_cmd, cwd=_HERE, check=False).returncode != 0:
+                    failures.append(f"{channel}: artifacts")
 
         print(f"\nAll done (causal={causal}). Score checkpoint: {score_ckpt}")
         print(f"Per-channel results under: {os.path.join(_EXP2_DIR, results_root)}/<channel>/")
     finally:
         if causal or args.cpi_only:
             restore_config()
+    if failures:
+        print(f"[FAILED] {failures}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

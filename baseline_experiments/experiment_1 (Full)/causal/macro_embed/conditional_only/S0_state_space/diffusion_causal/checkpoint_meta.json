@@ -1,0 +1,30 @@
+{
+  "method": "s0",
+  "architecture": {
+    "n_assets": 15,
+    "seq_len": 10,
+    "embed_dim": 256,
+    "n_heads": 16,
+    "n_layers": 8,
+    "cond_dim": 256,
+    "b_min": 0.1,
+    "b_max": 10.0
+  },
+  "conditioning": {
+    "transform": "causal_value_window (raw daily_state, seq_len values)",
+    "seq_len": 10,
+    "event_causal": true,
+    "event_lag_gap": 1,
+    "scale_factor": 1.015487708515982,
+    "cond_mu": 200.23699216392717,
+    "cond_sigma": 93.19355482604354,
+    "n_train_windows_used": 3519,
+    "block_sampling": true
+  },
+  "target": {
+    "type": "own NN-standardized residuals z^(k)",
+    "standardizer_dir": "/scr/kadenwu/Conditional_diffusion/baseline_experiments/experiment_1 (Full)/extras/standardization_own/S0_state_space",
+    "inverse": "r = mu_k(v_t) + sigma_k(v_t) * z on the window's own dates",
+    "scale_factor_applies_to": "residuals (divide generated output by it before the inverse)"
+  }
+}

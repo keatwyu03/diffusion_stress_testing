@@ -217,6 +217,8 @@ def main():
     for channel in channels:
         subprocess.run([sys.executable, "-u", "save_rare_event_artifacts.py", "--group", "inclusion",
                         "--channel", channel, "--results-root", "doobh_results"], cwd=_HERE, check=False)
+        if not os.path.exists(os.path.join(RESULTS_ROOT, channel, "rare_event_artifacts.npz")):
+            sys.exit(f"[FAILED] {channel}: no generated samples / artifacts")
 
     print(f"\nAll done. Shared score checkpoint: {SCORE_CKPT}")
     print(f"Per-channel results under: {RESULTS_ROOT}/<channel>/")

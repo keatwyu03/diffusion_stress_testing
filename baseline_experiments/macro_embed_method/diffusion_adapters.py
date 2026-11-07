@@ -312,6 +312,10 @@ def main():
         else:
             with open(os.path.join(out_dir, "checkpoint_meta.json")) as f:
                 meta = json.load(f)
+            tgt = meta.get("target", {})
+            if tgt.get("type") != "own NN-standardized residuals z^(k)" or tgt.get("standardizer_dir") != targets[m]["dir"]:
+                raise RuntimeError(f"{m}: checkpoint in {out_dir} was not trained on this method's own residuals "
+                                   f"({tgt or 'no target recorded'}) -- retrain with --mode both.")
             dm = _m1.build_diffusion_model(cfg, seq_len=seq_len)
             use_window_conditioning(dm, seq_len, cfg.diffusion.cond_dim)  # match trained layer before loading
             dm.load(ckpt_path)

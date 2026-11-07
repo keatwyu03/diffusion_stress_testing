@@ -1,0 +1,27 @@
+{
+  "model": "m3",
+  "architecture": {
+    "n_assets": 15,
+    "seq_len": 10,
+    "embed_dim": 256,
+    "n_heads": 16,
+    "n_layers": 8,
+    "cond_dim": 256,
+    "b_min": 0.1,
+    "b_max": 10.0
+  },
+  "conditioning_feature": {
+    "conditioner": "causal_value_window",
+    "variable": "pca",
+    "event_causal": true,
+    "event_lag_gap": 1,
+    "pca_lookback": 10
+  },
+  "scale_factor": 55.36083593038523,
+  "condition_norm_stats": {
+    "mu": 0.0006254112014181762,
+    "sigma": 0.05143022368340039
+  },
+  "block_sampling": true,
+  "n_train_windows": 4216
+}

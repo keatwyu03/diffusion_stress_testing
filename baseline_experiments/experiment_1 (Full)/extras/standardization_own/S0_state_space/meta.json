@@ -1,0 +1,25 @@
+{
+  "method": "s0",
+  "experiment": "full",
+  "macro_series": "/scr/kadenwu/Conditional_diffusion/baseline_experiments/experiment_1 (Full)/extras/exp2_results/S0_state_space/daily_state.csv",
+  "returns_source": "/scr/kadenwu/Conditional_diffusion/explore/macro_data_new.csv",
+  "returns": "raw daily log returns",
+  "fit": "full horizon (production nn_standardize.run_ticker, unmodified)",
+  "hyperparams": {
+    "hidden": 64,
+    "n_layers": 2,
+    "n_epochs": 1000,
+    "batch_size": 128,
+    "delta": 0.001,
+    "lr": 0.001,
+    "seed": 0
+  },
+  "n_fit_dates": 6319,
+  "fit_start": "2000-09-25",
+  "fit_end": "2026-07-08",
+  "macro_normalization": {
+    "mean": 236.21534729003906,
+    "std": 146.4121856689453
+  },
+  "inverse_check_max_abs_err": 2.7735424623642757e-08
+}

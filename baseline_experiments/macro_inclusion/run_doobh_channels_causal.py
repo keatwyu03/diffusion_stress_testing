@@ -174,6 +174,7 @@ def main():
     args = parser.parse_args()
 
     flip_event_causal_true()
+    failed = False
     try:
         # Import AFTER flipping config.py so get_run_tag() reflects event_causal=True
         import importlib
@@ -223,11 +224,15 @@ def main():
         for channel in (channels if args.channel else CHANNELS):
             subprocess.run([sys.executable, "-u", "save_rare_event_artifacts.py", "--group", "inclusion",
                             "--channel", channel, "--results-root", "doobh_results_causal"], cwd=_HERE, check=False)
+            if not os.path.exists(os.path.join(RESULTS_ROOT, channel, "rare_event_artifacts.npz")):
+                failed = True
 
         print(f"\nAll done. Score checkpoint: {score_ckpt}")
         print(f"Per-channel results under: {RESULTS_ROOT}/<channel>/")
     finally:
         restore_config()
+    if failed:
+        sys.exit("[FAILED] a channel produced no generated samples / artifacts")
 
 
 if __name__ == "__main__":
