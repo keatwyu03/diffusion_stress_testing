@@ -188,10 +188,12 @@ class FinancialTransformerScore(nn.Module):
         cond_dim: int = 128,
         ff_mult: int = 4,
         dropout: float = 0.0,
+        block_type: str = "spatiotemporal",
     ):
         super().__init__()
         self.n_assets = n_assets
         self.seq_len = seq_len
+        self.block_type = block_type
 
         # Each scalar return value → embed_dim
         self.input_proj = nn.Linear(1, embed_dim)
@@ -222,8 +224,9 @@ class FinancialTransformerScore(nn.Module):
             nn.Linear(cond_dim, cond_dim),
         )
 
+        block_cls = {"spatiotemporal": SpatioTemporalBlock, "dualaxis": DualAxisBlock}[block_type]
         self.blocks = nn.ModuleList([
-            SpatioTemporalBlock(embed_dim, n_heads, cond_dim, ff_mult, dropout)
+            block_cls(embed_dim, n_heads, cond_dim, ff_mult, dropout)
             for _ in range(n_layers)
         ])
 
@@ -247,15 +250,18 @@ class FinancialTransformerScore(nn.Module):
              + self.day_emb(self.day_ids)[None, None, :, :]      # (1, 1, T, D)
              + self.stock_emb(self.stock_ids)[None, :, None, :]) # (1, A, 1, D)
 
-        # Flatten to joint spatiotemporal tokens, day-major: (B, A, T, D) -> (B, T*A, D)
         B, A, T, D = h.shape
-        h = h.permute(0, 2, 1, 3).reshape(B, T * A, D)
-
-        for block in self.blocks:
-            h = block(h, t_emb)
-
-        # Back to (B, A, T, D) for the per-position output head
-        h = h.reshape(B, T, A, D).permute(0, 2, 1, 3)
+        if self.block_type == "spatiotemporal":
+            # Flatten to joint spatiotemporal tokens, day-major: (B, A, T, D) -> (B, T*A, D)
+            h = h.permute(0, 2, 1, 3).reshape(B, T * A, D)
+            for block in self.blocks:
+                h = block(h, t_emb)
+            # Back to (B, A, T, D) for the per-position output head
+            h = h.reshape(B, T, A, D).permute(0, 2, 1, 3)
+        else:
+            # DualAxisBlock operates on the unflattened (B, A, T, D) shape directly.
+            for block in self.blocks:
+                h = block(h, t_emb)
 
         out = self.output_proj(self.output_norm(h)).squeeze(-1)  # (B, A, T)
         return ScoreOutput(sample=out)

@@ -1,0 +1,227 @@
+{
+  "IBM": {
+    "insufficient_data": false,
+    "n_valid": 8690,
+    "adf_kpss": {
+      "adf_stat": -93.41288021534638,
+      "adf_pvalue": 0.0,
+      "adf_lag": 0,
+      "kpss_stat": 0.2162523713171915,
+      "kpss_pvalue": 0.1,
+      "kpss_lags": 3,
+      "kpss_pvalue_bounded": true,
+      "classification": "both_support_stationary"
+    },
+    "regression_spec": "c (constant only, both ADF and KPSS)"
+  },
+  "CSCO": {
+    "insufficient_data": false,
+    "n_valid": 8690,
+    "adf_kpss": {
+      "adf_stat": -22.72488081557701,
+      "adf_pvalue": 0.0,
+      "adf_lag": 15,
+      "kpss_stat": 0.4346042936308704,
+      "kpss_pvalue": 0.06223952860738346,
+      "kpss_lags": 18,
+      "kpss_pvalue_bounded": false,
+      "classification": "both_support_stationary"
+    },
+    "regression_spec": "c (constant only, both ADF and KPSS)"
+  },
+  "AAPL": {
+    "insufficient_data": false,
+    "n_valid": 8690,
+    "adf_kpss": {
+      "adf_stat": -23.597865888987332,
+      "adf_pvalue": 0.0,
+      "adf_lag": 13,
+      "kpss_stat": 0.6339399928799205,
+      "kpss_pvalue": 0.01955090973818904,
+      "kpss_lags": 7,
+      "kpss_pvalue_bounded": false,
+      "classification": "conflicting_both_reject"
+    },
+    "regression_spec": "c (constant only, both ADF and KPSS)"
+  },
+  "MSFT": {
+    "insufficient_data": false,
+    "n_valid": 8690,
+    "adf_kpss": {
+      "adf_stat": -32.08470039465009,
+      "adf_pvalue": 0.0,
+      "adf_lag": 8,
+      "kpss_stat": 1.496225723034476,
+      "kpss_pvalue": 0.01,
+      "kpss_lags": 18,
+      "kpss_pvalue_bounded": true,
+      "classification": "conflicting_both_reject"
+    },
+    "regression_spec": "c (constant only, both ADF and KPSS)"
+  },
+  "ORCL": {
+    "insufficient_data": false,
+    "n_valid": 8690,
+    "adf_kpss": {
+      "adf_stat": -23.667351917472942,
+      "adf_pvalue": 0.0,
+      "adf_lag": 15,
+      "kpss_stat": 0.07960642023230423,
+      "kpss_pvalue": 0.1,
+      "kpss_lags": 15,
+      "kpss_pvalue_bounded": true,
+      "classification": "both_support_stationary"
+    },
+    "regression_spec": "c (constant only, both ADF and KPSS)"
+  },
+  "INTC": {
+    "insufficient_data": false,
+    "n_valid": 8690,
+    "adf_kpss": {
+      "adf_stat": -22.14682736553844,
+      "adf_pvalue": 0.0,
+      "adf_lag": 16,
+      "kpss_stat": 0.1981323863972101,
+      "kpss_pvalue": 0.1,
+      "kpss_lags": 8,
+      "kpss_pvalue_bounded": true,
+      "classification": "both_support_stationary"
+    },
+    "regression_spec": "c (constant only, both ADF and KPSS)"
+  },
+  "TXN": {
+    "insufficient_data": false,
+    "n_valid": 8690,
+    "adf_kpss": {
+      "adf_stat": -22.80041357167244,
+      "adf_pvalue": 0.0,
+      "adf_lag": 15,
+      "kpss_stat": 1.0470288569715434,
+      "kpss_pvalue": 0.01,
+      "kpss_lags": 12,
+      "kpss_pvalue_bounded": true,
+      "classification": "conflicting_both_reject"
+    },
+    "regression_spec": "c (constant only, both ADF and KPSS)"
+  },
+  "QCOM": {
+    "insufficient_data": false,
+    "n_valid": 8690,
+    "adf_kpss": {
+      "adf_stat": -22.407883486672745,
+      "adf_pvalue": 0.0,
+      "adf_lag": 15,
+      "kpss_stat": 0.08348134462881955,
+      "kpss_pvalue": 0.1,
+      "kpss_lags": 14,
+      "kpss_pvalue_bounded": true,
+      "classification": "both_support_stationary"
+    },
+    "regression_spec": "c (constant only, both ADF and KPSS)"
+  },
+  "AMAT": {
+    "insufficient_data": false,
+    "n_valid": 8690,
+    "adf_kpss": {
+      "adf_stat": -23.513014755400654,
+      "adf_pvalue": 0.0,
+      "adf_lag": 15,
+      "kpss_stat": 1.9606374590076898,
+      "kpss_pvalue": 0.01,
+      "kpss_lags": 21,
+      "kpss_pvalue_bounded": true,
+      "classification": "conflicting_both_reject"
+    },
+    "regression_spec": "c (constant only, both ADF and KPSS)"
+  },
+  "ADBE": {
+    "insufficient_data": false,
+    "n_valid": 8690,
+    "adf_kpss": {
+      "adf_stat": -12.157525393338341,
+      "adf_pvalue": 1.5199572469516464e-22,
+      "adf_lag": 31,
+      "kpss_stat": 7.6177221142878855,
+      "kpss_pvalue": 0.01,
+      "kpss_lags": 17,
+      "kpss_pvalue_bounded": true,
+      "classification": "conflicting_both_reject"
+    },
+    "regression_spec": "c (constant only, both ADF and KPSS)"
+  },
+  "KO": {
+    "insufficient_data": false,
+    "n_valid": 8690,
+    "adf_kpss": {
+      "adf_stat": -95.07474723427747,
+      "adf_pvalue": 0.0,
+      "adf_lag": 0,
+      "kpss_stat": 4.52588994999411,
+      "kpss_pvalue": 0.01,
+      "kpss_lags": 9,
+      "kpss_pvalue_bounded": true,
+      "classification": "conflicting_both_reject"
+    },
+    "regression_spec": "c (constant only, both ADF and KPSS)"
+  },
+  "PG": {
+    "insufficient_data": false,
+    "n_valid": 8690,
+    "adf_kpss": {
+      "adf_stat": -21.83362406158198,
+      "adf_pvalue": 0.0,
+      "adf_lag": 20,
+      "kpss_stat": 0.04626723807817643,
+      "kpss_pvalue": 0.1,
+      "kpss_lags": 20,
+      "kpss_pvalue_bounded": true,
+      "classification": "both_support_stationary"
+    },
+    "regression_spec": "c (constant only, both ADF and KPSS)"
+  },
+  "CL": {
+    "insufficient_data": false,
+    "n_valid": 8690,
+    "adf_kpss": {
+      "adf_stat": -30.03547608667189,
+      "adf_pvalue": 0.0,
+      "adf_lag": 9,
+      "kpss_stat": 0.3334267654569466,
+      "kpss_pvalue": 0.1,
+      "kpss_lags": 14,
+      "kpss_pvalue_bounded": true,
+      "classification": "both_support_stationary"
+    },
+    "regression_spec": "c (constant only, both ADF and KPSS)"
+  },
+  "GIS": {
+    "insufficient_data": false,
+    "n_valid": 8690,
+    "adf_kpss": {
+      "adf_stat": -51.07739667129424,
+      "adf_pvalue": 0.0,
+      "adf_lag": 3,
+      "kpss_stat": 0.39504749491978747,
+      "kpss_pvalue": 0.07928987287940195,
+      "kpss_lags": 16,
+      "kpss_pvalue_bounded": false,
+      "classification": "both_support_stationary"
+    },
+    "regression_spec": "c (constant only, both ADF and KPSS)"
+  },
+  "KMB": {
+    "insufficient_data": false,
+    "n_valid": 8690,
+    "adf_kpss": {
+      "adf_stat": -31.63571419856065,
+      "adf_pvalue": 0.0,
+      "adf_lag": 8,
+      "kpss_stat": 0.2634179902292861,
+      "kpss_pvalue": 0.1,
+      "kpss_lags": 25,
+      "kpss_pvalue_bounded": true,
+      "classification": "both_support_stationary"
+    },
+    "regression_spec": "c (constant only, both ADF and KPSS)"
+  }
+}

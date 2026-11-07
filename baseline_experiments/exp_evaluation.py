@@ -3,7 +3,7 @@ Evaluation for Experiment 1 (and any future baseline_experiments/experiment_N
 that saves outputs in the same layout). Consumes SAVED outputs only -- never
 retrains or resamples a model. Reads:
 
-    <experiment-dir>/shared/test_data.npz          real test windows + conditioning values
+    <experiment-dir>/shared/eval_data.npz          real (in-sample train) eval windows + conditioning values
     <experiment-dir>/<MODEL_DIR>/generated_samples.npy   (N_test, K, A, T) raw log returns
     <experiment-dir>/<MODEL_DIR>/loss_history.csv
 
@@ -52,9 +52,13 @@ QUANTILES = (0.01, 0.05, 0.95, 0.99)
 # ─────────────────────────────────────────────────────────────────────────
 
 def load_shared_test_data(experiment_dir):
-    path = os.path.join(experiment_dir, "shared", "test_data.npz")
+    """Real windows the generated samples were conditioned on, same order.
+    Conditional-only runs are scored in-sample: shared/eval_data.npz holds the
+    train windows main_exp1.py sampled on."""
+    path = os.path.join(experiment_dir, "shared", "eval_data.npz")
     data = np.load(path, allow_pickle=True)
-    return data["X_test"]  # (N_test, A, T) raw log returns
+    print(f"Evaluation windows: {path} (split={data['eval_split']}, n={len(data['X_eval'])})")
+    return data["X_eval"]  # (N_eval, A, T) raw log returns
 
 
 def load_generated(experiment_dir, model_key, model_dirnames=None):
@@ -226,6 +230,9 @@ def evaluate_model(experiment_dir, model_key, X_test, quantiles, model_dirnames=
     n_nan = np.isnan(gen).sum() + np.isinf(gen).sum()
     if n_nan > 0:
         raise ValueError(f"{model_key}: generated samples contain {n_nan} NaN/Inf values.")
+    if len(gen) != len(X_test):
+        raise ValueError(f"{model_key}: {len(gen)} generated windows vs {len(X_test)} real windows -- "
+                         f"samples and eval windows are from different runs.")
 
     es = mean_energy_score(X_test, gen)
     w1 = mean_wasserstein_marginals(X_test, gen)
@@ -339,7 +346,8 @@ def main():
     rows = []
     results_by_model = {}
     for mk in model_keys:
-        result = evaluate_model(experiment_dir, mk, X_test, QUANTILES)
+        # v2 = same daily-rebalanced portfolio as max drawdown; same as main_exp2.py's S0-S4 evaluation
+        result = evaluate_model(experiment_dir, mk, X_test, QUANTILES, variance_fn=portfolio_variance_v2)
         if result is None:
             continue
         row, gen, b, out_dir = result

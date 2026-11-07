@@ -35,7 +35,8 @@ class DiffusionModel:
         n_layers: int = 6,
         cond_dim: int = 128,
         cov_weight : float = 1.0,
-        cov_t_max: float = 0.3
+        cov_t_max: float = 0.3,
+        block_type: str = "spatiotemporal",
     ):
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -55,6 +56,7 @@ class DiffusionModel:
                 n_heads=n_heads,
                 n_layers=n_layers,
                 cond_dim=cond_dim,
+                block_type=block_type,
             ).to(device)
         else:
             # Create UNet model

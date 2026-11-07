@@ -1,0 +1,11 @@
+{
+  "method": "s3",
+  "n_assets_evaluated": 15,
+  "n_assets_insufficient_data": 0,
+  "fraction_joint_adf_kpss_stationary": 0.7333333333333333,
+  "mean_spectral_stability_stat": 0.5321035314129348,
+  "mean_variance_cov": 0.5973606736900552,
+  "mean_wasserstein_drift_scaled": 0.2030478718029104,
+  "regression_spec": "c",
+  "standardizer": "fullhorizon"
+}

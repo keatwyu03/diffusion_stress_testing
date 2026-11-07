@@ -1,0 +1,24 @@
+{
+  "method": "s0",
+  "architecture": {
+    "n_assets": 15,
+    "seq_len": 10,
+    "embed_dim": 256,
+    "n_heads": 16,
+    "n_layers": 8,
+    "cond_dim": 256,
+    "b_min": 0.1,
+    "b_max": 10.0
+  },
+  "conditioning": {
+    "transform": "causal_value_window (raw daily_state, seq_len values)",
+    "seq_len": 10,
+    "event_causal": true,
+    "event_lag_gap": 1,
+    "scale_factor": 55.36083593038523,
+    "cond_mu": 195.91971443475578,
+    "cond_sigma": 98.8461879218517,
+    "n_train_windows_used": 4216,
+    "block_sampling": true
+  }
+}
