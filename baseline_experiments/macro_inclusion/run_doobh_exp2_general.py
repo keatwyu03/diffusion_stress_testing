@@ -60,12 +60,12 @@ def run_channel(channel, csv, base_tag, results_root, cfg):
         os.path.join(_ROOT, "ckpt_new", f"ell_function_{run_tag}.pt"),
         os.path.join(_ROOT, "ckpt_new", f"h_losses_{run_tag}.csv"),
         os.path.join(_ROOT, "ckpt_new", "q_model.pt"),
-        # main.py writes these to results/<run_tag>/ (its per-run output folder)
-        os.path.join(_ROOT, "results", run_tag, "generated_samples_train.pt"),
-        os.path.join(_ROOT, "results", run_tag, "generated_samples_test.pt"),
-        os.path.join(_ROOT, "results", run_tag, "generated_samples_meta.json"),
-        os.path.join(_ROOT, "results", run_tag, "portfolio_comparison_insample.png"),
-        os.path.join(_ROOT, "results", run_tag, "portfolio_comparison_outsample.png"),
+        # main.py writes these to <set>/diffusion_runs/<run_tag>/ (its per-run output folder)
+        os.path.join(cfg.data.diffusion_runs_dir, run_tag, "generated_samples_train.pt"),
+        os.path.join(cfg.data.diffusion_runs_dir, run_tag, "generated_samples_test.pt"),
+        os.path.join(cfg.data.diffusion_runs_dir, run_tag, "generated_samples_meta.json"),
+        os.path.join(cfg.data.diffusion_runs_dir, run_tag, "portfolio_comparison_insample.png"),
+        os.path.join(cfg.data.diffusion_runs_dir, run_tag, "portfolio_comparison_outsample.png"),
     ]
     t0 = time.time()
     print(f"\n{'=' * 70}\nChannel: {channel}\n  data: {csv}\n  run_tag: {run_tag}\n{'=' * 70}", flush=True)

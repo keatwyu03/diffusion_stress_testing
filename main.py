@@ -453,7 +453,7 @@ def main(args):
     # Per-run output folder results/<run_tag>/ (run_tag = conditioning set + event definition [+ --tag-suffix]),
     # so samples from different sets / event definitions never overwrite each other and the analysis scripts
     # (analysis/run_paths.py) read exactly the run that matches the current config.
-    run_out_dir = os.path.join("results", run_tag)
+    run_out_dir = os.path.join(config.data.diffusion_runs_dir, run_tag)   # explore/conditioning_sets/<set>/diffusion_runs/
     os.makedirs(run_out_dir, exist_ok=True)
     torch.save(generated_samples_train, os.path.join(run_out_dir, 'generated_samples_train.pt'))
     torch.save(generated_samples_test, os.path.join(run_out_dir, 'generated_samples_test.pt'))

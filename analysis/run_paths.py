@@ -1,14 +1,15 @@
 """
 Where a main.py run's outputs live, for the analysis/ evaluation scripts.
 
-Everything is keyed by the checkpoint tag of the CURRENT config, get_run_tag(config) =
+Everything is keyed by the checkpoint tag of the CURRENT config FILE (a fresh get_default_config() -- never the
+scripts' in-memory config, whose event_threshold they convert to a raw cutoff), get_run_tag =
 <conditioning_set>_<causal>_lag<gap>_<event_type><top>pct_..., so the analysis always reads the run that was trained
 on config.data.csv_path (the conditioning set's data_for_diffusion.csv) with the same event definition:
 
-    main.py writes   results/<run_tag>/generated_samples_{train,test}.pt, generated_samples_meta.json
+    main.py writes   explore/conditioning_sets/<set>/diffusion_runs/<run_tag>/generated_samples_{train,test}.pt, generated_samples_meta.json
                      ckpt_new/score_<run_tag>.pt, hfunction_<run_tag>.pt, score_losses_<run_tag>.csv, h_losses_<run_tag>.csv
-    analysis writes  results/<run_tag>/unconditional_samples.pt (unconditional_gen.py; reused by cov.py)
-                     analysis/diffusion_results/<run_tag>/*.png
+    analysis writes  .../diffusion_runs/<run_tag>/unconditional_samples.pt (unconditional_gen.py; reused by cov.py)
+                     .../diffusion_runs/<run_tag>/evaluation/*.png
 """
 import json
 import os
@@ -17,18 +18,20 @@ ANALYSIS_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(ANALYSIS_DIR)
 
 
-def run_tag(config):
-    from config import get_run_tag
-    return get_run_tag(config)
+def run_tag(config=None):
+    """Tag of the current config FILE (the passed config is ignored: scripts mutate event_threshold in memory)."""
+    from config import get_default_config, get_run_tag
+    return get_run_tag(get_default_config())
 
 
-def run_output_dir(config):
+def run_output_dir(config=None):
     """main.py's per-run output folder (generated samples + their provenance)."""
-    return os.path.join(ROOT, "results", run_tag(config))
+    from config import get_default_config
+    return os.path.join(get_default_config().data.diffusion_runs_dir, run_tag())
 
 
-def analysis_results_dir(config):
-    d = os.path.join(ANALYSIS_DIR, "diffusion_results", run_tag(config))
+def analysis_results_dir(config=None):
+    d = os.path.join(run_output_dir(), "evaluation")
     os.makedirs(d, exist_ok=True)
     return d
 

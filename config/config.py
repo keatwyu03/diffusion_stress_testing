@@ -93,6 +93,10 @@ class DataConfig:
     use_ema_standardization: bool = True
 
     def __post_init__(self):
+        # A Slurm job may set CDG_CONDITIONING_SET to run one set while another job runs the other set at the same
+        # time (one config file cannot hold both). It overrides conditioning_set above for that job only; every
+        # script prints the set it uses.
+        self.conditioning_set = os.environ.get("CDG_CONDITIONING_SET", self.conditioning_set)
         if self.conditioning_set not in CONDITIONING_SETS:
             raise ValueError(f"conditioning_set={self.conditioning_set!r}; must be one of {list(CONDITIONING_SETS)}")
         sel = CONDITIONING_SETS[self.conditioning_set]
@@ -102,6 +106,7 @@ class DataConfig:
         self.macro_csv_path = os.path.join(set_dir, "macro_data_new.csv")
         self.channels_dir = os.path.join(set_dir, "rare_event_channels")  # rare-event channel files (build_channel_csvs.py)
         self.experiment_dir = os.path.join(_ROOT, "baseline_experiments", sel["experiment_dir"])  # M/S results
+        self.diffusion_runs_dir = os.path.join(set_dir, "diffusion_runs")  # main.py outputs: <run_tag>/ (+ evaluation/)
 
 @dataclass
 class DiffusionConfig:
