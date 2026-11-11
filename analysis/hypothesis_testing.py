@@ -542,9 +542,12 @@ def load_split(split: str = "train"):
 
 def load_generated(split: str = "train") -> Optional[np.ndarray]:
     """Last-day returns of the generated conditional samples, or None."""
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    path = os.path.join(root, f"generated_samples_{split}.pt")
-    if not os.path.exists(path):
+    import run_paths   # the main.py run matching the current config (results/<run_tag>/, provenance-checked)
+    from config import get_default_config
+    try:
+        path = run_paths.generated_samples_path(get_default_config(), split)
+    except FileNotFoundError as e:
+        print(f"[run] {e}")
         return None
     gen = torch.load(path, map_location="cpu")
     return gen[:, :, -1].numpy()   # (N, A, T) -> (N, A)

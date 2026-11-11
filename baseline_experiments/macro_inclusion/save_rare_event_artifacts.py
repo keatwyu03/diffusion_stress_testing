@@ -36,7 +36,8 @@ from data.data_processor import DataProcessor  # noqa: E402
 from doobh_evaluation import window_z_start_end  # noqa: E402
 
 METHOD_DIR = {"exp2_s0": "S0_state_space", "exp2_s1": "S1_linear", "exp2_s2": "S2_forward_fill",
-              "exp2_s3": "S3_cubic_spline", "exp2_s4": "S4_tracking_regression"}
+              "exp2_s3": "S3_cubic_spline", "exp2_s4": "S4_tracking_regression",
+              "exp2_s1p": "S1p_linear_extrapolation", "exp2_s3p": "S3p_cubic_spline_extrapolation"}
 
 
 def build_processor(csv_path, cfg):
@@ -76,8 +77,12 @@ def main():
     cfg = get_default_config()
     T = cfg.data.seq_len
     tickers = list(cfg.data.tickers)
-    csv_path = os.path.join(_ROOT, "explore", "standardization_results",
-                            f"data_for_diffusion_{args.channel}{args.csv_suffix}.csv")
+    if args.group == "inclusion":   # channel file of the conditioning set selected in config
+        csv_path = os.path.join(cfg.data.channels_dir, f"data_for_diffusion_{args.channel}{args.csv_suffix}.csv")
+    else:                           # S0-S4 own-std channel file of the config's conditioning set
+        from window_conditioning import experiment_paths
+        csv_path = os.path.join(experiment_paths()["embed_channels_dir"],
+                                f"data_for_diffusion_{args.channel}{args.csv_suffix}.csv")
     res_dir = os.path.join(os.path.dirname(_HERE), "main_results", args.results_root, args.channel)
     out_dir = args.out_dir or res_dir
     dp = build_processor(csv_path, cfg)
@@ -115,7 +120,7 @@ def main():
         raise RuntimeError("could not reproduce the evaluator's entry-window draw")
     gen_units = dp.destandardize_windows(gen_z, mu_e, sig_e)
 
-    raw = pd.read_csv(os.path.join(_ROOT, "explore", "macro_data_new.csv"), parse_dates=["Date"]).set_index("Date")
+    raw = pd.read_csv(cfg.data.macro_csv_path, parse_dates=["Date"]).set_index("Date")   # conditioning set's m_t + raw returns
     real_raw = macro_at(raw, dp, real_idx, T, tickers)
     rs, re_ = window_dates(dp, real_idx, T)
     gs, ge = window_dates(dp, pick, T)

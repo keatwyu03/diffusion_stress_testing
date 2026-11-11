@@ -1,37 +1,27 @@
 """
-Guided Doob-h rare-event generation for Experiment 2's 5 macro-construction
-methods (S0 state-space, S1 linear, S2 forward-fill, S3 cubic spline, S4
-tracking regression), each as its own conditioning channel -- same mechanism
-as the original doobh_results/ (main.py's unmodified production pipeline,
-externally orchestrated via CSV-swapping), generalized along TWO axes this
-time: (a) which of the 5 Experiment-2 methods is the channel, (b)
-config.data.event_causal True or False.
+Causal Doob-h rare-event runs for the macro-embedding methods (S0 state-space, S1 linear, S2 forward-fill,
+S3 cubic spline, S4 tracking regression, S1'/S3' causal extrapolations), each method as its own conditioning
+channel, on the conditioning set selected in config (config.data.conditioning_set).
 
-main.py, data_processor.py, hfunction_direct.py, conditional_generator.py
-are NEVER modified. The CSV-swap mechanism is identical to
-run_doobh_channels.py; the config.py event_causal flip (when --causal is
-passed) is identical to run_doobh_channels_causal.py's, including the same
-backup/self-heal/signal-handler restore guarantees.
+For each channel, main.py is run with
+    --data-csv <experiment>/extras/rare_event_channels/data_for_diffusion_<channel>_ownstd.csv
+(built by build_channel_csvs_exp2_ownstd.py): column 0 = that method's raw daily state (its windowed change is the
+Doob-h event label); the other columns = the 15 stocks' residuals standardized on that method's OWN state.
+Every channel trains its OWN base diffusion model (the targets differ per method) under its own checkpoint tag
+<run_tag>__rare_embed_<channel>_ownstd, always with --retrain, and the base model is moved into the channel's
+results folder -- it can never be reused by another channel. No file is swapped and config.py is never edited.
+Requires config.data.event_causal = True (causal only).
 
-Each channel is evaluated against its OWN valid-window pool (not a pool
-shared across all 5 Experiment-2 channels) -- this run is explicitly split
-across multiple jobs/channel subsets so results can be inspected before the
-full channel set finishes, which rules out a cross-channel common pool for
-this particular comparison (same self-contained-per-channel choice already
-used for the cheaper tail_event_analysis.py check earlier). Disclosed, not
-hidden, in each channel's saved metadata.
+Results: <experiment>/causal/macro_embed/rare_event/<run_tag>/<channel>/
+(experiment_1 (Inflation Only) or experiment_2 (CPI Only)).
 
-Usage:
-    python run_doobh_exp2_general.py --channels exp2_s0,exp2_s2 --causal false
-    python run_doobh_exp2_general.py --channels exp2_s1,exp2_s3,exp2_s4 --causal true
+Usage (set the conditioning set in config/config.py first):
+    python run_doobh_exp2_general.py --channels exp2_s0,exp2_s1p,exp2_s2,exp2_s3p,exp2_s4
 """
 import argparse
-import atexit
-import filecmp
 import json
 import os
 import shutil
-import signal
 import subprocess
 import sys
 import time
@@ -39,108 +29,18 @@ import time
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(os.path.dirname(_HERE))
 sys.path.insert(0, _ROOT)
+sys.path.insert(0, _HERE)
+from config import get_default_config, get_run_tag  # noqa: E402
+from window_conditioning import experiment_paths  # noqa: E402
 
-_EXP2_DIR = os.path.join(os.path.dirname(_HERE), "main_results")
-
-ALL_CHANNELS = ["exp2_s0", "exp2_s1", "exp2_s2", "exp2_s3", "exp2_s4"]
-RETROSPECTIVE = {"exp2_s0": False, "exp2_s1": True, "exp2_s2": False, "exp2_s3": True, "exp2_s4": False}
-
-PROD_CSV = os.path.join(_ROOT, "explore", "standardization_results", "data_for_diffusion.csv")
-CSV_BACKUP = PROD_CSV + ".orig_backup"
-
-CONFIG_PY = os.path.join(_ROOT, "config", "config.py")
-CONFIG_BACKUP = CONFIG_PY + ".orig_backup_exp2_run"
-EVENT_CAUSAL_FALSE = "    event_causal: bool = False"
-EVENT_CAUSAL_TRUE = "    event_causal: bool = True"
-GROWTH_INFLATION_FULL = (
-    '    growth_vars: Optional[List[str]] = field(default_factory=lambda: '
-    '["indpro", "payems", "pi_transfer", "real_manf_trade", "personal_consump", "capacity_util"])\n'
-    '    inflation_vars: Optional[List[str]] = field(default_factory=lambda: '
-    '["cpi", "oil_price", "ppi", "hour_earnings"])'
-)
-GROWTH_INFLATION_CPI = (
-    '    growth_vars: Optional[List[str]] = None\n'
-    '    inflation_vars: Optional[List[str]] = field(default_factory=lambda: ["cpi"])'
-)
-
-
-def swap_in_channel_csv(channel: str, csv_suffix: str = ""):
-    channel_csv = os.path.join(_ROOT, "explore", "standardization_results",
-                                f"data_for_diffusion_{channel}{csv_suffix}.csv")
-    if not os.path.exists(channel_csv):
-        raise FileNotFoundError(f"{channel_csv} not found -- run build_channel_csvs_exp2_all.py first.")
-    if not os.path.exists(CSV_BACKUP):
-        shutil.copy2(PROD_CSV, CSV_BACKUP)
-        print(f"Backed up original {PROD_CSV} -> {CSV_BACKUP}")
-    shutil.copy2(channel_csv, PROD_CSV)
-    print(f"Swapped in {channel_csv} -> {PROD_CSV}")
-
-
-def restore_csv():
-    if os.path.exists(CSV_BACKUP) and not filecmp.cmp(CSV_BACKUP, PROD_CSV, shallow=False):
-        shutil.copy2(CSV_BACKUP, PROD_CSV)
-        print(f"Restored original {PROD_CSV} from backup")
-
-
-def flip_event_causal_true():
-    with open(CONFIG_PY) as f:
-        text = f.read()
-    if text.count(EVENT_CAUSAL_TRUE) == 1 and text.count(EVENT_CAUSAL_FALSE) == 0:
-        print(f"{CONFIG_PY} already has event_causal=True -- nothing to flip (no backup needed).")
-        return
-    if not os.path.exists(CONFIG_BACKUP):
-        shutil.copy2(CONFIG_PY, CONFIG_BACKUP)
-        print(f"Backed up {CONFIG_PY} -> {CONFIG_BACKUP}")
-    if text.count(EVENT_CAUSAL_FALSE) != 1:
-        raise RuntimeError(f"Expected exactly 1 occurrence of {EVENT_CAUSAL_FALSE!r} in {CONFIG_PY}, "
-                            f"found {text.count(EVENT_CAUSAL_FALSE)} -- refusing to edit.")
-    with open(CONFIG_PY, "w") as f:
-        f.write(text.replace(EVENT_CAUSAL_FALSE, EVENT_CAUSAL_TRUE))
-    print(f"Flipped event_causal False -> True in {CONFIG_PY}")
-
-
-def flip_cpi_only():
-    with open(CONFIG_PY) as f:
-        text = f.read()
-    if GROWTH_INFLATION_CPI in text:
-        print(f"{CONFIG_PY} already has CPI-only growth/inflation vars -- nothing to flip.")
-        return
-    if not os.path.exists(CONFIG_BACKUP):
-        shutil.copy2(CONFIG_PY, CONFIG_BACKUP)
-        print(f"Backed up {CONFIG_PY} -> {CONFIG_BACKUP}")
-    if text.count(GROWTH_INFLATION_FULL) != 1:
-        raise RuntimeError(f"Expected exactly 1 occurrence of the Full growth/inflation block in "
-                            f"{CONFIG_PY}, found {text.count(GROWTH_INFLATION_FULL)} -- refusing to edit.")
-    with open(CONFIG_PY, "w") as f:
-        f.write(text.replace(GROWTH_INFLATION_FULL, GROWTH_INFLATION_CPI))
-    print(f"Flipped growth/inflation vars Full -> CPI-only in {CONFIG_PY}")
-
-
-def restore_config():
-    if os.path.exists(CONFIG_BACKUP) and not filecmp.cmp(CONFIG_BACKUP, CONFIG_PY, shallow=False):
-        shutil.copy2(CONFIG_BACKUP, CONFIG_PY)
-        print(f"Restored original {CONFIG_PY} from backup")
-
-
-def self_heal_on_startup():
-    if os.path.exists(CSV_BACKUP) and not filecmp.cmp(CSV_BACKUP, PROD_CSV, shallow=False):
-        print(f"[self-heal] {PROD_CSV} does not match backup at startup -- restoring.")
-        shutil.copy2(CSV_BACKUP, PROD_CSV)
-    if os.path.exists(CONFIG_BACKUP) and not filecmp.cmp(CONFIG_BACKUP, CONFIG_PY, shallow=False):
-        print(f"[self-heal] {CONFIG_PY} does not match backup at startup -- restoring.")
-        shutil.copy2(CONFIG_BACKUP, CONFIG_PY)
-
-
-def _install_signal_handlers():
-    def _handler(signum, _frame):
-        print(f"\n[signal] received signal {signum} -- exiting cleanly so config.py/CSV get restored.")
-        sys.exit(1)
-    signal.signal(signal.SIGTERM, _handler)
-    signal.signal(signal.SIGINT, _handler)
+ALL_CHANNELS = ["exp2_s0", "exp2_s1", "exp2_s2", "exp2_s3", "exp2_s4", "exp2_s1p", "exp2_s3p"]
+RETROSPECTIVE = {"exp2_s0": False, "exp2_s1": True, "exp2_s2": False, "exp2_s3": True, "exp2_s4": False,
+                 "exp2_s1p": False, "exp2_s3p": False}
+CSV_SUFFIX = "_ownstd"
 
 
 def clear_stale_outputs(movable, results_root):
-    stale_dir = os.path.join(_EXP2_DIR, results_root, "_stale_leftovers")
+    stale_dir = os.path.join(results_root, "_stale_leftovers")
     for path in movable:
         if os.path.exists(path):
             os.makedirs(stale_dir, exist_ok=True)
@@ -149,169 +49,103 @@ def clear_stale_outputs(movable, results_root):
             print(f"[warn] found pre-existing {path}, moved to {dest} before starting fresh run")
 
 
-def move_outputs(channel, movable, results_root, extra_meta=None):
-    out_dir = os.path.join(_EXP2_DIR, results_root, channel)
+def run_channel(channel, csv, base_tag, results_root, cfg):
+    """Returns True only if THIS run trained a fresh base model and produced generated samples."""
+    tag_suffix = f"rare_embed_{channel}{CSV_SUFFIX}"
+    run_tag = f"{base_tag}__{tag_suffix}"
+    movable = [
+        os.path.join(_ROOT, "ckpt_new", f"score_{run_tag}.pt"),
+        os.path.join(_ROOT, "ckpt_new", f"score_losses_{run_tag}.csv"),
+        os.path.join(_ROOT, "ckpt_new", f"hfunction_{run_tag}.pt"),
+        os.path.join(_ROOT, "ckpt_new", f"ell_function_{run_tag}.pt"),
+        os.path.join(_ROOT, "ckpt_new", f"h_losses_{run_tag}.csv"),
+        os.path.join(_ROOT, "ckpt_new", "q_model.pt"),
+        # main.py writes these to results/<run_tag>/ (its per-run output folder)
+        os.path.join(_ROOT, "results", run_tag, "generated_samples_train.pt"),
+        os.path.join(_ROOT, "results", run_tag, "generated_samples_test.pt"),
+        os.path.join(_ROOT, "results", run_tag, "generated_samples_meta.json"),
+        os.path.join(_ROOT, "results", run_tag, "portfolio_comparison_insample.png"),
+        os.path.join(_ROOT, "results", run_tag, "portfolio_comparison_outsample.png"),
+    ]
+    t0 = time.time()
+    print(f"\n{'=' * 70}\nChannel: {channel}\n  data: {csv}\n  run_tag: {run_tag}\n{'=' * 70}", flush=True)
+    clear_stale_outputs(movable, results_root)
+    cmd = [sys.executable, "-u", "main.py", "--no-wandb", "--retrain", "--data-csv", csv, "--tag-suffix", tag_suffix]
+    result = subprocess.run(cmd, cwd=_ROOT, check=False)
+    if result.returncode != 0:
+        print(f"[warn] main.py exited {result.returncode} for channel '{channel}' (the known STEP 6 portfolio-"
+              f"analysis error happens after generation). Checking generation output...")
+
+    out_dir = os.path.join(results_root, channel)
     os.makedirs(out_dir, exist_ok=True)
     for path in movable:
         if os.path.exists(path):
-            dest = os.path.join(out_dir, os.path.basename(path))
-            shutil.move(path, dest)
-            print(f"  moved {path} -> {dest}")
+            shutil.move(path, os.path.join(out_dir, os.path.basename(path)))
+            print(f"  moved {path} -> {out_dir}/")
         else:
             print(f"  [note] {path} was not produced this run")
-    with open(os.path.join(out_dir, "channel_meta.json"), "w") as f:
-        json.dump({"channel": channel, "retrospective": RETROSPECTIVE[channel],
-                    "note": "retrospective methods (S1/S3) were used as a Doob-h guidance channel "
-                            "as explicitly requested; their own state construction needs a future "
-                            "monthly anchor -- disclosed, not a bug." if RETROSPECTIVE[channel] else
-                            "causal in its own state construction.", **(extra_meta or {})}, f, indent=2)
-
-
-def run_channel(channel, movable, score_ckpt, results_root, force_retrain=False, csv_suffix=""):
-    """Returns True only if generation produced samples (and, in --own-std mode, the base model was
-    trained during THIS channel on THIS channel's residuals). main.py's own exit code is not usable
-    (the known STEP 6 portfolio bug always exits 1)."""
-    t0 = time.time()
-    print(f"\n{'=' * 70}\nChannel: {channel} (retrain={force_retrain}, csv_suffix={csv_suffix!r})\n{'=' * 70}")
-    clear_stale_outputs(movable, results_root)
-    swap_in_channel_csv(channel, csv_suffix=csv_suffix)
-    cmd = [sys.executable, "-u", "main.py", "--no-wandb"]
-    if force_retrain:
-        cmd.append("--retrain")
-    try:
-        result = subprocess.run(cmd, cwd=_ROOT, check=False)
-    finally:
-        restore_csv()
-
-    if result.returncode != 0:
-        print(f"[warn] main.py exited {result.returncode} for channel '{channel}' "
-              f"(expected: the known STEP 6 portfolio-analysis bug). Checking generation output...")
-
-    out_dir = os.path.join(_EXP2_DIR, results_root, channel)
-    move_outputs(channel, movable, results_root)   # moves this channel's base model (own-std mode) into out_dir
-    base = os.path.join(out_dir, os.path.basename(score_ckpt))
+    base = os.path.join(out_dir, f"score_{run_tag}.pt")
+    gen = os.path.join(out_dir, "generated_samples_test.pt")
     base_fresh = os.path.exists(base) and os.path.getmtime(base) >= t0
-    meta_path = os.path.join(out_dir, "channel_meta.json")
-    meta = json.load(open(meta_path))
-    meta.update({"diffusion_target_csv": f"data_for_diffusion_{channel}{csv_suffix}.csv",
-                 "diffusion_target": ("own NN residuals of this method" if csv_suffix == "_ownstd" else
-                                      "production residuals (legacy)"),
-                 "base_model": base if os.path.exists(base) else score_ckpt,
-                 "base_model_trained_this_channel": bool(base_fresh) if csv_suffix == "_ownstd" else None})
-    with open(meta_path, "w") as f:
-        json.dump(meta, f, indent=2)
-    gen_path = os.path.join(out_dir, "generated_samples_test.pt")
-    ok = os.path.exists(gen_path) and os.path.getmtime(gen_path) >= t0
-    if csv_suffix == "_ownstd" and not base_fresh:
-        print(f"[error] Channel '{channel}': base diffusion model was NOT trained during this channel -- refusing it.")
-        ok = False
-    if ok:
-        print(f"Channel '{channel}' done -> {out_dir}")
-    else:
-        print(f"[error] Channel '{channel}' did NOT produce fresh generated samples -- a real failure.")
-    print(f"(score checkpoint: {score_ckpt}, {'reused/cached' if os.path.exists(score_ckpt) else 'will be trained fresh'})")
+    gen_fresh = os.path.exists(gen) and os.path.getmtime(gen) >= t0
+    with open(os.path.join(out_dir, "channel_meta.json"), "w") as f:
+        json.dump({"channel": channel, "conditioning_set": cfg.data.conditioning_set, "data_file": csv,
+                   "diffusion_target": "own NN residuals of this method", "run_tag": run_tag,
+                   "base_model": base, "base_model_trained_this_channel": base_fresh,
+                   "event_causal": cfg.data.event_causal, "event_lag_gap": cfg.data.event_lag_gap,
+                   "event_type": cfg.hfunction.event_type, "event_top_fraction": cfg.hfunction.event_threshold,
+                   "retrospective": RETROSPECTIVE[channel],
+                   "note": ("retrospective state construction (needs the next monthly anchor) -- disclosed"
+                            if RETROSPECTIVE[channel] else "causal in its own state construction")}, f, indent=2)
+    ok = base_fresh and gen_fresh
+    print(f"Channel '{channel}' {'done' if ok else 'FAILED (base model or samples not produced in this run)'} -> {out_dir}",
+          flush=True)
     return ok
 
 
 def main():
-    self_heal_on_startup()
-    _install_signal_handlers()
-    atexit.register(restore_csv)
-
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--channels", required=True, help="Comma-separated subset of: " + ",".join(ALL_CHANNELS))
-    parser.add_argument("--causal", required=True, choices=["true", "false"])
-    parser.add_argument("--cpi-only", action="store_true",
-                         help="Use the CPI-only growth/inflation var selection (also flipped in config.py, "
-                              "same backup/restore pattern as event_causal) and swap in the _cpi-suffixed "
-                              "per-channel CSVs instead of the default (Full macro set) ones.")
-    parser.add_argument("--own-std", action="store_true",
-                         help="Macro embedding with PER-METHOD NN residuals: swap in data_for_diffusion_<channel>_ownstd.csv "
-                              "(assets standardized on that method's own state), train a FRESH base diffusion model for "
-                              "every channel (data differ per channel) and keep each one in its channel folder.")
-    parser.add_argument("--standardization-dir", default=None,
-                         help="--own-std: folder with <method>/mu.csv, sigma.csv (for the inverse transform artifacts)")
     args = parser.parse_args()
-    if args.own_std and (args.cpi_only or not args.standardization_dir):
-        raise ValueError("--own-std needs --standardization-dir and is Full-only here (no --cpi-only).")
     channels = [c.strip() for c in args.channels.split(",") if c.strip()]
     for c in channels:
         if c not in ALL_CHANNELS:
-            raise ValueError(f"Unknown channel {c!r}, expected one of {ALL_CHANNELS}")
+            raise SystemExit(f"Unknown channel {c!r}, expected one of {ALL_CHANNELS}")
 
-    causal = args.causal == "true"
-    csv_suffix = "_cpi" if args.cpi_only else ("_ownstd" if args.own_std else "")
-    results_root = (f"doobh_results_exp2_{'causal' if causal else 'noncausal'}{'_cpi' if args.cpi_only else ''}"
-                    f"{'_ownstd' if args.own_std else ''}")
+    cfg = get_default_config()
+    if not cfg.data.event_causal:
+        raise SystemExit("config.data.event_causal must be True (causal-only)")
+    paths = experiment_paths()
+    base_tag = get_run_tag(cfg)
+    results_root = os.path.join(paths["rare_embed"], base_tag)
+    csvs = {}
+    for c in channels:   # all channel files must exist before anything runs
+        csvs[c] = os.path.join(paths["embed_channels_dir"], f"data_for_diffusion_{c}{CSV_SUFFIX}.csv")
+        if not os.path.exists(csvs[c]):
+            raise SystemExit(f"{csvs[c]} not found -- run build_channel_csvs_exp2_ownstd.py --channels {args.channels}")
+    print(f"conditioning_set = {cfg.data.conditioning_set} | event_causal={cfg.data.event_causal} "
+          f"lag={cfg.data.event_lag_gap} {cfg.hfunction.event_type} top {cfg.hfunction.event_threshold:.1%} "
+          f"| window {cfg.data.start_date}..{cfg.data.end_date} | seed {cfg.seed}\nresults = {results_root}", flush=True)
 
-    if causal:
-        atexit.register(restore_config)
-        flip_event_causal_true()
-    if args.cpi_only:
-        atexit.register(restore_config)
-        flip_cpi_only()
+    failures = []
+    for channel in channels:
+        if not run_channel(channel, csvs[channel], base_tag, results_root, cfg):
+            failures.append(f"{channel}: training/generation")
 
-    try:
-        import importlib
-        import config as config_module
-        importlib.reload(config_module)
-        cfg = config_module.get_default_config()
-        if cfg.data.event_causal != causal:
-            raise RuntimeError(f"config.data.event_causal={cfg.data.event_causal}, expected {causal} -- aborting.")
-        run_tag = config_module.get_run_tag(cfg)
-        print(f"Confirmed event_causal={causal}; run_tag={run_tag}")
+    print(f"\n{'=' * 70}\nEvaluation\n{'=' * 70}", flush=True)
+    for channel in channels:
+        if subprocess.run([sys.executable, "-u", "doobh_evaluation_exp2.py", "--channel", channel,
+                           "--results-root", results_root, "--csv-suffix", CSV_SUFFIX], cwd=_HERE).returncode != 0:
+            failures.append(f"{channel}: evaluation")
 
-        score_ckpt = os.path.join(_ROOT, "ckpt_new", f"score_{run_tag}.pt")
-        movable = [
-            os.path.join(_ROOT, "ckpt_new", f"hfunction_{run_tag}.pt"),
-            os.path.join(_ROOT, "ckpt_new", f"ell_function_{run_tag}.pt"),
-            os.path.join(_ROOT, "ckpt_new", f"h_losses_{run_tag}.csv"),
-            os.path.join(_ROOT, "ckpt_new", "q_model.pt"),
-            os.path.join(_ROOT, "generated_samples_train.pt"),
-            os.path.join(_ROOT, "generated_samples_test.pt"),
-            os.path.join(_ROOT, "results", "portfolio_comparison_insample.png"),
-            os.path.join(_ROOT, "results", "portfolio_comparison_outsample.png"),
-        ]
-        if args.own_std:
-            # each channel trains on its own residuals -> its own base model; move it out after the channel
-            # so it is kept with that channel and can never be reused by the next one
-            movable += [score_ckpt, os.path.join(_ROOT, "ckpt_new", f"score_losses_{run_tag}.csv")]
-            if os.path.exists(score_ckpt):
-                raise RuntimeError(f"{score_ckpt} already exists -- refusing to reuse a base model in --own-std mode.")
-        ckpt_exists = os.path.exists(score_ckpt)
-        print(f"Score checkpoint for this run: {score_ckpt} "
-              f"({'EXISTS -- will be reused' if ckpt_exists else 'does NOT exist -- training fresh on first channel'})")
+    print(f"\n{'=' * 70}\nSaving rare-event artifacts\n{'=' * 70}", flush=True)
+    for channel in channels:
+        if subprocess.run([sys.executable, "-u", "save_rare_event_artifacts.py", "--group", "embedding",
+                           "--channel", channel, "--results-root", results_root, "--csv-suffix", CSV_SUFFIX,
+                           "--standardization-dir", paths["standardization_dir"]], cwd=_HERE).returncode != 0:
+            failures.append(f"{channel}: artifacts")
 
-        failures = []
-        for i, channel in enumerate(channels):
-            if not run_channel(channel, movable, score_ckpt, results_root,
-                               force_retrain=True if args.own_std else (not ckpt_exists and i == 0), csv_suffix=csv_suffix):
-                failures.append(f"{channel}: training/generation")
-
-        print(f"\n{'=' * 70}\nEvaluation\n{'=' * 70}")
-        for channel in channels:
-            print(f"=== doobh_evaluation.py --channel-override {channel} ===")
-            eval_cmd = [sys.executable, "-u", "doobh_evaluation_exp2.py",
-                        "--channel", channel, "--results-root", results_root]
-            if csv_suffix:
-                eval_cmd += ["--csv-suffix", csv_suffix]
-            if subprocess.run(eval_cmd, cwd=_HERE, check=False).returncode != 0:
-                failures.append(f"{channel}: evaluation")
-
-        print(f"\n{'=' * 70}\nSaving rare-event artifacts (generated + real windows, dates, inverse-transform inputs)\n{'=' * 70}")
-        for channel in channels:
-            art_cmd = [sys.executable, "-u", "save_rare_event_artifacts.py", "--group", "embedding",
-                       "--channel", channel, "--results-root", results_root, "--csv-suffix", csv_suffix]
-            if args.own_std:
-                art_cmd += ["--standardization-dir", args.standardization_dir]
-                if subprocess.run(art_cmd, cwd=_HERE, check=False).returncode != 0:
-                    failures.append(f"{channel}: artifacts")
-
-        print(f"\nAll done (causal={causal}). Score checkpoint: {score_ckpt}")
-        print(f"Per-channel results under: {os.path.join(_EXP2_DIR, results_root)}/<channel>/")
-    finally:
-        if causal or args.cpi_only:
-            restore_config()
+    print(f"\nAll done. Per-channel results under: {results_root}/<channel>/")
     if failures:
         print(f"[FAILED] {failures}")
         sys.exit(1)

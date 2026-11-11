@@ -3,8 +3,8 @@ Experiment 1: does conditioning the diffusion model on a causal macro latent
 state (M4) produce better generated return distributions than conventional
 stock-based conditioning (M1-M3) or no conditioning at all (M0)?
 
-Self-contained data pipeline: does NOT use data/data_processor.py. Reads
-explore/macro_data_new.csv directly and trains on RAW daily log returns (no
+Self-contained data pipeline: does NOT use data/data_processor.py. Reads the
+conditioning set's macro_data_new.csv (config.data.macro_csv_path) and trains on RAW daily log returns (no
 EWMA/winsorize/macro-conditional standardization). Reuses config/config.py's
 existing dates, train/test split, and Transformer/VP-SDE hyperparameters
 unchanged. Does not rerun explore/import_data.py or refit the SSM -- M4's
@@ -24,14 +24,15 @@ scored on an evenly spaced subset of those same train windows
 is how well each conditioner recovers the conditional return distribution,
 not out-of-sample forecasting (macro levels drift outside the train range).
 
---experiment picks the inputs AND the default results folder together:
-    full -> explore/macro_data_new.csv     -> experiment_1 (Full)/causal/macro_inclusion/conditional_only
-    cpi  -> explore/macro_data_new_cpi.csv -> experiment_2 (CPI Only)/causal/macro_inclusion/conditional_only
+Inputs AND results folder come from config.data.conditioning_set (config.CONDITIONING_SETS):
+    inflation_only -> explore/conditioning_sets/inflation_only/macro_data_new.csv
+                   -> experiment_1 (Inflation Only)/causal/macro_inclusion/conditional_only
+    cpi_only       -> explore/conditioning_sets/cpi_only/macro_data_new.csv
+                   -> experiment_2 (CPI Only)/causal/macro_inclusion/conditional_only
 
-Usage:
-    python main_exp1.py --experiment full            # train + sample all 5 models
-    python main_exp1.py --experiment cpi
-    python main_exp1.py --experiment full --model m4 --mode sample
+Usage (set the conditioning set in config/config.py first):
+    python main_exp1.py                              # train + sample all 5 models
+    python main_exp1.py --model m4 --mode sample
 """
 import argparse
 import json
@@ -76,7 +77,7 @@ COND_KEY = {"m1": "ewma_mean", "m2": "ewma_vol", "m3": "pca", "m4": "macro_level
 # ─────────────────────────────────────────────────────────────────────────
 
 def load_raw_data(cfg, csv_override: str = None):
-    csv_path = csv_override or os.path.join(_ROOT, "explore", "macro_data_new.csv")
+    csv_path = csv_override or cfg.data.macro_csv_path   # conditioning set's m_t + raw log returns
     df = pd.read_csv(csv_path, parse_dates=["Date"]).sort_values("Date").set_index("Date")
 
     macro_col = df.columns[0]  # first column after Date (same convention as DataProcessor)
@@ -485,8 +486,8 @@ def main():
     parser.add_argument("--macro-change-window", type=int, default=cfg.data.seq_len,
                          help="M4 conditions on |m_t[end] - m_t[end-window+1]|, not the raw level "
                               "(default: same window as the return window / production event_window)")
-    parser.add_argument("--experiment", choices=list(EXPERIMENTS), default="full",
-                         help="Picks the input CSV and the default results folder together (see module docstring).")
+    parser.add_argument("--experiment", choices=list(EXPERIMENTS), default=None,
+                         help="Optional; must equal config.data.conditioning_set (inputs + results folder come from it).")
     parser.add_argument("--causal", choices=["true", "false"], default="true",
                          help="Conditional-only is causal-only (false raises). Overrides config.data.event_causal "
                               "in memory; event_lag_gap always comes from config.data.event_lag_gap.")
@@ -504,7 +505,7 @@ def main():
                          "results don't land in the wrong experiment folder.")
     args.macro_csv = args.macro_csv or paths["macro_csv"]
     args.output_dir = args.output_dir or paths["macro_inclusion"]
-    print(f"Experiment '{args.experiment}': input {args.macro_csv}\n  -> results {args.output_dir}")
+    print(f"Conditioning set '{paths['conditioning_set']}': input {args.macro_csv}\n  -> results {args.output_dir}")
 
     set_seed(args.seed)
 

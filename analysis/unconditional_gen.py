@@ -73,7 +73,9 @@ diffusion_model.load(f"ckpt_new/score_{get_run_tag(config)}.pt")
 
 _dir  = os.path.dirname(os.path.abspath(__file__))  # analysis/
 _root = os.path.dirname(_dir)                        # repo root
-_uncond_path = os.path.join(_root, "unconditional_samples.pt")
+import run_paths   # per-run file results/<run_tag>/unconditional_samples.pt (reused by cov.py)
+_uncond_path = run_paths.unconditional_samples_path(config)
+os.makedirs(os.path.dirname(_uncond_path), exist_ok=True)
 
 # Cached to a shared file so cov.py (and anything else that wants an
 # unconditional baseline) reuses the EXACT same batch instead of each script
@@ -98,8 +100,7 @@ uncond = torch.cat(chunks, dim=0)  # (N_samples, A, T)
 torch.save(uncond, _uncond_path)
 print(f"Saved {_uncond_path}")
 
-_results_dir = os.path.join(_dir, "diffusion_results")
-os.makedirs(_results_dir, exist_ok=True)
+_results_dir = run_paths.analysis_results_dir(config)
 
 
 def diagnose_score_target(dm, x, t_values=(1.0, 0.6, 0.35, 0.15, 0.01)):

@@ -78,7 +78,7 @@ MOVABLE = [
 
 
 def swap_in_channel_csv(channel: str):
-    channel_csv = os.path.join(_ROOT, "explore", "standardization_results",
+    channel_csv = os.path.join(_ROOT, "explore", "standardization_results", "experiments",
                                 f"data_for_diffusion_{channel}.csv")
     if not os.path.exists(channel_csv):
         raise FileNotFoundError(
@@ -190,6 +190,7 @@ def run_channel(channel: str):
 
 
 def main():
+    raise SystemExit('run_doobh_channels.py (NON-causal) is disabled: causal-only (use run_doobh_channels_causal.py). It also swapped files into explore/standardization_results/data_for_diffusion.csv, which main.py no longer reads.')
     self_heal_on_startup()
     _install_signal_handlers()
     atexit.register(restore_original_csv)

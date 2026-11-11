@@ -5,7 +5,7 @@ growth/inflation PCA factors (monthly_first_pc, shared with the production
 SSM/tracking-regression code -- not recomputed independently per baseline).
 
 S0 (state-space, proposed method): reuses the EXISTING, already-fitted m_t
-column from explore/macro_data_new.csv directly -- does NOT call
+column of the conditioning set's macro_data_new.csv (config) directly -- does NOT call
 StateSpace.fit() (confirmed expensive: Nelder-Mead maxiter=20000,
 maxfev=40000, state_space.py:176-185). This project's established convention
 already treats that column as the production SSM output; refitting it here
@@ -54,7 +54,7 @@ sys.path.insert(0, _LATENT_DIR)
 from macro_main import LatentStateEstimator  # noqa: E402
 from tracking_regression import monthly_first_pc  # noqa: E402
 
-OUT_DIR = os.path.join(os.path.dirname(_HERE), "main_results", "exp2_results")
+OUT_DIR = None   # default: <experiment folder of config.data.conditioning_set>/extras/exp2_results
 
 
 def active_groups(cfg):
@@ -82,12 +82,12 @@ def aggregate_groups(per_group_daily: dict, train_end_date: pd.Timestamp):
 
 
 def build_s0(manifest) -> tuple:
-    macro_csv = os.path.join(_ROOT, "explore", "macro_data_new.csv")
+    macro_csv = common.get_default_config().data.macro_csv_path   # conditioning set's m_t (config)
     df = pd.read_csv(macro_csv, parse_dates=["Date"]).set_index("Date")
     macro_col = df.columns[0]
     series = df[macro_col].reindex(manifest["df"].index)
     meta = {
-        "method": "s0", "source": "cached m_t from explore/macro_data_new.csv (NOT refit)",
+        "method": "s0", "source": f"cached m_t from {macro_csv} (NOT refit)",
         "uses_daily_indicators": True,
         "full_sample_fit_preprocessing": ["SSM dynamics MLE (Nelder-Mead, full sample)",
                                            "SSM daily-indicator z-scoring (full sample)",
@@ -124,8 +124,36 @@ def build_s4(manifest, cfg) -> tuple:
     return combined, meta
 
 
+S3P_LOOKBACK = 12  # S3': number of most recent monthly anchors the causal spline is fit on (1 year)
+
+
+def causal_extrapolate(anchored: pd.Series, trading_dates: pd.DatetimeIndex, kind: str) -> pd.Series:
+    """S1'/S3' daily value at trading date t from ONLY the anchors dated <= t (month-end-anchored,
+    same convention as S1-S3), extrapolated forward in elapsed time:
+      s1p: line through the 2 most recent anchors       (warmup: NaN until 2 anchors exist)
+      s3p: natural cubic spline on the S3P_LOOKBACK most recent anchors, evaluated beyond the last
+           knot with its last polynomial piece          (warmup: NaN until S3P_LOOKBACK anchors exist)
+    At an anchor date the value equals that anchor (identical to S1/S2/S3 there)."""
+    xa = anchored.index.view("int64").astype(np.float64)
+    ya = anchored.to_numpy(np.float64)
+    xe = trading_dates.view("int64").astype(np.float64)
+    k = np.searchsorted(xa, xe, side="right")          # number of anchors available at each date
+    out = np.full(len(xe), np.nan)
+    need = 2 if kind == "s1p" else S3P_LOOKBACK
+    for kk in np.unique(k[k >= need]):
+        sel = k == kk
+        if kind == "s1p":
+            x1, x2, y1, y2 = xa[kk - 2], xa[kk - 1], ya[kk - 2], ya[kk - 1]
+            out[sel] = y2 + (y2 - y1) * (xe[sel] - x2) / (x2 - x1)
+        else:
+            cs = CubicSpline(xa[kk - need:kk], ya[kk - need:kk], bc_type="natural", extrapolate=True)
+            out[sel] = cs(xe[sel])
+    return pd.Series(out, index=trading_dates)
+
+
 def build_interpolated(manifest, cfg, kind: str) -> tuple:
-    """kind in {'s1' (linear), 's2' (ffill), 's3' (cubic spline)}."""
+    """kind in {'s1' (linear), 's2' (ffill), 's3' (cubic spline),
+    's1p' (causal linear extrapolation), 's3p' (causal cubic-spline extrapolation)}."""
     groups, sel = active_groups(cfg)
     trading_dates = manifest["df"].index
     per_group = {}
@@ -144,11 +172,30 @@ def build_interpolated(manifest, cfg, kind: str) -> tuple:
             x_eval = trading_dates.view("int64")
             cs = CubicSpline(x_anchor, anchored.to_numpy(), bc_type="natural", extrapolate=False)
             daily = pd.Series(cs(x_eval), index=trading_dates)
+        elif kind in ("s1p", "s3p"):
+            daily = causal_extrapolate(anchored, trading_dates, kind)
         else:
             raise ValueError(kind)
         per_group[name] = daily
 
     combined, stats = aggregate_groups(per_group, manifest["train_end_date"])
+    if kind in ("s1p", "s3p"):
+        meta = {
+            "method": kind,
+            "source": ("monthly_first_pc per group, month-end-anchored (common.month_end_anchor), CAUSAL "
+                       + ("linear extrapolation from the 2 most recent anchors" if kind == "s1p" else
+                          f"natural cubic spline on the {S3P_LOOKBACK} most recent anchors, extrapolated past the last knot")),
+            "active_groups": groups, "group_zscore_stats": stats, "anchor_counts": anchor_counts,
+            "lookback_anchors": 2 if kind == "s1p" else S3P_LOOKBACK, "uses_daily_indicators": False,
+            "full_sample_fit_preprocessing": ["monthly_first_pc PCA/scaler (full sample)",
+                                              "group z-score mean/std from the train period"],
+            "future_interpolation_anchors": False, "retrospective": False,
+            "note": ("Causal in the daily construction: the value at date t uses only monthly anchors dated <= t "
+                     "(each month's value is treated as known on that month's last trading day -- the same anchor "
+                     "convention as S0-S3; publication lags are not modeled). NOT strictly causal end-to-end: the "
+                     "monthly PCA/scaler is fit on the full sample and group z-score stats on the train period."),
+        }
+        return combined, meta
     meta = {
         "method": kind,
         "source": f"monthly_first_pc per group, month-end-anchored (common.month_end_anchor), "
@@ -169,10 +216,15 @@ def build_interpolated(manifest, cfg, kind: str) -> tuple:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--methods", type=str, default="s0,s1,s2,s3,s4")
+    parser.add_argument("--out-dir", type=str, default=OUT_DIR)
     args = parser.parse_args()
     methods = [m.strip() for m in args.methods.split(",") if m.strip()]
+    from window_conditioning import experiment_paths
+    args.out_dir = args.out_dir or experiment_paths()["states_dir"]
 
     cfg = common.get_default_config()
+    print(f"Conditioning set {cfg.data.conditioning_set!r}: growth={cfg.data.growth_vars} inflation={cfg.data.inflation_vars} "
+          f"-> states to {args.out_dir}")
     manifest = common.get_window_manifest(cfg)
     print(f"Shared trading calendar: {len(manifest['df'])} days, "
           f"train_end_date={manifest['train_end_date'].date()}, "
@@ -181,7 +233,9 @@ def main():
     builders = {"s0": lambda: build_s0(manifest), "s4": lambda: build_s4(manifest, cfg),
                 "s1": lambda: build_interpolated(manifest, cfg, "s1"),
                 "s2": lambda: build_interpolated(manifest, cfg, "s2"),
-                "s3": lambda: build_interpolated(manifest, cfg, "s3")}
+                "s3": lambda: build_interpolated(manifest, cfg, "s3"),
+                "s1p": lambda: build_interpolated(manifest, cfg, "s1p"),
+                "s3p": lambda: build_interpolated(manifest, cfg, "s3p")}
 
     for m in methods:
         print(f"\n=== Building {m} ({common.METHOD_LABELS[m]}) ===")
@@ -190,7 +244,9 @@ def main():
         print(f"  {n_nan}/{len(series)} NaN, retrospective={meta['retrospective']}, "
               f"uses_daily_indicators={meta['uses_daily_indicators']}")
 
-        out_dir = os.path.join(OUT_DIR, common.METHOD_DIRNAMES[m])
+        out_dir = os.path.join(args.out_dir, common.METHOD_DIRNAMES[m])
+        if m in ("s1p", "s3p") and os.path.exists(os.path.join(out_dir, "daily_state.csv")):
+            raise FileExistsError(f"{out_dir}/daily_state.csv exists -- refusing to overwrite")
         os.makedirs(out_dir, exist_ok=True)
         series.rename("daily_state").to_csv(os.path.join(out_dir, "daily_state.csv"), index_label="Date")
         meta["n_dates"] = len(series)

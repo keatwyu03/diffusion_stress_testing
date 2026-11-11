@@ -243,10 +243,8 @@ def main():
     parser.add_argument("--n-eval-windows", type=int, default=1200,
                          help="In-sample evaluation windows, evenly spaced over the train period (0 = all)")
     parser.add_argument("--seed", type=int, default=None)
-    parser.add_argument("--experiment", choices=list(EXPERIMENTS), default="full",
-                         help="Picks the daily-state folder and the default results folder together: "
-                              "full -> experiment_1 (Full)/causal/macro_embed/conditional_only, "
-                              "cpi -> experiment_2 (CPI Only)/causal/macro_embed/conditional_only.")
+    parser.add_argument("--experiment", choices=list(EXPERIMENTS), default=None,
+                         help="Optional; must equal config.data.conditioning_set (inputs + results folders come from it).")
     parser.add_argument("--causal", choices=["true", "false"], default="true",
                          help="Conditional-only is causal-only (false raises). Overrides config.data.event_causal "
                               "in memory; event_lag_gap always comes from config.data.event_lag_gap.")
@@ -254,6 +252,9 @@ def main():
                          help="Override the experiment's <method>/daily_state.csv folder (then --out-dir is required).")
     parser.add_argument("--out-dir", type=str, default=None,
                          help="Results go to <out-dir>/<method>/diffusion_causal/. Default: from --experiment.")
+    parser.add_argument("--pool-methods", type=str, default=None,
+                         help="Methods whose conditioner/target validity defines the shared window pool (default: --methods). "
+                              "Use the full set so newly added methods are trained/scored on exactly the same windows.")
     parser.add_argument("--standardization-dir", type=str, default=None,
                          help="Folder with <method>/residuals.csv, mu.csv, sigma.csv (standardize_own_macro.py). "
                               "Default: from --experiment.")
@@ -282,15 +283,18 @@ def main():
     subdir = f"diffusion_{'causal' if cfg.data.event_causal else 'noncausal'}"
     print(f"Event-window attachment: event_causal={cfg.data.event_causal}, event_lag_gap={cfg.data.event_lag_gap}")
     print(f"States from {args.states_dir}; results to {args.out_dir}/<method>/{subdir}")
+    pool = [m.strip() for m in (args.pool_methods or args.methods).split(",") if m.strip()]
+    if not set(methods) <= set(pool):
+        raise ValueError(f"--pool-methods {pool} must include every trained method {methods}")
     all_cond = {m: per_window_cond_values(build_cond_feature(m, manifest, seq_len, args.states_dir), manifest,
-                                          cfg.data.event_causal, cfg.data.event_lag_gap) for m in methods}
+                                          cfg.data.event_causal, cfg.data.event_lag_gap) for m in pool}
     print(f"Diffusion targets: each method's own NN residuals from {args.standardization_dir}")
-    targets = load_own_residual_targets(methods, manifest, args.standardization_dir)
+    targets = load_own_residual_targets(pool, manifest, args.standardization_dir)
     mask = common_valid_window_mask(all_cond)
     n_cond = int(mask.sum())
-    for m in methods:
+    for m in pool:
         mask &= targets[m]["valid"]  # every return day of the window has a residual, for every method
-    print(f"Common valid-window pool across {methods}: {mask.sum()}/{len(mask)} windows "
+    print(f"Common valid-window pool across {pool} (training {methods}): {mask.sum()}/{len(mask)} windows "
           f"({n_cond} with a complete conditioner, then restricted to complete residual targets)")
 
     for m in methods:

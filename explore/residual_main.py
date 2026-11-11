@@ -237,18 +237,16 @@ def step_stabilization_table(std_df, tickers, window=252):
     print(f"computing rolling-moment stabilization vs. 3 baselines (window={window})...")
 
     cfg_tickers = tickers
-    start_date = None
-    try:
-        sys.path.insert(0, os.path.dirname(HERE))
-        from config import get_default_config
-        _cfg = get_default_config()
-        start_date = _cfg.data.start_date
-    except Exception:
-        pass
+    # data window from config (start_date .. end_date) -- no date range of its own
+    sys.path.insert(0, os.path.dirname(HERE))
+    from config import get_default_config
+    _cfg = get_default_config()
+    _start, _end = pd.Timestamp(_cfg.data.start_date), pd.Timestamp(_cfg.data.end_date)
 
     import yfinance as yf
-    print(f"  fetching raw price history for {cfg_tickers} from yfinance...")
-    px = yf.download(cfg_tickers, start=start_date, auto_adjust=True)["Close"]
+    print(f"  fetching raw price history for {cfg_tickers} from yfinance ({_cfg.data.start_date}..{_cfg.data.end_date})...")
+    px = yf.download(cfg_tickers, start=(_start - pd.Timedelta(days=14)).strftime("%Y-%m-%d"),
+                     end=(_end + pd.Timedelta(days=1)).strftime("%Y-%m-%d"), auto_adjust=True)["Close"]
     px = px[cfg_tickers].dropna(how="all")
 
     baselines = {
@@ -256,6 +254,7 @@ def step_stabilization_table(std_df, tickers, window=252):
         "diff_price": px.diff().dropna(how="all"),
         "log_return": np.log(px / px.shift(1)).dropna(how="all"),
     }
+    baselines = {k: v.loc[_start:_end] for k, v in baselines.items()}   # only dates inside the config window
 
     z_indexed = std_df.set_index("Date")
 

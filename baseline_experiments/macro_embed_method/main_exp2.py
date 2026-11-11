@@ -128,8 +128,8 @@ def main():
     parser.add_argument("--num-steps", type=int, default=None)
     parser.add_argument("--n-samples", type=int, default=50)
     parser.add_argument("--n-eval-windows", type=int, default=1200)
-    parser.add_argument("--experiment", choices=list(EXPERIMENTS), default="full",
-                         help="train-diffusion/sample/evaluate: which experiment (sets inputs + results folder)")
+    parser.add_argument("--experiment", choices=list(EXPERIMENTS), default=None,
+                         help="Optional; must equal config.data.conditioning_set (inputs + results folders come from it).")
     parser.add_argument("--results-dir", type=str, default=None,
                          help="evaluate: folder holding <method>/diffusion_causal/ (diffusion_adapters --out-dir)")
     parser.add_argument("--seed", type=int, default=None)
@@ -151,8 +151,8 @@ def main():
     elif args.mode in ("train-diffusion", "sample"):
         dm_mode = "train" if args.mode == "train-diffusion" else "sample"
         extra = ["--methods", args.methods, "--mode", dm_mode,
-                 "--n-samples", str(args.n_samples), "--n-eval-windows", str(args.n_eval_windows),
-                 "--experiment", args.experiment]
+                 "--n-samples", str(args.n_samples), "--n-eval-windows", str(args.n_eval_windows)]
+        if args.experiment: extra += ["--experiment", args.experiment]
         if args.epochs: extra += ["--epochs", str(args.epochs)]
         if args.batch_size: extra += ["--batch-size", str(args.batch_size)]
         if args.num_steps: extra += ["--num-steps", str(args.num_steps)]

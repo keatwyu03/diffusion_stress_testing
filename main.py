@@ -2,9 +2,11 @@
 Main script for Conditional Diffusion Generation in Financial Time Series
 """
 import argparse
+import json
 import torch
 import os
 from dataclasses import asdict
+from datetime import datetime
 
 from config import get_default_config, get_run_tag
 from data import DataProcessor
@@ -60,6 +62,24 @@ def main(args):
     # Set seed
     set_seed(config.seed)
 
+    # ==================== Data for this run ====================
+    # Default: config.data.csv_path = explore/conditioning_sets/<config.data.conditioning_set>/data_for_diffusion.csv
+    # (column 0 = that set's m_t, used for the Doob-h event labels; other columns = its NN-standardized returns,
+    # used to train the diffusion model). --data-csv replaces it (rare-event runners pass a channel file) and then
+    # --tag-suffix is required so those checkpoints never share names with the conditioning set's own runs.
+    if args.data_csv:
+        if not args.tag_suffix:
+            raise SystemExit("--data-csv requires --tag-suffix (keeps its checkpoints apart from the default runs)")
+        config.data.csv_path = os.path.abspath(args.data_csv)
+    if not os.path.exists(config.data.csv_path):
+        raise FileNotFoundError(f"data file {config.data.csv_path} not found (conditioning_set="
+                                f"{config.data.conditioning_set!r}; build it with explore/build_conditioning_sets.py)")
+    # Checkpoint tag fixed HERE, before STEP 1 converts event_threshold from a top-fraction to a raw cutoff.
+    run_tag = get_run_tag(config) + (f"__{args.tag_suffix}" if args.tag_suffix else "")
+    print(f"[data] conditioning_set = {config.data.conditioning_set}", flush=True)
+    print(f"[data] file             = {config.data.csv_path}", flush=True)
+    print(f"[data] run_tag          = {run_tag}", flush=True)
+
     print(f"[DEBUG] PyTorch version: {torch.__version__}", flush=True)
     print(f"[DEBUG] CUDA available: {torch.cuda.is_available()}", flush=True)
     if torch.cuda.is_available():
@@ -108,7 +128,7 @@ def main(args):
     # causal/noncausal) so different configs never overwrite each other's
     # checkpoints. If a matching checkpoint already exists, load it instead
     # of retraining; otherwise train fresh and save under that name.
-    run_tag = get_run_tag(config)
+    # run_tag was fixed at the top of main() (before the threshold conversion above).
     os.makedirs("ckpt_new", exist_ok=True)
     score_ckpt = f"ckpt_new/score_{run_tag}.pt"
     hfunction_ckpt = f"ckpt_new/hfunction_{run_tag}.pt"
@@ -430,8 +450,24 @@ def main(args):
     # needs no further changes -- both simply point at the same tensor.
     generated_samples_train = generated_samples
     generated_samples_test = generated_samples
-    torch.save(generated_samples_train, 'generated_samples_train.pt')
-    torch.save(generated_samples_test, 'generated_samples_test.pt')
+    # Per-run output folder results/<run_tag>/ (run_tag = conditioning set + event definition [+ --tag-suffix]),
+    # so samples from different sets / event definitions never overwrite each other and the analysis scripts
+    # (analysis/run_paths.py) read exactly the run that matches the current config.
+    run_out_dir = os.path.join("results", run_tag)
+    os.makedirs(run_out_dir, exist_ok=True)
+    torch.save(generated_samples_train, os.path.join(run_out_dir, 'generated_samples_train.pt'))
+    torch.save(generated_samples_test, os.path.join(run_out_dir, 'generated_samples_test.pt'))
+    print(f"Saved generated samples -> {run_out_dir}/generated_samples_{{train,test}}.pt")
+    # Provenance of these samples: which data file / conditioning set / event definition produced them.
+    with open(os.path.join(run_out_dir, 'generated_samples_meta.json'), 'w') as f:
+        json.dump({"data_file": config.data.csv_path, "conditioning_set": config.data.conditioning_set,
+                   "run_tag": run_tag, "score_ckpt": score_ckpt, "hfunction_ckpt": hfunction_ckpt,
+                   "event_causal": config.data.event_causal, "event_lag_gap": config.data.event_lag_gap,
+                   "event_type": config.hfunction.event_type, "event_top_fraction": event_top_fraction,
+                   "event_threshold_raw": float(config.hfunction.event_threshold),
+                   "window": [config.data.start_date, config.data.end_date], "seed": config.seed,
+                   "n_samples": int(generated_samples.shape[0]),
+                   "written": datetime.now().isoformat(timespec="seconds")}, f, indent=2)
 
     # ==================== Portfolio Analysis ====================
     print("\n" + "=" * 60)
@@ -462,8 +498,7 @@ def main(args):
     portfolio_analyzer.summarize_statistics("REAL TRAIN", real_mv_train, real_rp_train, real_avg_train)
 
     # Plot comparison
-    os.makedirs("results", exist_ok=True)
-    plot_path_train = "results/portfolio_comparison_insample.png"
+    plot_path_train = os.path.join(run_out_dir, "portfolio_comparison_insample.png")
     portfolio_analyzer.plot_comparison(
         gen_mv_train, gen_rp_train, gen_avg_train,
         real_mv_train, real_rp_train, real_avg_train,
@@ -487,7 +522,7 @@ def main(args):
     portfolio_analyzer.summarize_statistics("REAL TEST", real_mv_test, real_rp_test, real_avg_test)
 
     # Plot comparison
-    plot_path_test = "results/portfolio_comparison_outsample.png"
+    plot_path_test = os.path.join(run_out_dir, "portfolio_comparison_outsample.png")
     portfolio_analyzer.plot_comparison(
         gen_mv_test, gen_rp_test, gen_avg_test,
         real_mv_test, real_rp_test, real_avg_test,
@@ -563,6 +598,17 @@ if __name__ == "__main__":
         action="store_true",
         help="Force retraining of the diffusion score model and H-function even if "
              "a matching checkpoint already exists on disk (overwrites it).",
+    )
+    parser.add_argument(
+        "--data-csv",
+        default=None,
+        help="Use this data file instead of config.data.csv_path (the conditioning set's data_for_diffusion.csv). "
+             "Column 0 = event series, other columns = assets. Requires --tag-suffix.",
+    )
+    parser.add_argument(
+        "--tag-suffix",
+        default=None,
+        help="Appended to the checkpoint tag (run_tag__<suffix>), e.g. for rare-event channel runs.",
     )
 
     args = parser.parse_args()

@@ -7,7 +7,7 @@ method's OWN daily macro series v^(k), one asset at a time:
 
     z_{t,j}^(k) = (r_{t,j} - mu_{k,j}(v_t^(k))) / sigma_{k,j}(v_t^(k))
 
-r = raw daily log returns from explore/macro_data_new.csv. The fit sample is
+r = raw daily log returns from the conditioning set's macro_data_new.csv (config). The fit sample is
 the SAME set of dates for all five methods: every date (config start/end
 range) where all five daily states are defined, so S0-S4 differ only in the
 macro series, never in the data they are fit on. Like production, the fit is
@@ -40,8 +40,10 @@ import main_exp1 as _m1  # noqa: E402
 from nn_standardize import run_ticker  # noqa: E402
 from window_conditioning import EXPERIMENTS, experiment_paths  # noqa: E402
 
-METHODS = ["s0", "s1", "s2", "s3", "s4"]
-HYPERPARAMS = dict(hidden=64, n_layers=2, n_epochs=1000, batch_size=128, delta=1e-3, lr=1e-3, seed=0)  # run_ticker defaults
+METHODS = ["s0", "s1", "s2", "s3", "s4"]   # define the shared fit dates (unchanged)
+NEW_METHODS = ["s1p", "s3p"]                 # causal S1'/S3' (2026-11-07): fit on exactly the same dates
+HYPERPARAMS = dict(hidden=64, n_layers=2, n_epochs=1000, batch_size=128, delta=1e-3, lr=1e-3,
+                   seed=common.get_default_config().seed)  # run_ticker defaults; seed = the one pipeline seed (Config.seed)
 
 
 def load_states(states_dir: str, index: pd.DatetimeIndex) -> pd.DataFrame:
@@ -58,8 +60,9 @@ def fit_dates(returns: pd.DataFrame, states: pd.DataFrame) -> pd.DatetimeIndex:
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--method", required=True, choices=METHODS)
-    p.add_argument("--experiment", choices=list(EXPERIMENTS), default="full")
+    p.add_argument("--method", required=True, choices=METHODS + NEW_METHODS)
+    p.add_argument("--experiment", choices=list(EXPERIMENTS), default=None,
+                   help="Optional; must equal config.data.conditioning_set (inputs + results folders come from it).")
     p.add_argument("--threads", type=int, default=4)
     args = p.parse_args()
     torch.set_num_threads(args.threads)
@@ -70,6 +73,12 @@ def main():
     returns = df[_m1.TICKERS]
     states = load_states(paths["states_dir"], returns.index)
     dates = fit_dates(returns, states)
+    if args.method in NEW_METHODS:
+        own = pd.read_csv(os.path.join(paths["states_dir"], common.METHOD_DIRNAMES[args.method], "daily_state.csv"),
+                          index_col=0, parse_dates=True)["daily_state"].reindex(returns.index)
+        if not np.isfinite(own.loc[dates].to_numpy()).all():
+            raise RuntimeError(f"{args.method} state is not finite on every shared fit date")
+        states[args.method] = own
     v = states.loc[dates, args.method].to_numpy(dtype=np.float32)
     print(f"[{args.method}] fit on {len(dates)} dates {dates[0].date()}..{dates[-1].date()} "
           f"(same dates for all methods); state from {paths['states_dir']}", flush=True)
@@ -91,12 +100,14 @@ def main():
               f"|mu+sigma*z - r| max {err:.1e}", flush=True)
 
     out = os.path.join(paths["standardization_dir"], common.METHOD_DIRNAMES[args.method])
+    if os.path.exists(os.path.join(out, "standardizer.pt")):
+        raise FileExistsError(f"{out}/standardizer.pt exists -- refusing to overwrite")
     os.makedirs(out, exist_ok=True)
     for name, d in [("residuals", resid), ("mu", mu_df), ("sigma", sig_df)]:
         pd.DataFrame(d, index=dates).reindex(returns.index).to_csv(os.path.join(out, f"{name}.csv"), index_label="Date")
     torch.save({"nets": nets, "m_mean": float(m_mean), "m_std": float(m_std), "hyperparams": HYPERPARAMS,
                 "tickers": _m1.TICKERS}, os.path.join(out, "standardizer.pt"))
-    meta = {"method": args.method, "experiment": args.experiment,
+    meta = {"method": args.method, "conditioning_set": paths["conditioning_set"],
             "macro_series": os.path.join(paths["states_dir"], common.METHOD_DIRNAMES[args.method], "daily_state.csv"),
             "returns_source": paths["macro_csv"], "returns": "raw daily log returns",
             "fit": "full horizon (production nn_standardize.run_ticker, unmodified)", "hyperparams": HYPERPARAMS,

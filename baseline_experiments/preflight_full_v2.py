@@ -95,7 +95,7 @@ def inclusion_rare(key, causal):
           "diffusion_model.train(\n            train_data=train_data,\n            batch_size" in main_src)
     for ch in ["macro_change", "ewma_mean_change", "ewma_vol_change", "pca_change"]:
         new = pd.read_csv(f"{C}/explore/standardization_results/data_for_diffusion_{ch}.csv", parse_dates=["Date"]).set_index("Date")
-        old = pd.read_csv(f"{ROOT}/explore/standardization_results/data_for_diffusion_{ch}.csv", parse_dates=["Date"]).set_index("Date")
+        old = pd.read_csv(f"{ROOT}/explore/standardization_results/experiments/data_for_diffusion_{ch}.csv", parse_dates=["Date"]).set_index("Date")
         raw_ok = np.allclose(new[TICKERS].to_numpy(), RAW.reindex(new.index)[TICKERS].to_numpy())
         col0 = np.allclose(new.iloc[:, 0], old.iloc[:, 0], equal_nan=True)
         check(f"inclusion/rare {key}: {ch} assets = raw log returns, event column unchanged", raw_ok and col0)
@@ -137,7 +137,7 @@ def embedding_rare():
         C = COPIES[key]
         for m in METHODS:
             a = f"{C}/explore/standardization_results/data_for_diffusion_exp2_{m}_ownstd.csv"
-            b = f"{ROOT}/explore/standardization_results/data_for_diffusion_exp2_{m}_ownstd.csv"
+            b = f"{ROOT}/explore/standardization_results/experiments/data_for_diffusion_exp2_{m}_ownstd.csv"
             same = os.path.exists(a) and subprocess.run(["cmp", "-s", a, b]).returncode == 0
             check(f"embedding/rare {key}: {m} own-residual CSV in copy (verified build)", same)
         check(f"embedding/rare {key}: fresh copy, no base checkpoint to reuse", not os.listdir(C + "/ckpt_new"))

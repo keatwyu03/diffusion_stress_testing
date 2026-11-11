@@ -44,7 +44,14 @@ def main():
                               "the diffusion model's")
     args = parser.parse_args()
 
-    results_dir = "gan_results" if args.gan else "diffusion_results"
+    if args.gan:
+        results_dir = "gan_results"
+    else:   # per-run folder keyed by the current config's run_tag (conditioning set + event definition)
+        sys.path.insert(0, _ROOT)
+        from config import get_default_config, get_run_tag
+        _cfg = get_default_config()
+        results_dir = os.path.join("diffusion_results", get_run_tag(_cfg))
+        print(f"conditioning_set = {_cfg.data.conditioning_set} | data = {_cfg.data.csv_path}")
     print(f"Running evaluation scripts in {'cGAN' if args.gan else 'diffusion'} mode "
           f"-> analysis/{results_dir}/\n")
 

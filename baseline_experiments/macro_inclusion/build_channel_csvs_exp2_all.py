@@ -29,7 +29,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(os.path.dirname(_HERE))
 
 PROD_CSV = os.path.join(_ROOT, "explore", "standardization_results", "data_for_diffusion.csv")
-OUT_DIR = os.path.join(_ROOT, "explore", "standardization_results")
+OUT_DIR = os.path.join(_ROOT, "explore", "standardization_results", "experiments")
 
 METHOD_DIRNAMES = {
     "exp2_s0": "S0_state_space",
@@ -42,6 +42,7 @@ RETROSPECTIVE = {"exp2_s0": False, "exp2_s1": True, "exp2_s2": False, "exp2_s3":
 
 
 def main():
+    raise SystemExit('build_channel_csvs_exp2_all.py is superseded: build_channel_csvs_exp2_ownstd.py now builds the S0-S4 channel files (event column + own residuals) for the conditioning set in config, in one step.')
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--states-dir", required=True,
                          help="Folder containing <method>/daily_state.csv for all 5 methods.")

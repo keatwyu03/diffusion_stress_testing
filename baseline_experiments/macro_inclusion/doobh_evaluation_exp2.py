@@ -37,8 +37,9 @@ from data import DataProcessor  # noqa: E402
 from exp_evaluation import portfolio_variance, max_drawdown, portfolio_cum_return, pinball_loss  # noqa: E402
 
 QUANTILES = (0.01, 0.05, 0.95, 0.99)
-CHANNELS = ["exp2_s0", "exp2_s1", "exp2_s2", "exp2_s3", "exp2_s4"]
-RETROSPECTIVE = {"exp2_s0": False, "exp2_s1": True, "exp2_s2": False, "exp2_s3": True, "exp2_s4": False}
+CHANNELS = ["exp2_s0", "exp2_s1", "exp2_s2", "exp2_s3", "exp2_s4", "exp2_s1p", "exp2_s3p"]
+RETROSPECTIVE = {"exp2_s0": False, "exp2_s1": True, "exp2_s2": False, "exp2_s3": True, "exp2_s4": False,
+                 "exp2_s1p": False, "exp2_s3p": False}
 
 
 from doobh_evaluation import window_z_start_end  # noqa: E402  (single shared copy of _scan_macro_windows)
@@ -56,7 +57,8 @@ def pooled_energy_score(real_windows_AT: np.ndarray, gen_windows_AT: np.ndarray)
 
 
 def channel_macro_values(channel: str, reference_index: pd.DatetimeIndex) -> np.ndarray:
-    csv_path = os.path.join(_ROOT, "explore", "standardization_results", f"data_for_diffusion_{channel}{CSV_SUFFIX}.csv")
+    from window_conditioning import experiment_paths   # channel files of the config's conditioning set
+    csv_path = os.path.join(experiment_paths()["embed_channels_dir"], f"data_for_diffusion_{channel}{CSV_SUFFIX}.csv")
     df = pd.read_csv(csv_path, parse_dates=["Date"]).set_index("Date")
     col = df.columns[0]
     return df[col].reindex(reference_index).to_numpy(dtype=np.float64)
@@ -128,7 +130,8 @@ def main():
     global CSV_SUFFIX
     CSV_SUFFIX = args.csv_suffix
 
-    channel_csv = os.path.join(_ROOT, "explore", "standardization_results",
+    from window_conditioning import experiment_paths
+    channel_csv = os.path.join(experiment_paths()["embed_channels_dir"],
                                 f"data_for_diffusion_{args.channel}{args.csv_suffix}.csv")
     results_dir = os.path.join(_EXP2_ROOT, args.results_root, args.channel)
     gen_path = os.path.join(results_dir, "generated_samples_test.pt")

@@ -8,6 +8,7 @@ from .config import (
     WandbConfig,
     get_default_config,
     get_run_tag,
+    CONDITIONING_SETS,
 )
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "WandbConfig",
     "get_default_config",
     "get_run_tag",
+    "CONDITIONING_SETS",
 ]

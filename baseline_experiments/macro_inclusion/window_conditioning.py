@@ -17,30 +17,40 @@ import os
 import numpy as np
 import torch.nn as nn
 
+import sys
+
 _BASELINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _REPO = os.path.dirname(_BASELINE)
+sys.path.insert(0, _REPO)
+from config import CONDITIONING_SETS, get_default_config  # noqa: E402
 
-# One place that ties each experiment's INPUTS to its OUTPUT folders, so a run
-# can't read CPI data and write into the Full folder (or vice versa).
-EXPERIMENTS = {
-    "full": {"dir": "experiment_1 (Full)", "macro_csv": "explore/macro_data_new.csv",
-             "states_dir": "experiment_1 (Full)/extras/exp2_results"},
-    "cpi": {"dir": "experiment_2 (CPI Only)", "macro_csv": "explore/macro_data_new_cpi.csv",
-            "states_dir": "experiment_2 (CPI Only)/exp2_results_cpi_only"},
-}
+# Every M0-M4 / S0-S4 script takes its inputs AND output folders from config.data.conditioning_set
+# (one place: config.CONDITIONING_SETS), so a run can never read one set's data and write into another's
+# experiment folder. --experiment, where a script has it, may only repeat the config's set.
+EXPERIMENTS = list(CONDITIONING_SETS)
 
 
-def experiment_paths(name: str) -> dict:
-    """Inputs and conditional-only result folders for one experiment."""
-    e = EXPERIMENTS[name]
-    causal_dir = os.path.join(_BASELINE, e["dir"], "causal")
+def experiment_paths(name: str = None) -> dict:
+    """Inputs and result folders of the conditioning set selected in config."""
+    d = get_default_config().data
+    if name is not None and name != d.conditioning_set:
+        raise SystemExit(f"--experiment {name!r} != config.data.conditioning_set {d.conditioning_set!r}: "
+                         f"set the conditioning set in config/config.py instead")
+    exp = d.experiment_dir
+    causal_dir = os.path.join(exp, "causal")
     return {
-        "macro_csv": os.path.join(_REPO, e["macro_csv"]),
-        "states_dir": os.path.join(_BASELINE, e["states_dir"]),
+        "conditioning_set": d.conditioning_set,
+        "experiment_dir": exp,
+        "macro_csv": d.macro_csv_path,                                   # m_t + raw daily log returns
+        "m_t_csv": os.path.join(os.path.dirname(d.macro_csv_path), "m_t.csv"),
+        "states_dir": os.path.join(exp, "extras", "exp2_results"),       # S0-S4 <method>/daily_state.csv
         "macro_inclusion": os.path.join(causal_dir, "macro_inclusion", "conditional_only"),
         "macro_embed": os.path.join(causal_dir, "macro_embed", "conditional_only"),
         # per-method NN standardizers / residuals (standardize_own_macro.py)
-        "standardization_dir": os.path.join(_BASELINE, e["dir"], "extras", "standardization_own"),
+        "standardization_dir": os.path.join(exp, "extras", "standardization_own"),
+        "rare_inclusion": os.path.join(causal_dir, "macro_inclusion", "rare_event"),
+        "rare_embed": os.path.join(causal_dir, "macro_embed", "rare_event"),
+        "embed_channels_dir": os.path.join(exp, "extras", "rare_event_channels"),   # S0-S4 own-std channel files
     }
 
 

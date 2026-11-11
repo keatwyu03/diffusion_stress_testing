@@ -37,6 +37,9 @@ METHOD_DIRNAMES = {
     "s2": "S2_forward_fill",
     "s3": "S3_cubic_spline",
     "s4": "S4_tracking_regression",
+    # causal counterparts of S1/S3 (added 2026-11-07; common.METHODS above stays the original five)
+    "s1p": "S1p_linear_extrapolation",
+    "s3p": "S3p_cubic_spline_extrapolation",
 }
 METHOD_LABELS = {
     "s0": "S0 State-Space Model",
@@ -44,13 +47,15 @@ METHOD_LABELS = {
     "s2": "S2 Forward-Fill",
     "s3": "S3 Cubic Spline",
     "s4": "S4 Tracking Regression",
+    "s1p": "S1' Linear Extrapolation (causal)",
+    "s3p": "S3' Cubic Spline Extrapolation (causal)",
 }
 # Per approved plan: S1/S3 are inherently retrospective (need a future
 # monthly anchor); S0/S2/S4 are causal in filtering but still have
 # full-sample-fit preprocessing (PCA/scaler, SSM daily z-scoring, tracking
 # regression OLS betas) -- disclosed per-method in daily_macro_states.py's
 # saved causality record, not collapsed into this one flag alone.
-RETROSPECTIVE = {"s0": False, "s1": True, "s2": False, "s3": True, "s4": False}
+RETROSPECTIVE = {"s0": False, "s1": True, "s2": False, "s3": True, "s4": False, "s1p": False, "s3p": False}
 
 
 def load_asset_panel(cfg=None):
@@ -59,7 +64,7 @@ def load_asset_panel(cfg=None):
     macro column -- Experiment 2 has 5 competing macro columns, attached
     separately by daily_macro_states.py."""
     cfg = cfg or get_default_config()
-    csv_path = os.path.join(_ROOT, "explore", "macro_data_new.csv")
+    csv_path = cfg.data.macro_csv_path   # conditioning set's m_t + raw log returns (config)
     df = pd.read_csv(csv_path, parse_dates=["Date"]).sort_values("Date").set_index("Date")
     missing = [t for t in TICKERS if t not in df.columns]
     if missing:

@@ -37,6 +37,18 @@ import torch
 # scripts work regardless of the current working directory
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# Macro conditioning sets, each built ONCE on the locked data by explore/build_conditioning_sets.py into
+# explore/conditioning_sets/<set>/: m_t.csv (macro state), macro_data_new.csv (m_t + raw log returns),
+# data_for_diffusion.csv (m_t + NN residuals z=(r-mu(m_t))/sig(m_t), seed 0), meta.json.
+# DataConfig.conditioning_set picks one; the macro variables and data paths below are derived from it.
+# experiment_dir = the baseline_experiments/ folder every M0-M4 / S0-S4 run of that set writes to.
+CONDITIONING_SETS = {
+    "cpi_only":       {"growth_vars": None, "inflation_vars": ["cpi"], "vol_vars": None,
+                       "experiment_dir": "experiment_2 (CPI Only)"},
+    "inflation_only": {"growth_vars": None, "inflation_vars": ["cpi", "oil_price", "ppi", "hour_earnings"],
+                       "vol_vars": None, "experiment_dir": "experiment_1 (Inflation Only)"},
+}
+
 def _default_device() -> str:
     if torch.cuda.is_available():
         return "cuda"
@@ -53,23 +65,11 @@ class DataConfig:
 
     latent_standardized: bool = True
 
-    # The DIFFUSION always reads this one file. explore/import_data.py is its
-    # SOLE builder and its CONTENTS depend on latent_standardized:
-    #   True  -> asset cols = NN macro-conditional residuals z=(r-mu(m_t))/sig(m_t)
-    #            (import_data.py calls nn_standardize.run_ticker internally)
-    #   False -> asset cols = RAW log-returns; the only asset standardization is
-    #            the causal per-window EWMA in DataProcessor (use_ema_standardization=True)
-    # Column 0 (m_t) is the raw latent macro state either way. Rerun
-    # explore/import_data.py whenever you flip latent_standardized;
-    # get_run_tag() keeps the two arms' checkpoints from colliding.
-    csv_path: str = os.path.join(_ROOT, "explore", "standardization_results", "data_for_diffusion.csv")
 
-    growth_vars: Optional[List[str]] = field(default_factory=lambda: ["indpro", "payems", "pi_transfer", "real_manf_trade", "personal_consump", "capacity_util"])
-    inflation_vars: Optional[List[str]] = field(default_factory=lambda: ["cpi", "oil_price", "ppi", "hour_earnings"])
-    vol_vars: Optional[List[str]] = None
+    conditioning_set: str = "inflation_only"  # "cpi_only" or "inflation_only"
 
-    start_date : str = "1990-01-01"
-    end_date: str = "2026-07-08"      # data window end (None = use all)
+    start_date : str = "2000-09-25"
+    end_date: str = "2026-08-20"      # data window end (None = use all)
 
     window_shift : int = 1
 
@@ -81,8 +81,8 @@ class DataConfig:
     weekday_col: str = "weekday"
     seq_len: int = 10
 
-    event_causal: bool = False
-    event_lag_gap: int = 1
+    event_causal: bool = True
+    event_lag_gap: int = 0
 
     test_days: int = 1200             # used only when train_end_date is None
     train_end_date: str = None        # last day of train set (None = use test_days)
@@ -91,6 +91,17 @@ class DataConfig:
     ema_span: int = 60                # per-window causal EMA standardizer span
                                        # (z = (r - EMA_mean)/EMA_vol at window entry)
     use_ema_standardization: bool = True
+
+    def __post_init__(self):
+        if self.conditioning_set not in CONDITIONING_SETS:
+            raise ValueError(f"conditioning_set={self.conditioning_set!r}; must be one of {list(CONDITIONING_SETS)}")
+        sel = CONDITIONING_SETS[self.conditioning_set]
+        self.growth_vars, self.inflation_vars, self.vol_vars = sel["growth_vars"], sel["inflation_vars"], sel["vol_vars"]
+        set_dir = os.path.join(_ROOT, "explore", "conditioning_sets", self.conditioning_set)
+        self.csv_path = os.path.join(set_dir, "data_for_diffusion.csv")
+        self.macro_csv_path = os.path.join(set_dir, "macro_data_new.csv")
+        self.channels_dir = os.path.join(set_dir, "rare_event_channels")  # rare-event channel files (build_channel_csvs.py)
+        self.experiment_dir = os.path.join(_ROOT, "baseline_experiments", sel["experiment_dir"])  # M/S results
 
 @dataclass
 class DiffusionConfig:
@@ -277,7 +288,9 @@ class Config:
     portfolio: PortfolioConfig = None
     wandb: WandbConfig = None
 
-    seed: int = 2025
+    # ONE seed for the whole pipeline (2026-11-07): NN standardization, diffusion training, H-function,
+    # generation, baseline experiments. 0 = the seed behind the Table 4 reproduction. Previously 2025.
+    seed: int = 0
 
     def __post_init__(self):
         if self.data is None:
@@ -300,17 +313,18 @@ def get_default_config() -> Config:
 
 
 def get_run_tag(config: Config) -> str:
-    """Filename tag for this config's ticker group + causal/noncausal.
+    """Filename tag for main.py's checkpoints (ckpt_new/score_<tag>.pt, hfunction_<tag>.pt, ...).
 
-    e.g. indpro-payems_cpi_causal
+    main.py RELOADS an existing checkpoint with the same tag instead of retraining, so the tag must identify
+    everything the checkpoints were trained on: the data (conditioning set = the data_for_diffusion.csv main.py
+    reads) and the event definition (causal, event_lag_gap, event_type, threshold) the H-function learns.
+    e.g. inflation_only_causal_lag0_upper_change7.5pct_LS_15a
     """
-    growth = config.data.growth_vars or []
-    inflation = config.data.inflation_vars or []
-    vol = config.data.vol_vars or []
-    parts = ["-".join(g) for g in (growth, inflation, vol) if g]
-    group = "_".join(parts) or "no_macro_vars"
+    group = config.data.conditioning_set
 
     causal = "causal" if config.data.event_causal else "noncausal"
+    event = (f"_lag{config.data.event_lag_gap}_{config.hfunction.event_type}"
+             f"{config.hfunction.event_threshold * 100:g}pct")
 
     # Standardization arm — keeps checkpoints from different standardization
     # pipelines from colliding:
@@ -332,4 +346,4 @@ def get_run_tag(config: Config) -> str:
     n_assets = len(config.data.tickers)
     asset_tag = "" if n_assets == 10 else f"_{n_assets}a"
 
-    return f"{group}_{causal}{std}{asset_tag}"
+    return f"{group}_{causal}{event}{std}{asset_tag}"

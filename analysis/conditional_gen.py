@@ -58,10 +58,11 @@ if _args.gan:
     _gen_dir = os.path.join(_root, 'gan_baseline', 'gan_results')
     _train_name = 'gan_generated_samples_train.pt'
     _results_dir = os.path.join(_dir, "gan_results")
-else:
-    _gen_dir = _root
-    _train_name = 'generated_samples_train.pt'
-    _results_dir = os.path.join(_dir, "diffusion_results")
+else:   # the main.py run matching the current config (results/<run_tag>/, provenance-checked)
+    import run_paths
+    _gen_path = run_paths.generated_samples_path(config, "train")
+    _gen_dir, _train_name = os.path.dirname(_gen_path), os.path.basename(_gen_path)
+    _results_dir = run_paths.analysis_results_dir(config)
 
 # ONE conditional-generated batch is compared against both the train-event and
 # test-event panels below (gen_train reused as gen_test) -- generation has no

@@ -16,14 +16,28 @@ from nn_standardize import run_ticker
 
 _cfg = get_default_config()
 
+# RETIRED. This script re-downloaded data and refit m_t + the NN standardizer on every run. Each conditioning set is
+# now built ONCE from the frozen Table 4 data (no Yahoo / FRED download) by explore/build_conditioning_sets.py into
+# explore/conditioning_sets/<set>/, and main.py reads it via config.data.conditioning_set. The code below is kept
+# for reference only (its correlation-plot block is reused by build_conditioning_sets.py); it never runs.
+raise SystemExit("explore/import_data.py is retired: conditioning sets are built once by "
+                 "explore/build_conditioning_sets.py into explore/conditioning_sets/<set>/ and main.py reads them via "
+                 "config.data.conditioning_set. Nothing was downloaded, fitted or written.")
+
 # Always refresh the macro panels (growth/inflation/vol *_macro.csv and
 # *_daily.csv) before fitting the latent state, regardless of which columns
 # this config selects — macro_importer.py is a pure top-level script (fetches
 # everything unconditionally, no config filtering), so running it here just
 # means the LatentStateEstimator below always reads fresh FRED/yfinance data
 # instead of whatever was left on disk from a previous config's run.
-print("[0/5] refreshing macro panels (latent_state_estimation/macro_importer.py)...")
-import latent_state_estimation.macro_importer  # noqa: F401  (executes on import)
+if _cfg.data.freeze_macro_data:
+    # LOCKED: the exact Table 4 macro panels (git a6c4f3f) -- no download, no truncation
+    print(f"[0/5] using FROZEN macro panels ({_cfg.data.frozen_macro_snapshot}) -- no download...")
+    from latent_state_estimation.frozen_macro import restore_frozen_panels
+    restore_frozen_panels(_cfg.data.frozen_macro_snapshot, _cfg.data.start_date, _cfg.data.end_date)
+else:
+    print("[0/5] refreshing macro panels (latent_state_estimation/macro_importer.py)...")
+    import latent_state_estimation.macro_importer  # noqa: F401  (executes on import)
 print("[0/5] done.")
 
 from latent_state_estimation.macro_main import LatentStateEstimator
@@ -91,12 +105,29 @@ raw_csv_path  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "macro_
 diff_csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                              "standardization_results", "data_for_diffusion.csv")
 
-print(f"[2/5] downloading price history for {tickers} from yfinance...")
-df = yf.download(tickers, start = _cfg.data.start_date, auto_adjust=True)["Close"]
-print(f"[2/5] done ({len(df)} raw rows).")
-
-print("[3/5] merging conditioning series with stock log-returns...")
-log_ret = np.log(df / df.shift(1)).dropna()
+_win_start, _win_end = pd.Timestamp(_cfg.data.start_date), pd.Timestamp(_cfg.data.end_date)
+if _cfg.data.freeze_returns:
+    # LOCKED returns: read the frozen daily log returns, never call yfinance.
+    _ret_path = os.path.join(os.path.dirname(_HERE), _cfg.data.frozen_returns_csv)
+    print(f"[2/5] using FROZEN stock log returns ({_cfg.data.frozen_returns_csv}) -- no download...")
+    _frozen = pd.read_csv(_ret_path, parse_dates=["Date"]).set_index("Date")
+    _missing = [t for t in tickers if t not in _frozen.columns]
+    if _missing:
+        raise SystemExit(f"tickers {_missing} are not in the frozen returns file {_ret_path} -- "
+                         f"refusing to download (set config.data.freeze_returns=False to download).")
+    log_ret = _frozen[tickers].dropna()
+    print(f"[2/5] done ({len(log_ret)} rows, {log_ret.index[0].date()}..{log_ret.index[-1].date()}).")
+    print("[3/5] merging conditioning series with stock log-returns...")
+else:
+    print(f"[2/5] downloading price history for {tickers} from yfinance...")
+    # Fixed data window: download from a few days before start_date (so the first day's return exists) up to
+    # end_date inclusive (yfinance's end is exclusive); rows are restricted to [start_date, end_date] below.
+    df = yf.download(tickers, start=(_win_start - pd.Timedelta(days=14)).strftime("%Y-%m-%d"),
+                     end=(_win_end + pd.Timedelta(days=1)).strftime("%Y-%m-%d"), auto_adjust=True)["Close"]
+    print(f"[2/5] done ({len(df)} raw rows).")
+    print("[3/5] merging conditioning series with stock log-returns...")
+    log_ret = np.log(df / df.shift(1)).dropna()
+log_ret = log_ret.loc[_win_start:_win_end]   # only dates inside the fixed data window
 df_out = pd.DataFrame({cond_event: cond_series.reindex(log_ret.index)})
 for t in tickers:
     df_out[t] = log_ret[t]
@@ -229,27 +260,23 @@ for ax in axes[len(panels):]:
     ax.axis("off")
 for ax, (lbl, arr) in zip(axes, panels):
     C  = np.corrcoef(arr.T)
-    im = ax.imshow(C, vmin=-1, vmax=1, cmap="RdBu_r")
-    ax.set_xticks(range(n_assets)); ax.set_xticklabels(tick_lbl, fontsize=10)
+    im = ax.imshow(C, vmin=-1, vmax=1, cmap="RdBu_r")   # colours only, no per-cell numbers
+    ax.set_xticks(range(n_assets)); ax.set_xticklabels(tick_lbl, fontsize=10, rotation=90)
     ax.set_yticks(range(n_assets)); ax.set_yticklabels(tick_lbl, fontsize=10)
     ax.set_title(f"{lbl}\n(n={len(arr)})", fontsize=10, fontweight="bold", pad=8)
-    for r in range(n_assets):
-        for c in range(n_assets):
-            v = C[r, c]
-            ax.text(c, r, f"{v:.2f}", ha="center", va="center", fontsize=font_size,
-                    fontweight="bold", color="white" if abs(v) > 0.6 else "black")
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
 fig.suptitle(
     f"Correlation Matrices — Last-Day Returns\n"
     f"(event: {cond_event} {event_type} ≥ {h_threshold} std "
-    f"[top {_cfg.hfunction.event_threshold:.1%}], causal={_cfg.data.event_causal})\n"
+    f"[top {_cfg.hfunction.event_threshold:.1%}], causal={_cfg.data.event_causal}, "
+    f"event_lag_gap={_cfg.data.event_lag_gap})\n"
     f"method: {_cfg.data.latent_method},  conditioning bucket: {bucket_lbl}",
     fontsize=12, fontweight="bold"
 )
 fig.tight_layout()
 
-corr_plot_path = os.path.join(os.path.dirname(csv_path), "bucket_corr_matrices.png")
+corr_plot_path = os.path.join(os.path.dirname(csv_path), "real_corr_event_vs_all.png")
 fig.savefig(corr_plot_path, dpi=150, bbox_inches="tight")
 print(f"Saved {corr_plot_path}")
 

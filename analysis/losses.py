@@ -42,28 +42,20 @@ if args.gan:
     sys.exit(0)
 
 
-def _latest_csv(pattern):
-    """Return the most recently modified file matching pattern, or None."""
-    hits = glob.glob(os.path.join(ROOT, "**", pattern), recursive=True)
-    return max(hits, key=os.path.getmtime) if hits else None
-
-
 from config import get_default_config, get_run_tag
-_run_tag = get_run_tag(get_default_config())
+_cfg = get_default_config()
+_run_tag = get_run_tag(_cfg)
 
-score_path = (args.score_loss
-              or _latest_csv(f"score_losses_{_run_tag}.csv")
-              or _latest_csv("score_losses.csv")
-              or _latest_csv("train_losses.csv"))
-h_path = (args.h_loss
-          or _latest_csv(f"h_losses_{_run_tag}.csv")
-          or _latest_csv("h_losses.csv")
-          or _latest_csv("h_function_losses.csv"))
+# ONLY the loss files of the main.py run matching the current config (no fallback to other / untagged files)
+score_path = args.score_loss or os.path.join(ROOT, "ckpt_new", f"score_losses_{_run_tag}.csv")
+h_path = args.h_loss or os.path.join(ROOT, "ckpt_new", f"h_losses_{_run_tag}.csv")
 
-if score_path is None:
+if not os.path.exists(score_path):
     raise FileNotFoundError(
-        "No score-function loss CSV found. Pass --score_loss <path> or train the model first."
+        f"{score_path} not found -- run main.py for this config (run_tag {_run_tag}) first, or pass --score_loss <path>."
     )
+if not os.path.exists(h_path):
+    h_path = None
 
 print(f"Score loss : {score_path}")
 print(f"H-function : {h_path or 'not found'}")
@@ -114,8 +106,8 @@ if has_h_metrics:
 
 fig.tight_layout()
 
-results_dir = os.path.join(_dir, "diffusion_results")
-os.makedirs(results_dir, exist_ok=True)
+import run_paths
+results_dir = run_paths.analysis_results_dir(_cfg)
 out_path = os.path.join(results_dir, "train_losses.png")
 plt.savefig(out_path, dpi=150, bbox_inches="tight")
 plt.show()

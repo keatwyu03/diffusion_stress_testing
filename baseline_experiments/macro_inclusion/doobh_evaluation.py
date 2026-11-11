@@ -99,7 +99,8 @@ def channel_macro_values(channel: str, reference_index: pd.DatetimeIndex) -> np.
     all 4 channel CSVs), never by the conditioning column. So this reindex is
     just alignment, not a source of new NaNs beyond what each channel's own
     column already has."""
-    csv_path = os.path.join(_ROOT, "explore", "standardization_results", f"data_for_diffusion_{channel}.csv")
+    # channel file of the conditioning set selected in config (explore/conditioning_sets/<set>/rare_event_channels/)
+    csv_path = os.path.join(get_default_config().data.channels_dir, f"data_for_diffusion_{channel}.csv")
     df = pd.read_csv(csv_path, parse_dates=["Date"]).set_index("Date")
     col = df.columns[0]
     return df[col].reindex(reference_index).to_numpy(dtype=np.float64)
@@ -194,8 +195,7 @@ def main():
                               "folder without overwriting the original.")
     args = parser.parse_args()
 
-    channel_csv = os.path.join(_ROOT, "explore", "standardization_results",
-                                f"data_for_diffusion_{args.channel}.csv")
+    channel_csv = os.path.join(get_default_config().data.channels_dir, f"data_for_diffusion_{args.channel}.csv")
     results_dir = os.path.join(_RESULTS_ROOT, args.results_root, args.channel)
     gen_path = os.path.join(results_dir, "generated_samples_test.pt")
     if not os.path.exists(gen_path):

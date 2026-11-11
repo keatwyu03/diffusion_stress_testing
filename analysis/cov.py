@@ -97,10 +97,15 @@ if _args.gan:
     _gen_train_path = os.path.join(_gen_dir, 'gan_generated_samples_train.pt')
     _cond_panel_label = "cGAN Generated"
     _results_dir = os.path.join(_dir, "gan_results")
-else:
-    _gen_train_path = os.path.join(_root, 'generated_samples_train.pt')
+else:   # the main.py run matching the current config (results/<run_tag>/, provenance-checked)
+    import run_paths
+    try:
+        _gen_train_path = run_paths.generated_samples_path(config, "train")
+    except FileNotFoundError as _e:   # conditional panel is optional; a provenance MISMATCH still raises
+        print(f"[run] {_e}")
+        _gen_train_path = "<missing>"
     _cond_panel_label = "Conditional Generated"
-    _results_dir = os.path.join(_dir, "diffusion_results")
+    _results_dir = run_paths.analysis_results_dir(config)
 
 # ONE conditional-generated batch is compared against both the train-event and
 # test-event panels below (gen_train reused as gen_test) -- generation has no
@@ -122,8 +127,12 @@ if gen_train is None:
 # "Unconditional Generated" panel and unconditional_gen.py's own diagnostics
 # would silently be looking at different samples instead of the same baseline.
 if not _args.gan:
-    _uncond_path = os.path.join(_root, "unconditional_samples.pt")
-    if os.path.exists(_uncond_path):
+    _uncond_path = run_paths.unconditional_samples_path(config)
+    os.makedirs(os.path.dirname(_uncond_path), exist_ok=True)
+    # reuse unconditional_gen.py's samples only if they come from the CURRENT score checkpoint of this run_tag
+    _score = run_paths.score_ckpt(config)
+    if os.path.exists(_uncond_path) and (not os.path.exists(_score)
+                                          or os.path.getmtime(_uncond_path) >= os.path.getmtime(_score)):
         uncond = torch.load(_uncond_path, map_location='cpu')
         print(f"Loaded {_uncond_path} (n={len(uncond)}) -- run analysis/unconditional_gen.py "
               f"first if this is stale.")

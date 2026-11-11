@@ -88,3 +88,14 @@ dmypy.json
 
 # Slurm job scripts (cluster-specific)
 *.slurm
+
+# Generated data / result artifacts (added 2026-11-07). Input data that is
+# already tracked (latent_state_estimation/*.csv, explore/macro_data_new*.csv,
+# explore/backup_10asset/*.csv) stays tracked -- .gitignore never untracks files.
+*.json
+*.npz
+*.npy
+*.csv
+# Experiment results (any file type) -- only code is committed
+baseline_experiments/experiment_*/
+baseline_experiments/main_results/

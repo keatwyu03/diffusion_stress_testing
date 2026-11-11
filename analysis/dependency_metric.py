@@ -73,10 +73,12 @@ if _args.gan:
     _gen_dir = os.path.join(_root, 'gan_baseline', 'gan_results')
     _train_name, _test_name = 'gan_generated_samples_train.pt', 'gan_generated_samples_test.pt'
     _results_dir = os.path.join(_dir, "gan_results")
-else:
-    _gen_dir = _root
+else:   # the main.py run matching the current config (results/<run_tag>/, provenance-checked)
+    import run_paths
+    _gen_dir = os.path.dirname(run_paths.generated_samples_path(config, "train"))
+    run_paths.generated_samples_path(config, "test")
     _train_name, _test_name = 'generated_samples_train.pt', 'generated_samples_test.pt'
-    _results_dir = os.path.join(_dir, "diffusion_results")
+    _results_dir = run_paths.analysis_results_dir(config)
 os.makedirs(_results_dir, exist_ok=True)
 
 gen_train = torch.load(os.path.join(_gen_dir, _train_name), map_location='cpu')

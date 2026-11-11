@@ -143,9 +143,8 @@ for ax, results, title in [(axes[0], train_results, "Train"), (axes[1], test_res
 fig.suptitle("H-Function Calibration Check (bypasses sampling/guidance entirely)", fontsize=13, fontweight="bold")
 fig.tight_layout()
 
-_dir = os.path.dirname(os.path.abspath(__file__))
-os.makedirs(os.path.join(_dir, "results"), exist_ok=True)
-out = os.path.join(_dir, "results", "h_function_eval.png")
+import run_paths
+out = os.path.join(run_paths.analysis_results_dir(config), "h_function_eval.png")
 plt.savefig(out, dpi=150, bbox_inches="tight")
 plt.show()
 print(f"\nSaved {out}")

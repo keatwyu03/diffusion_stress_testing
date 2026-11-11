@@ -87,7 +87,7 @@ Conditional_diffusion/
 │                                            # gan_baseline/gan_results/ outputs are gitignored and gone
 ├── explore/
 │   ├── import_data.py                       # Builds macro_data_new.csv; runs LatentStateEstimator; also writes
-│   │                                        # bucket_corr_matrices.png, conditioning_series.png
+│   │                                        # real_corr_event_vs_all.png, conditioning_series.png
 │   ├── stationary_diagnosis.py              # Macro-conditional stationarity diagnostics — see its own section.
 │   │                                        # Imported by bfk_stationarity.py (not standalone-only)
 │   ├── bfk_stationarity.py                  # BFK stationarity hypothesis test (rpy2 → R's npcp package).

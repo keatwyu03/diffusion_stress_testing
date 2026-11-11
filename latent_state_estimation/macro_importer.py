@@ -10,35 +10,57 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import get_default_config
 
 _cfg        = get_default_config()
+# DOWNLOADING IS DISABLED. The macro panels are locked to the Table 4 snapshot
+# (latent_state_estimation/frozen_table4_a6c4f3f/, git a6c4f3f); each conditioning set is built ONCE from it by
+# explore/build_conditioning_sets.py. Nothing below this line runs -- no FRED / Yahoo Finance request is ever made.
+raise SystemExit("latent_state_estimation/macro_importer.py: downloading is disabled -- the macro data is locked to "
+                 "latent_state_estimation/frozen_table4_a6c4f3f/ (see explore/build_conditioning_sets.py). "
+                 "Nothing was downloaded or written.")
 fred = Fred(api_key = '6dac8927ae66be817978bd55e16a9241')
 
+# Data window = config.data.start_date .. config.data.end_date. This importer has NO date range of its own:
+# every FRED series and futures contract is requested for the config window only, starting one month before
+# start_date (the first daily log-diff needs a prior price), and everything is cut to the window before writing.
+_start = pd.Timestamp(_cfg.data.start_date) if _cfg.data.start_date else None
+_end = pd.Timestamp(_cfg.data.end_date) if _cfg.data.end_date else None
+_fetch_start = (_start.to_period("M") - 1).to_timestamp() if _start is not None else None
+
+
+def _fred(series_id):
+    return fred.get_series(series_id, observation_start=_fetch_start, observation_end=_end)
+
+
 growth_macro_data = {
-    'indpro': fred.get_series('INDPRO'),                       # earliest: 1919-01-01
-    'payems': fred.get_series('PAYEMS'),                       # earliest: 1939-01-01
-    'pi_transfer': fred.get_series('w875rx1'),                 # earliest: 1959-01-01
-    'real_manf_trade': fred.get_series('CMRMTSPL'),            # earliest: 1967-01-01
-    'personal_consump' : fred.get_series('DPCERA3M086SBEA'),   # earliest: 1959-01-01
-    'capacity_util' : fred.get_series("CUMFNS"),               # earliest: 1948-01-01
+    'indpro': _fred('INDPRO'),                       # earliest: 1919-01-01
+    'payems': _fred('PAYEMS'),                       # earliest: 1939-01-01
+    'pi_transfer': _fred('w875rx1'),                 # earliest: 1959-01-01
+    'real_manf_trade': _fred('CMRMTSPL'),            # earliest: 1967-01-01
+    'personal_consump' : _fred('DPCERA3M086SBEA'),   # earliest: 1959-01-01
+    'capacity_util' : _fred("CUMFNS"),               # earliest: 1948-01-01
 }
 
 inflation_macro_data = {
-    'cpi': fred.get_series('CPIAUCSL'),                # earliest: 1947-01-01
-    'oil_price': fred.get_series('MCOILWTICO'),        # earliest: 1986-01-01
-    'ppi': fred.get_series('PPIACO'),                  # earliest: 1913-01-01
-    'hour_earnings' : fred.get_series('AHETPI'),       # earliest: 1964-01-01
+    'cpi': _fred('CPIAUCSL'),                # earliest: 1947-01-01
+    'oil_price': _fred('MCOILWTICO'),        # earliest: 1986-01-01
+    'ppi': _fred('PPIACO'),                  # earliest: 1913-01-01
+    'hour_earnings' : _fred('AHETPI'),       # earliest: 1964-01-01
 
 }
 
 vol_macro_data = {
-    'epu': fred.get_series('USEPUINDXM'),              # Economic Policy Uncertainty Index, earliest: 1985-01-01
-    'umcsent': fred.get_series('UMCSENT'),             # U. Michigan Consumer Sentiment Index, earliest: 1952-11-01
+    'epu': _fred('USEPUINDXM'),              # Economic Policy Uncertainty Index, earliest: 1985-01-01
+    'umcsent': _fred('UMCSENT'),             # U. Michigan Consumer Sentiment Index, earliest: 1952-11-01
 }
 
 
-def _get_futures_close(ticker, period="max", retries=3):
-    """Daily close price series for a single futures ticker via yfinance."""
+def _get_futures_close(ticker, retries=3):
+    """Daily close price series for a single futures ticker via yfinance, over the config data window
+    (from _fetch_start, one month before start_date, through end_date inclusive; yfinance's end is exclusive)."""
+    kw = {"start": _fetch_start.strftime("%Y-%m-%d")} if _fetch_start is not None else {"period": "max"}
+    if _end is not None:
+        kw["end"] = (_end + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
     for attempt in range(retries):
-        data = yf.Ticker(ticker).history(period=period)['Close']
+        data = yf.Ticker(ticker).history(**kw)['Close']
         if not data.empty:
             return data.tz_localize(None)
         time.sleep(2 * (attempt + 1))
@@ -65,9 +87,9 @@ inflation_daily_futures = {
 
 
 vol_daily_series = {
-    'vix': fred.get_series('VIXCLS'),                    # CBOE VIX, earliest: 1990-01-02
-    'credit_spread': fred.get_series('BAA10Y'),          # Moody's Baa - 10yr Treasury, earliest: 1986-01-02
-    'aaa_spread': fred.get_series('AAA10Y'),             # Moody's Aaa - 10yr Treasury, earliest: 1983-01-03
+    'vix': _fred('VIXCLS'),                    # CBOE VIX, earliest: 1990-01-02
+    'credit_spread': _fred('BAA10Y'),          # Moody's Baa - 10yr Treasury, earliest: 1986-01-02
+    'aaa_spread': _fred('AAA10Y'),             # Moody's Aaa - 10yr Treasury, earliest: 1983-01-03
 }
 
 # Monthly anchors: log-differenced (the only transform used downstream --
@@ -116,7 +138,7 @@ def _par_bond_duration(yield_series, n_years):
 
 
 for item, yr in [("yield_2yr", 2), ("yield_5yr", 5), ("yield_10yr", 10)]:
-    duration = _par_bond_duration(fred.get_series(f"DGS{yr}"), yr)
+    duration = _par_bond_duration(_fred(f"DGS{yr}"), yr)
     price = growth_daily_futures[item]
     log_diff = -np.log(price).diff() / duration
     growth_daily_cols[item] = log_diff
@@ -146,6 +168,20 @@ df_vol_daily_data = pd.DataFrame(vol_daily_cols)
 df_growth_daily_data = df_growth_daily_data.loc[df_growth_daily_data.apply(pd.Series.first_valid_index).max():].dropna()
 df_inf_daily_data = df_inf_daily_data.loc[df_inf_daily_data.apply(pd.Series.first_valid_index).max():].dropna()
 df_vol_daily_data = df_vol_daily_data.loc[df_vol_daily_data.apply(pd.Series.first_valid_index).max():].dropna()
+
+# Data window (config.data.start_date .. end_date): nothing outside it is written.
+# Daily series: start_date .. end_date. Monthly series: start_date's month .. the last month BEFORE end_date's
+# month (2026-08-20 -> 2026-07-01, the last month present in the Aug 23 snapshot).
+_first_month = _start.to_period("M").to_timestamp() if _start is not None else None
+_last_month = (_end.to_period("M") - 1).to_timestamp() if _end is not None else None
+df_growth_daily_data = df_growth_daily_data.loc[_start:_end]
+df_inf_daily_data = df_inf_daily_data.loc[_start:_end]
+df_vol_daily_data = df_vol_daily_data.loc[_start:_end]
+df_growth_macro_data = df_growth_macro_data.loc[_first_month:_last_month]
+df_inf_macro_data = df_inf_macro_data.loc[_first_month:_last_month]
+df_vol_macro_data = df_vol_macro_data.loc[_first_month:_last_month]
+print(f"[macro_importer] data window {_cfg.data.start_date}..{_cfg.data.end_date}: daily {_start}..{_end}, "
+      f"monthly {_first_month}..{_last_month}")
 
 _out_dir = os.path.dirname(os.path.abspath(__file__))
 df_growth_daily_data.to_csv(os.path.join(_out_dir, "growth_daily.csv"))
